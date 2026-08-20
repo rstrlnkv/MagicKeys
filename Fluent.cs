@@ -53,37 +53,5 @@ namespace MagicKeys
                 return Iconography.ToIcon(bmp);
         }
 
-        /// <summary>Есть ли у .exe собственный значок — тогда окну свой не нужен.</summary>
-        public static bool HasEmbeddedIcon()
-        {
-            try
-            {
-                string exe = System.Reflection.Assembly.GetEntryAssembly().Location;
-                return Native.ExtractIconEx(exe, -1, null, null, 0) > 0;
-            }
-            catch { return false; }
-        }
-
-        /// <summary>
-        /// Значок окна. Обычно его задавать не нужно — WPF берёт значок самой программы
-        /// из .exe, а он многоразмерный и потому чёткий везде. Этот запасной путь нужен,
-        /// если .exe собран без значка.
-        /// </summary>
-        public static ImageSource MakeWindowIcon()
-        {
-            using (Gdi.Bitmap bmp = Iconography.AppIcon(64))
-            using (var ms = new System.IO.MemoryStream())
-            {
-                bmp.Save(ms, Gdi.Imaging.ImageFormat.Png);
-                ms.Position = 0;
-                var img = new BitmapImage();
-                img.BeginInit();
-                img.CacheOption = BitmapCacheOption.OnLoad;
-                img.StreamSource = ms;
-                img.EndInit();
-                img.Freeze();
-                return img;
-            }
-        }
     }
 }

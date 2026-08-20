@@ -32,7 +32,7 @@ namespace MagicKeys
         public const int LWin = 0x5B, RWin = 0x5C;
         public const int F1 = 0x70, F3 = 0x72, F4 = 0x73, F12 = 0x7B, F13 = 0x7C, F19 = 0x82, F24 = 0x87;
         public const int OemComma = 0xBC;
-        public const int D3 = 0x33, D4 = 0x34;   // цифры 3 и 4 — для снимков экрана
+        public const int D3 = 0x33, D4 = 0x34, D5 = 0x35;   // цифры — для снимков экрана
         public const int NumLock = 0x90;
         public const int Clear = 0x0C;
         public const int Scroll = 0x91;

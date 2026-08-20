@@ -51,7 +51,6 @@ namespace MagicKeys
         public const string GroupSystem = "Система";
 
         private static readonly List<MacShortcut> _all = new List<MacShortcut>();
-        private static readonly Dictionary<string, MacShortcut> _byId = new Dictionary<string, MacShortcut>();
 
         public static IList<MacShortcut> All { get { return _all; } }
 
@@ -135,6 +134,18 @@ namespace MagicKeys
                 MacMod.Cmd | MacMod.Shift, Vk.D4, new int[] { Vk.LWin, Vk.LShift }, Vk.S);
             Add("settings", GroupSystem, "Параметры", "⌘,", "Win+I",
                 MacMod.Cmd, Vk.OemComma, new int[] { Vk.LWin }, Vk.I);
+            Add("screenrec", GroupSystem, "Запись экрана", "⇧⌘5", "Win+Alt+R",
+                MacMod.Cmd | MacMod.Shift, Vk.D5, new int[] { Vk.LWin, Vk.LMenu }, Vk.R);
+            Add("windownext", GroupSystem, "Следующее окно программы", "⌘`", "Alt+Esc",
+                MacMod.Cmd, Vk.Oem3, new int[] { Vk.LMenu }, Vk.Escape);
+
+            // Листание вкладок. На маке это ⌘⌥←/→, в Windows — Ctrl+PgUp/PgDn.
+            // ⌘W и ⌘T уже были, а перехода между вкладками не хватало заметнее всего:
+            // в браузере это замечают в первые полчаса.
+            Add("tabprev", GroupEdit, "Предыдущая вкладка", "⌘⌥←", "Ctrl+PgUp",
+                MacMod.Cmd | MacMod.Opt, Vk.Left, new int[] { Vk.LControl }, Vk.Prior);
+            Add("tabnext", GroupEdit, "Следующая вкладка", "⌘⌥→", "Ctrl+PgDn",
+                MacMod.Cmd | MacMod.Opt, Vk.Right, new int[] { Vk.LControl }, Vk.Next);
         }
 
         private static void Edit(string id, string title, string mac, int vk, int sendVk)
@@ -158,7 +169,6 @@ namespace MagicKeys
                 Mods = mods, Vk = vk, SendMods = sendMods, SendVk = sendVk
             };
             _all.Add(s);
-            _byId[id] = s;
             return s;
         }
 
@@ -207,12 +217,6 @@ namespace MagicKeys
                 if (s.Vk == vk && s.Mods == mods) return s;
             }
             return null;
-        }
-
-        public static MacShortcut ById(string id)
-        {
-            MacShortcut s;
-            return _byId.TryGetValue(id, out s) ? s : null;
         }
 
         /// <summary>Отправляет то, во что сочетание переводится.</summary>

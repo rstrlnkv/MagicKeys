@@ -196,14 +196,15 @@ namespace MagicKeys
 
         /// <summary>
         /// Сколько функциональных клавиш показывать: что обещает модель, что уже
-        /// видели своими глазами и что запомнено с прошлого раза — берётся наибольшее.
+        /// видели своими глазами — берётся большее. Запомненного на диске больше нет:
+        /// оно умело только расти, и одна чужая полноразмерная клавиатура оставляла
+        /// строки F13–F19 в окне навсегда.
         /// </summary>
         public static int FunctionKeyCount(Settings s)
         {
             int n = 12;
             AppleModel m = Devices.AppleModel;
             if (m != null && m.FunctionKeys > n) n = m.FunctionKeys;
-            if (s != null && s.ObservedFunctionKeys > n) n = s.ObservedFunctionKeys;
             if (KeyWatch.MaxFunctionKey > n) n = KeyWatch.MaxFunctionKey;
             return n > Settings.MaxFKeys ? Settings.MaxFKeys : n;
         }

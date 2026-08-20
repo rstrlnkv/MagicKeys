@@ -17,7 +17,6 @@ namespace MagicKeys
         private static readonly object Sync = new object();
         private static string _path;
 
-        public static bool Enabled { get { return _path != null; } }
 
         public static void Enable()
         {

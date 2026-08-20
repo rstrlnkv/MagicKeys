@@ -14,7 +14,6 @@ namespace MagicKeys
     internal sealed class LayoutKey
     {
         public int Scan;
-        public string Iso;
         public string Base, Shift, Opt, OptShift;
         public bool BaseDead, ShiftDead, OptDead, OptShiftDead;
 
@@ -49,7 +48,6 @@ namespace MagicKeys
         public string Id = "";
         public string Title = "";
         public string MacName = "";
-        public string Path = "";
         public readonly Dictionary<int, LayoutKey> Keys = new Dictionary<int, LayoutKey>();
         public readonly Dictionary<string, string> Transforms = new Dictionary<string, string>();
 
@@ -71,7 +69,6 @@ namespace MagicKeys
         public static AppleLayoutFile Load(string path)
         {
             var f = new AppleLayoutFile();
-            f.Path = path;
 
             var doc = new XmlDocument();
             doc.XmlResolver = null;
@@ -100,7 +97,6 @@ namespace MagicKeys
                                       CultureInfo.InvariantCulture, out scan)) continue;
                     var k = new LayoutKey();
                     k.Scan = scan;
-                    k.Iso = e.GetAttribute("iso");
                     k.Base = Val(e, "base");
                     k.Shift = Val(e, "shift");
                     k.Opt = Val(e, "opt");

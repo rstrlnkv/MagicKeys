@@ -133,6 +133,11 @@ namespace MagicKeys
 
                     if (Devices.Rescan())
                     {
+                        // Набор клавиатур изменился — забываем, что успели угадать про
+                        // исполнение. Признак копится по любому вводу, устройства он
+                        // не знает, и одна чужая ISO-клавиатура иначе оставляла бы
+                        // перестановку двух клавиш включённой навсегда.
+                        _detectedPhys = (int)PhysLayout.Ansi;
                         PostRelease();
                         Action h = DevicesChanged;
                         if (h != null) h();
@@ -287,6 +292,10 @@ namespace MagicKeys
             }
             finally
             {
+                // Идентификатор снимаем первым: Windows переиспользует номера потоков,
+                // и просьба отпустить, посланная после смерти этого, попала бы чужому.
+                _threadId = 0;
+
                 // Отпускаем своё до снятия перехвата и обязательно на этом потоке.
                 // Синтетический control от переназначенного Caps Lock, оставшийся после
                 // выхода, снять уже нечем: программы, которая его нажала, больше нет.
@@ -341,8 +350,17 @@ namespace MagicKeys
             bool phantomCtrl = (vk == Vk.LControl || vk == Vk.Control)
                             && (k.scanCode & 0x1FF) == 0x1D
                             && (ext || (k.scanCode & 0x200) != 0);
-            if (phantomCtrl) _phantomCtrl = down;
-            if (s.DisableAltGr && phantomCtrl) return true;
+            if (phantomCtrl)
+            {
+                _phantomCtrl = down;
+                // Дальше не пускаем вовсе. Раньше он доходил до HandleModifier и там
+                // подчинялся переназначению левого control: со схемой «как в macOS»,
+                // где control становится клавишей Windows, каждое нажатие правого ⌥
+                // слало в Windows Win — то есть открывало «Пуск» посреди набора символа
+                // третьего уровня. А если control переназначен на Caps Lock, ещё и
+                // переворачивало регистр.
+                return s.DisableAltGr;
+            }
 
             ModKey phys;
             if (TryPhysical(vk, ext, out phys))
@@ -369,10 +387,13 @@ namespace MagicKeys
             // навсегда; а смотри только на нём же при повторах, повторные ← уходили бы
             // в систему настоящими, тогда как отпускание мы бы съели — и уже настоящая
             // стрелка осталась бы нажатой.
-            if (_navActive.Contains(vk) || (down && _fnHeld && s.FnNavigation))
+            // Продолжение уже начатой навигации — впереди всего: повтор и отпускание
+            // обязаны уйти туда же, куда ушло нажатие, иначе синтетическая Home останется
+            // нажатой, а снять её нечем — клавиши Home на этой клавиатуре нет.
+            if (_navActive.Contains(vk))
             {
-                int target = FnNavTarget(vk);
-                if (target != 0) return HandleNav(vk, target, down);
+                int t = FnNavTarget(vk);
+                if (t != 0) return HandleNav(vk, t, down);
             }
 
             // ⌘+Tab ведёт себя как Alt+Tab.
@@ -426,7 +447,30 @@ namespace MagicKeys
                         if (down) MacSend(sc);
                         return true;
                     }
+
+                    // Сочетание с ⌘, которого в таблице нет, глотаем, а не пропускаем.
+                    // Пропустить нельзя по двум причинам, и обе плохи. Первая: после
+                    // MacSend клавиша Windows уже отпущена без возврата, и в приложение
+                    // улетела бы голая буква — ⌘1 после ⌘A печатало «1» прямо в текст.
+                    // Вторая: для пришедшего с мака промах обернулся бы не «ничем»,
+                    // а действием Windows — ⌘I это Win+I, то есть Параметры поверх
+                    // работы, ⌘L — блокировка экрана. Молчание тут единственный
+                    // безобидный ответ.
+                    if ((mm & MacMod.Cmd) != 0) return true;
                 }
+            }
+
+            // Начало навигации — уже ПОСЛЕ сочетаний macOS. Заменитель Fn и ⌥ по
+            // умолчанию одна и та же клавиша, и тогда ⌥+← значит две разные вещи:
+            // «на слово влево» из таблицы и Fn+← = Home. Побеждает таблица — её
+            // сочетания человек видит списком и может выключить по одному, а движение
+            // по словам в тексте нужнее прыжка в начало строки. Раньше выигрывала
+            // навигация, и левый ⌥ вёл себя не так, как правый: ⌥+Backspace слева
+            // удалял слово, справа — стирал символ впереди.
+            if (down && _fnHeld && s.FnNavigation)
+            {
+                int target = FnNavTarget(vk);
+                if (target != 0) return HandleNav(vk, target, down);
             }
 
             if (vk >= Vk.F1 && vk <= Vk.F24)
@@ -453,7 +497,14 @@ namespace MagicKeys
                 int r = HandleLayout(s, k, down);
                 if (r >= 0) return r != 0;
             }
-            else if (s.SwapIsoKeys && Physical(s) == PhysLayout.Iso)
+
+            // Перестановка не в else: HandleLayout отступает в четырёх случаях — для языка
+            // раскладка не назначена, зажат Ctrl или Win, зажат Alt не как третий уровень,
+            // у клавиши нет строки в таблице. Раньше в этих случаях перестановка молча
+            // не выполнялась, и выходило, что по-русски клавиши стоят правильно,
+            // а по-английски переставлены, — при том что переключатель в окне погашен
+            // и обещает, что раскладки Apple всё расставят сами.
+            if (s.SwapIsoKeys && Physical(s) == PhysLayout.Iso)
             {
                 if (k.scanCode == 0x29) { Input.Scan(0x56, false, down); return true; }
                 if (k.scanCode == 0x56) { Input.Scan(0x29, false, down); return true; }
@@ -542,7 +593,10 @@ namespace MagicKeys
             switch (s.OptLevel)
             {
                 case OptLevel.AnyOption: optWanted = _altLeft || _altRight; break;
-                case OptLevel.RightOption: optWanted = _altRight; break;
+                // Если правый ⌥ объявлен обычным Alt, третьего уровня на нём быть
+                // не может — иначе настройка обещает одно, а делает противоположное:
+                // свой третий уровень остаётся, а пропадает системный AltGr.
+                case OptLevel.RightOption: optWanted = _altRight && !s.DisableAltGr; break;
                 default: optWanted = false; break;
             }
             // Alt, который не просили считать третьим уровнем, оставляем меню.
@@ -563,7 +617,7 @@ namespace MagicKeys
 
             // Обычно подменяем только то, что отличается от раскладки Microsoft для этого языка:
             // остальные нажатия пусть идут своим ходом, без синтетического ввода.
-            if (_deadPrefix == null && !s.AppleLayoutAll && !key.Differs(ShiftDown, optWanted)) return -1;
+            if (_deadPrefix == null && !key.Differs(ShiftDown, optWanted)) return -1;
 
             _swallowed.Add(k.scanCode);
 
@@ -660,7 +714,12 @@ namespace MagicKeys
 
             if (phys == ModKey.LWin || phys == ModKey.RWin)
             {
-                _cmdHeld = down;
+                // По назначению, а не по клавише. Если ⌘ переназначена — а схема
+                // «как в macOS» делает её Ctrl, — то Ctrl+Tab должен листать вкладки,
+                // а не открывать переключатель окон, и переводить сочетания ей уже
+                // незачем: человек попросил обмен клавиш вместо перевода. Заодно
+                // «выключить клавишу» перестаёт работать как ⌘.
+                _cmdHeld = down && (target == ModKey.LWin || target == ModKey.RWin);
                 if (!down && _cmdTabAlt)
                 {
                     Input.Key(Vk.LMenu, false);
@@ -724,10 +783,28 @@ namespace MagicKeys
             return true;
         }
 
-        /// <summary>Снять с заменителя Fn его обычное значение, пока он работает как Fn.</summary>
+        /// <summary>Alt и Win, нажатые и отпущенные вхолостую, Windows считает командой.</summary>
+        private static bool IsMenuKey(int vk)
+        {
+            return vk == Vk.LMenu || vk == Vk.RMenu || vk == Vk.LWin || vk == Vk.RWin;
+        }
+
+        /// <summary>
+        /// Снять с заменителя Fn его обычное значение, пока он работает как Fn.
+        ///
+        /// Тот же приём с незанятым кодом, что в MacSend и в ⌘+Tab, нужен и здесь, причём
+        /// дважды. Между настоящим нажатием заменителя и нашим синтетическим отпусканием
+        /// не было ничего — для Windows это одиночный Alt, то есть строка меню; и между
+        /// нашим возвратом и настоящим отпусканием тоже ничего нет. С умолчаниями
+        /// (заменитель — правый ⌥) на каждом ⌥+← в Word дважды всплывали подсказки клавиш.
+        /// </summary>
         private void SubstituteRelease()
         {
-            if (_subReleased++ == 0 && _fnEffectiveVk != 0) Input.Key(_fnEffectiveVk, false);
+            if (_subReleased++ == 0 && _fnEffectiveVk != 0)
+            {
+                if (IsMenuKey(_fnEffectiveVk)) Input.Tap(VkNoop);
+                Input.Key(_fnEffectiveVk, false);
+            }
         }
 
         private void SubstituteRestore()
@@ -735,7 +812,11 @@ namespace MagicKeys
             if (--_subReleased <= 0)
             {
                 _subReleased = 0;
-                if (_fnHeld && _fnEffectiveVk != 0) Input.Key(_fnEffectiveVk, true);
+                if (_fnHeld && _fnEffectiveVk != 0)
+                {
+                    Input.Key(_fnEffectiveVk, true);
+                    if (IsMenuKey(_fnEffectiveVk)) Input.Tap(VkNoop);
+                }
             }
         }
 
@@ -747,6 +828,17 @@ namespace MagicKeys
             if (down) Actions.Begin(a, false, s.BrightnessStep);
             else Actions.End(a);
             return true;
+        }
+
+        /// <summary>
+        /// Уступаем ли эту клавишу ряда драйверу. Одно место на программу: раньше правило
+        /// было записано и здесь, и в окне, причём в окне без «только F1–F12» — и страница
+        /// проверки уверяла, что драйверу отданы F13–F19, которых он не трогает.
+        /// </summary>
+        public static bool YieldsRow(Settings s, int index)
+        {
+            return s != null && index < 12 && s.YieldToAppleDriver
+                && AppleDriver.TakesFunctionRow && KeyWatch.MediaSeen;
         }
 
         private bool HandleFunctionKey(Settings s, int index, int vk, bool down)
@@ -776,8 +868,7 @@ namespace MagicKeys
                 // хоть один медиакод мы уже видели. Не видели ни одного, а F-клавиши
                 // идут — драйвер до этой клавиатуры не добрался (так бывает по Bluetooth),
                 // и уступать некому: ряд просто умрёт.
-                _fkeyYield[index] = index < 12 && s.YieldToAppleDriver
-                                    && AppleDriver.TakesFunctionRow && KeyWatch.MediaSeen;
+                _fkeyYield[index] = YieldsRow(s, index);
             }
             else if (!_fkeyDown[index])
             {

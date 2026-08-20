@@ -22,7 +22,6 @@ namespace MagicKeys
     /// </summary>
     internal static class KeyWatch
     {
-        private const int AppleUsb = 0x05AC, AppleBluetooth = 0x004C;
 
         private static readonly object Sync = new object();
         private static readonly HashSet<int> SeenKeys = new HashSet<int>();
@@ -32,12 +31,10 @@ namespace MagicKeys
         private static Native.WndProc _proc;
         private static IntPtr _window;
         private static volatile int _maxFunctionKey;
-        private static volatile bool _running;
 
         /// <summary>Самая старшая замеченная функциональная клавиша: 12, 19, 24… или 0.</summary>
         public static int MaxFunctionKey { get { return _maxFunctionKey; } }
 
-        public static bool Running { get { return _running; } }
 
         private static volatile bool _ejectSeen;
 
@@ -169,7 +166,6 @@ namespace MagicKeys
                     return;
                 }
 
-                _running = true;
                 Native.MSG msg;
                 while (Native.GetMessageW(out msg, IntPtr.Zero, 0, 0) > 0)
                 {
@@ -180,7 +176,6 @@ namespace MagicKeys
             catch (Exception e) { Diag.Log("перепись клавиш: сбой", e); }
             finally
             {
-                _running = false;
                 if (_window != IntPtr.Zero) { Native.DestroyWindow(_window); _window = IntPtr.Zero; }
             }
         }
@@ -379,10 +374,7 @@ namespace MagicKeys
                 {
                     if (Native.GetRawInputDeviceInfoW(device, Native.RIDI_DEVICENAME, b, ref size) != uint.MaxValue)
                     {
-                        string path = Marshal.PtrToStringUni(b);
-                        if (path != null)
-                            apple = path.IndexOf("VID_05AC", StringComparison.OrdinalIgnoreCase) >= 0
-                                 || path.IndexOf("VID&0001004C", StringComparison.OrdinalIgnoreCase) >= 0;
+                        apple = Devices.IsAppleDevicePath(Marshal.PtrToStringUni(b));
                     }
                 }
                 finally { Marshal.FreeHGlobal(b); }

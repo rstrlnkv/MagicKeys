@@ -57,6 +57,12 @@ namespace MagicKeys
         /// <summary>Действия для F1…F24 — идентификаторы из <see cref="Actions"/>.</summary>
         public string[] FKeys = DefaultFKeys();
 
+        /// <summary>
+        /// Для какого поколения подобран набор в FKeys. Нужно, чтобы подставить
+        /// заводские назначения самой — но только пока человек их не трогал.
+        /// </summary>
+        public AppleGen FKeysGen = AppleGen.Unknown;
+
         /// <summary>Клавиша ⌧ на цифровом блоке: у Apple это «clear», Windows видит Num Lock.</summary>
         public string NumpadClear = "key.delete";
 
@@ -67,7 +73,7 @@ namespace MagicKeys
         public string EjectKey = "none";
 
         /// <summary>Сколько функциональных клавиш замечено у клавиатуры Apple на самом деле.</summary>
-        public int ObservedFunctionKeys = 0;
+
 
         public ModKey MapLCtrl = ModKey.LCtrl;
         public ModKey MapLWin = ModKey.LWin;
@@ -89,7 +95,7 @@ namespace MagicKeys
         public OptLevel OptLevel = OptLevel.RightOption;
 
         /// <summary>Подменять все клавиши раскладки, а не только отличающиеся от раскладки Microsoft.</summary>
-        public bool AppleLayoutAll = false;
+
 
         /// <summary>Какая раскладка Apple применяется к какому языку ввода Windows.</summary>
         public LayoutBinding[] LayoutBindings = new LayoutBinding[0];
@@ -110,7 +116,9 @@ namespace MagicKeys
         public bool CmdTabSwitchesWindows = false;
 
         /// <summary>Переводить сочетания macOS в виндовые: ⌘C, ⌘←, ⌘Q и прочие.</summary>
-        public bool MacShortcuts = false;
+        // Включены сразу: ради них программа и переделывалась. Выключенными по умолчанию
+        // они означали, что пришедший с мака при первом запуске не получает ничего.
+        public bool MacShortcuts = true;
 
         /// <summary>Какие сочетания выключены по отдельности — список их ключей.</summary>
         public string[] MacShortcutsOff = new string[0];
@@ -161,7 +169,7 @@ namespace MagicKeys
         public bool ShowBrightnessOsd = true;
         public int BrightnessStep = 10;
 
-        public bool Autostart = false;
+
         public bool StartMinimized = false;
 
         /// <summary>F1…F24 — больше в Windows не бывает.</summary>

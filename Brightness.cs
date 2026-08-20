@@ -36,7 +36,6 @@ namespace MagicKeys
 
 
         /// <summary>Сообщает новый уровень в процентах — для экранного индикатора.</summary>
-        public static event Action<int> Changed;
 
         // Зовётся из обработчика хука, поэтому здесь только атомарная прибавка и побудка
         // рабочего потока. Запись в журнал открывает и закрывает файл на каждой строке —
@@ -145,14 +144,15 @@ namespace MagicKeys
                 shownName = target0.Name;
             }
 
-            if (shown < 0) shown = ApplyWmi(delta);
+            // И здесь тоже только для встроенной панели. Эта ветка достаётся случаю,
+            // когда по DDC/CI не отвечает ни один монитор: на ноутбуке с телевизором
+            // без неё приглушалась бы панель ноутбука, где бы ни стоял указатель.
+            if (shown < 0 && IsInternal(cursorScreen)) shown = ApplyWmi(delta);
             Diag.Log("яркость: итог " + shown + "% на " + ScreenName(shownOn) + (shownName == null ? "" : " (" + shownName + ")"));
             if (shown >= 0)
             {
-                Action<int> h = Changed;
-                if (h != null) h(shown);
-                Action<IntPtr, string, int> h2 = ChangedOn;
-                if (h2 != null) h2(shownOn, shownName, shown);
+                Action<IntPtr, string, int> h = ChangedOn;
+                if (h != null) h(shownOn, shownName, shown);
             }
         }
 
@@ -265,7 +265,9 @@ namespace MagicKeys
         private static Panel UnderCursor(List<Panel> panels, IntPtr screen)
         {
             if (panels == null || panels.Count == 0) return null;
-            if (screen == IntPtr.Zero) return panels[0];
+            // Экран под указателем неизвестен — не подсовываем первый попавшийся:
+            // «менять соседний» здесь так же неверно, как и везде.
+            if (screen == IntPtr.Zero) return null;
             foreach (Panel p in panels)
                 if (p.Screen == screen) return p;
             return null;

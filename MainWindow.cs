@@ -61,7 +61,6 @@ namespace MagicKeys
             // Icon намеренно не задаём: пустое значение заставляет WPF взять значок
             // из самого .exe, а он многоразмерный — и в заголовке, и на панели задач,
             // и в Alt+Tab система возьмёт подходящий размер, а не растянет один.
-            if (!Fluent.HasEmbeddedIcon()) Icon = Fluent.MakeWindowIcon();
             SnapsToDevicePixels = true;
             // Прячут окно — снимаем подписку, показывают — собираем страницу заново.
             // Без второй половины страница проверки после закрытия и открытия оставалась
@@ -320,6 +319,15 @@ namespace MagicKeys
 
             var fnBox = Combo(fnChoices.ToArray(), _s.FnSubstitute,
                 delegate(object v) { _s.FnSubstitute = (ModKey)v; Save(); });
+
+            if (!_s.MediaFirst && _s.FnSubstitute == ModKey.None && !YieldingNow)
+            {
+                stack.Children.Add(Card("Назначения ниже сейчас ни на что не влияют", null,
+                    Note("Выбран режим «F-клавиши сразу», а заменителя Fn нет — значит " +
+                         "F1–F12 всегда приходят обычными F-клавишами и уходят в программы " +
+                         "как есть. Чтобы назначения заработали, выберите заменитель Fn " +
+                         "в карточке ниже или переключитесь на «Медиа сразу».")));
+            }
 
             stack.Children.Add(Card("Заменитель Fn", null,
                 Row("Клавиша", "С ней режим временно переворачивается", fnBox),
@@ -611,6 +619,9 @@ namespace MagicKeys
             stack.Children.Add(Card("Клавиши слева от «1» и слева от «Z»", null, isoToggle, Note(isoNote)));
 
             // ---- раскладки Apple ----
+            // Третий уровень раньше был спрятан за режим разработчика. Для пришедшего
+            // с мака это не тонкость: от него зависит, набираются ли ⌥-символы и
+            // открывает ли левый Alt строку меню. Самое человеческое решение на странице.
             var levelBox = Combo(new[]
             {
                 new Choice { Value = OptLevel.RightOption, Text = "Правый ⌥ (как AltGr)" },
@@ -621,13 +632,7 @@ namespace MagicKeys
             stack.Children.Add(Card("Раскладки Apple", null,
                 Toggle("Воспроизводить раскладки macOS", _s.AppleLayoutEnabled,
                     delegate(bool v) { _s.AppleLayoutEnabled = v; Save(); BuildPage(); }),
-                _s.DeveloperMode
-                    ? Row("Третий уровень", "Символы, напечатанные на клавише третьими", levelBox)
-                    : (UIElement)new StackPanel { Visibility = Visibility.Collapsed },
-                _s.DeveloperMode
-                    ? (UIElement)Toggle("Подменять все клавиши, а не только отличающиеся от раскладки Microsoft",
-                        _s.AppleLayoutAll, delegate(bool v) { _s.AppleLayoutAll = v; Save(); })
-                    : new StackPanel { Visibility = Visibility.Collapsed },
+                Row("Третий уровень", "Символы, напечатанные на клавише третьими", levelBox),
                 Note("Apple раскладывает буквы и знаки иначе, чем Microsoft, — и именно поэтому " +
                      "Boot Camp когда-то доставлял в Windows отдельные языки ввода «(Apple)». " +
                      "Здесь то же самое делается без установки раскладок в систему: программа " +
@@ -772,8 +777,8 @@ namespace MagicKeys
                      "Magic Keyboard выключена, а её правила всё ещё в силе.")));
 
             stack.Children.Add(Card("Запуск", null,
-                Toggle("Запускать вместе с Windows", _s.Autostart,
-                    delegate(bool v) { _s.Autostart = v; Autostart.Set(v); Save(); }),
+                Toggle("Запускать вместе с Windows", Autostart.Enabled,
+                    delegate(bool v) { Autostart.Set(v); }),
                 Toggle("Запускаться свёрнутой в значок", _s.StartMinimized,
                     delegate(bool v) { _s.StartMinimized = v; Save(); })));
 
@@ -1155,7 +1160,10 @@ namespace MagicKeys
                              "медиакод, она снова уступит драйверу.\n\n" +
                              "Проверить, что именно приходит, можно на странице «Проверка клавиш» — " +
                              "одного нажатия достаточно."),
-                        LinkButton("Перейти к проверке клавиш", delegate { GoTo("selftest"); })));
+                        _pages.Contains("selftest")
+                            ? (UIElement)LinkButton("Перейти к проверке клавиш", delegate { GoTo("selftest"); })
+                            : (UIElement)Note("Посмотреть, что приходит с клавиатуры, можно на странице " +
+                                   "«Проверка клавиш» — она открывается в режиме разработчика.")));
                 }
 
                 stack.Children.Add(Card("Кто занимается функциональным рядом", null,
@@ -1816,7 +1824,7 @@ namespace MagicKeys
         /// </summary>
         private bool YieldingNow
         {
-            get { return _s.YieldToAppleDriver && AppleDriver.TakesFunctionRow && KeyWatch.MediaSeen; }
+            get { return Engine.YieldsRow(_s, 0); }
         }
 
         /// <summary>Кнопка-переход на другую страницу.</summary>

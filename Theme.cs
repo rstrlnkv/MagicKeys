@@ -141,12 +141,10 @@ namespace MagicKeys
         {
             bool dark = IsDark;
             Color accent = Accent();
-            Color white = Colors.White, black = Colors.Black;
+            Color white = Colors.White;
 
             // в тёмной теме системный акцент часто слишком тёмный — подсветляем
             Color accentUi = dark ? Mix(accent, white, Luminance(accent) < 0.35 ? 0.35 : 0.15) : accent;
-            Color accentHover = dark ? Mix(accentUi, white, 0.12) : Mix(accentUi, white, 0.12);
-            Color accentPress = Mix(accentUi, black, 0.15);
             string accentText = Luminance(accentUi) > 0.6 ? "#FF000000" : "#FFFFFFFF";
 
             string xaml = Xaml
@@ -160,13 +158,8 @@ namespace MagicKeys
                 .Replace("{TEXTSEC}", dark ? "#B0FFFFFF" : "#9E000000")
                 .Replace("{TEXTTER}", dark ? "#78FFFFFF" : "#72000000")
                 .Replace("{HOVER}", dark ? "#14FFFFFF" : "#0A000000")
-                .Replace("{PRESSED}", dark ? "#0AFFFFFF" : "#14000000")
                 .Replace("{ACCENT}", Hex(accentUi))
-                .Replace("{ACCENTHOVER}", Hex(accentHover))
-                .Replace("{ACCENTPRESS}", Hex(accentPress))
-                .Replace("{ACCENTTEXT}", accentText)
-                .Replace("{SCREEN}", dark ? "#FF3A3A3A" : "#FFE8E8E8")
-                .Replace("{SCREENOFF}", dark ? "#FF262626" : "#FFEDEDED");
+                .Replace("{ACCENTTEXT}", accentText);
 
             _appliedDark = dark;
             _appliedAccent = accent;
@@ -187,13 +180,8 @@ namespace MagicKeys
   <SolidColorBrush x:Key='TextSec' Color='{TEXTSEC}'/>
   <SolidColorBrush x:Key='TextTer' Color='{TEXTTER}'/>
   <SolidColorBrush x:Key='Hover' Color='{HOVER}'/>
-  <SolidColorBrush x:Key='Pressed' Color='{PRESSED}'/>
   <SolidColorBrush x:Key='Accent' Color='{ACCENT}'/>
-  <SolidColorBrush x:Key='AccentHover' Color='{ACCENTHOVER}'/>
-  <SolidColorBrush x:Key='AccentPress' Color='{ACCENTPRESS}'/>
   <SolidColorBrush x:Key='AccentText' Color='{ACCENTTEXT}'/>
-  <SolidColorBrush x:Key='Screen' Color='{SCREEN}'/>
-  <SolidColorBrush x:Key='ScreenOff' Color='{SCREENOFF}'/>
 
   <FontFamily x:Key='UiFont'>Segoe UI Variable Text, Segoe UI</FontFamily>
   <FontFamily x:Key='UiFontDisplay'>Segoe UI Variable Display, Segoe UI</FontFamily>
@@ -219,12 +207,6 @@ namespace MagicKeys
     <Setter Property='Foreground' Value='{StaticResource Text}'/>
   </Style>
 
-  <Style x:Key='SectionHeader' TargetType='TextBlock'>
-    <Setter Property='FontFamily' Value='{StaticResource UiFont}'/>
-    <Setter Property='FontSize' Value='12'/>
-    <Setter Property='FontWeight' Value='SemiBold'/>
-    <Setter Property='Foreground' Value='{StaticResource TextTer}'/>
-  </Style>
 
   <Style x:Key='Card' TargetType='Border'>
     <Setter Property='Background' Value='{StaticResource Layer}'/>
@@ -273,58 +255,7 @@ namespace MagicKeys
     <Setter Property='FontWeight' Value='SemiBold'/>
   </Style>
 
-  <Style x:Key='BtnSubtle' TargetType='Button' BasedOn='{StaticResource Btn}'>
-    <Setter Property='Background' Value='Transparent'/>
-    <Setter Property='BorderBrush' Value='Transparent'/>
-    <Setter Property='Template'>
-      <Setter.Value>
-        <ControlTemplate TargetType='Button'>
-          <Border x:Name='Bd' Background='Transparent' CornerRadius='4' Padding='{TemplateBinding Padding}'>
-            <ContentPresenter HorizontalAlignment='Center' VerticalAlignment='Center'/>
-          </Border>
-          <ControlTemplate.Triggers>
-            <Trigger Property='IsMouseOver' Value='True'>
-              <Setter TargetName='Bd' Property='Background' Value='{StaticResource Hover}'/>
-            </Trigger>
-            <Trigger Property='IsPressed' Value='True'>
-              <Setter TargetName='Bd' Property='Background' Value='{StaticResource Pressed}'/>
-            </Trigger>
-            <Trigger Property='IsEnabled' Value='False'>
-              <Setter TargetName='Bd' Property='Opacity' Value='0.4'/>
-            </Trigger>
-          </ControlTemplate.Triggers>
-        </ControlTemplate>
-      </Setter.Value>
-    </Setter>
-  </Style>
 
-  <Style x:Key='Input' TargetType='TextBox'>
-    <Setter Property='FontFamily' Value='{StaticResource UiFont}'/>
-    <Setter Property='FontSize' Value='14'/>
-    <Setter Property='Foreground' Value='{StaticResource Text}'/>
-    <Setter Property='CaretBrush' Value='{StaticResource Text}'/>
-    <Setter Property='Background' Value='{StaticResource LayerAlt}'/>
-    <Setter Property='BorderBrush' Value='{StaticResource StrokeStrong}'/>
-    <Setter Property='Height' Value='34'/>
-    <Setter Property='Padding' Value='10,0'/>
-    <Setter Property='VerticalContentAlignment' Value='Center'/>
-    <Setter Property='Template'>
-      <Setter.Value>
-        <ControlTemplate TargetType='TextBox'>
-          <Border x:Name='Bd' Background='{TemplateBinding Background}' BorderBrush='{TemplateBinding BorderBrush}'
-                  BorderThickness='1' CornerRadius='4' Padding='{TemplateBinding Padding}'>
-            <ScrollViewer x:Name='PART_ContentHost' VerticalAlignment='Center'/>
-          </Border>
-          <ControlTemplate.Triggers>
-            <Trigger Property='IsFocused' Value='True'>
-              <Setter TargetName='Bd' Property='BorderBrush' Value='{StaticResource Accent}'/>
-              <Setter TargetName='Bd' Property='BorderThickness' Value='1,1,1,2'/>
-            </Trigger>
-          </ControlTemplate.Triggers>
-        </ControlTemplate>
-      </Setter.Value>
-    </Setter>
-  </Style>
 
   <Style x:Key='ComboItem' TargetType='ComboBoxItem'>
     <Setter Property='FontFamily' Value='{StaticResource UiFont}'/>
@@ -500,135 +431,10 @@ namespace MagicKeys
     </Setter>
   </Style>
 
-  <Style TargetType='ToolTip'>
-    <Setter Property='Template'>
-      <Setter.Value>
-        <ControlTemplate TargetType='ToolTip'>
-          <Border Background='{StaticResource Flyout}' BorderBrush='{StaticResource Stroke}' BorderThickness='1'
-                  CornerRadius='6' Padding='10,6'>
-            <ContentPresenter/>
-          </Border>
-        </ControlTemplate>
-      </Setter.Value>
-    </Setter>
-    <Setter Property='Foreground' Value='{StaticResource Text}'/>
-  </Style>
 
-  <Style x:Key='FlyoutMenuItem' TargetType='MenuItem'>
-    <Setter Property='FontFamily' Value='{StaticResource UiFont}'/>
-    <Setter Property='FontSize' Value='14'/>
-    <Setter Property='Foreground' Value='{StaticResource Text}'/>
-    <Setter Property='Template'>
-      <Setter.Value>
-        <ControlTemplate TargetType='MenuItem'>
-          <Border x:Name='Bd' Background='Transparent' CornerRadius='4' Padding='10,7' Margin='0,1'>
-            <Grid>
-              <Grid.ColumnDefinitions>
-                <ColumnDefinition Width='18'/>
-                <ColumnDefinition Width='*'/>
-                <ColumnDefinition Width='Auto'/>
-              </Grid.ColumnDefinitions>
-              <Ellipse x:Name='Mark' Width='7' Height='7' Fill='{StaticResource Accent}'
-                       HorizontalAlignment='Left' VerticalAlignment='Center' Visibility='Collapsed'/>
-              <ContentPresenter Grid.Column='1' ContentSource='Header' VerticalAlignment='Center'/>
-              <TextBlock Grid.Column='2' Text='{TemplateBinding InputGestureText}' Margin='18,0,0,0'
-                         Foreground='{StaticResource TextTer}' FontSize='12' VerticalAlignment='Center'/>
-              <TextBlock x:Name='Chevron' Grid.Column='2' Text='&#xE76C;' FontFamily='{StaticResource IconFont}'
-                         FontSize='10' Margin='18,0,0,0' Foreground='{StaticResource TextSec}'
-                         VerticalAlignment='Center' Visibility='Collapsed'/>
-              <Popup x:Name='PART_Popup' Placement='Right' HorizontalOffset='2' AllowsTransparency='True'
-                     Focusable='False' PopupAnimation='Fade'
-                     IsOpen='{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}'>
-                <Border Background='{StaticResource Flyout}' BorderBrush='{StaticResource Stroke}'
-                        BorderThickness='1' CornerRadius='8' Padding='4' MinWidth='200' Margin='0,0,8,8'>
-                  <Border.Effect>
-                    <DropShadowEffect BlurRadius='20' ShadowDepth='4' Opacity='0.3' Color='#000000'/>
-                  </Border.Effect>
-                  <StackPanel IsItemsHost='True'/>
-                </Border>
-              </Popup>
-            </Grid>
-          </Border>
-          <ControlTemplate.Triggers>
-            <Trigger Property='HasItems' Value='True'>
-              <Setter TargetName='Chevron' Property='Visibility' Value='Visible'/>
-            </Trigger>
-            <Trigger Property='IsChecked' Value='True'>
-              <Setter TargetName='Mark' Property='Visibility' Value='Visible'/>
-              <Setter Property='FontWeight' Value='SemiBold'/>
-            </Trigger>
-            <Trigger Property='IsHighlighted' Value='True'>
-              <Setter TargetName='Bd' Property='Background' Value='{StaticResource Hover}'/>
-            </Trigger>
-            <Trigger Property='IsEnabled' Value='False'>
-              <Setter Property='Foreground' Value='{StaticResource TextTer}'/>
-            </Trigger>
-          </ControlTemplate.Triggers>
-        </ControlTemplate>
-      </Setter.Value>
-    </Setter>
-  </Style>
 
-  <Style x:Key='MenuSeparator' TargetType='Separator'>
-    <Setter Property='Template'>
-      <Setter.Value>
-        <ControlTemplate TargetType='Separator'>
-          <Border Height='1' Background='{StaticResource Stroke}' Margin='10,5'/>
-        </ControlTemplate>
-      </Setter.Value>
-    </Setter>
-  </Style>
 
-  <Style TargetType='Separator' BasedOn='{StaticResource MenuSeparator}'/>
 
-  <Style x:Key='FlyoutMenu' TargetType='ContextMenu'>
-    <Setter Property='Template'>
-      <Setter.Value>
-        <ControlTemplate TargetType='ContextMenu'>
-          <Border x:Name='Root' Background='{StaticResource Flyout}' BorderBrush='{StaticResource Stroke}'
-                  BorderThickness='1' CornerRadius='8' Padding='4' MinWidth='220' Opacity='0'
-                  RenderTransformOrigin='0.5,1'>
-            <Border.RenderTransform>
-              <TranslateTransform x:Name='Slide' Y='10'/>
-            </Border.RenderTransform>
-            <Border.Effect>
-              <DropShadowEffect BlurRadius='20' ShadowDepth='4' Opacity='0.3' Color='#000000'/>
-            </Border.Effect>
-            <StackPanel IsItemsHost='True'/>
-          </Border>
-          <ControlTemplate.Triggers>
-            <!-- своё появление: у меню с собственным шаблоном системная анимация не наследуется -->
-            <Trigger Property='IsOpen' Value='True'>
-              <Trigger.EnterActions>
-                <BeginStoryboard>
-                  <Storyboard>
-                    <DoubleAnimation Storyboard.TargetName='Root' Storyboard.TargetProperty='Opacity'
-                                     To='1' Duration='0:0:0.13'/>
-                    <DoubleAnimation Storyboard.TargetName='Slide' Storyboard.TargetProperty='Y'
-                                     To='0' Duration='0:0:0.18'>
-                      <DoubleAnimation.EasingFunction>
-                        <CubicEase EasingMode='EaseOut'/>
-                      </DoubleAnimation.EasingFunction>
-                    </DoubleAnimation>
-                  </Storyboard>
-                </BeginStoryboard>
-              </Trigger.EnterActions>
-              <Trigger.ExitActions>
-                <BeginStoryboard>
-                  <Storyboard>
-                    <DoubleAnimation Storyboard.TargetName='Root' Storyboard.TargetProperty='Opacity'
-                                     To='0' Duration='0:0:0.08'/>
-                    <DoubleAnimation Storyboard.TargetName='Slide' Storyboard.TargetProperty='Y'
-                                     To='10' Duration='0:0:0.08'/>
-                  </Storyboard>
-                </BeginStoryboard>
-              </Trigger.ExitActions>
-            </Trigger>
-          </ControlTemplate.Triggers>
-        </ControlTemplate>
-      </Setter.Value>
-    </Setter>
-  </Style>
 
 </ResourceDictionary>";
     }

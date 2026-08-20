@@ -62,6 +62,21 @@ namespace MagicKeys
         /// <summary>Путь к вендорной коллекции Apple «Device Management» — через неё спрашивается заряд.</summary>
         public static string AppleStatusPath { get { lock (Sync) return _appleStatusPath; } }
 
+        /// <summary>
+        /// Apple ли это устройство, если судить по пути сырого ввода. Одно правило
+        /// на программу: раньше их было два — здесь по идентификатору поставщика и
+        /// строке производителя, а в переписи клавиш по двум готовым строкам, — и они
+        /// расходились. На одной и той же клавиатуре по Bluetooth «переназначения
+        /// приостановлены?» и «это событие с Apple?» могли ответить по-разному.
+        /// </summary>
+        public static bool IsAppleDevicePath(string path)
+        {
+            if (String.IsNullOrEmpty(path)) return false;
+            if (path.IndexOf("VID_05AC", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            // По Bluetooth путь записан иначе: VID&xxxx004C, где xxxx — вид шины.
+            return Regex.IsMatch(path, "VID&[0-9A-Fa-f]{4}004C", RegexOptions.IgnoreCase);
+        }
+
         public static IList<KeyboardInfo> Known
         {
             get { lock (Sync) return _cache; }
@@ -144,6 +159,7 @@ namespace MagicKeys
                 ReadStrings(path, info);
 
                 // Производитель из самого устройства надёжнее догадок по идентификатору.
+                // Само же правило по пути — общее, см. IsAppleDevicePath.
                 info.IsApple = info.Vendor == AppleUsb || info.Vendor == AppleBluetooth
                             || (info.Manufacturer != null &&
                                 info.Manufacturer.IndexOf("Apple", StringComparison.OrdinalIgnoreCase) >= 0);

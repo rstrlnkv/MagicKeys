@@ -62,7 +62,6 @@ namespace MagicKeys
 
             _settings = Settings.Load();
             if (dev) _settings.DeveloperMode = true;
-            _settings.Autostart = Autostart.Enabled;
             if (_settings.StartMinimized) startHidden = true;
 
             _engine = new Engine();
@@ -70,6 +69,7 @@ namespace MagicKeys
             {
                 Dispatcher.BeginInvoke((Action)delegate
                 {
+                    if (AdoptModelDefaults()) _engine.Apply(_settings);
                     UpdateTrayText();
                     if (_window != null) _window.RefreshDevices();
                 });
@@ -82,13 +82,6 @@ namespace MagicKeys
             {
                 Dispatcher.BeginInvoke((Action)delegate
                 {
-                    int seen = KeyWatch.MaxFunctionKey;
-                    if (seen > _settings.ObservedFunctionKeys)
-                    {
-                        _settings.ObservedFunctionKeys = seen;
-                        _settings.Save();
-                        Diag.Log("замечена клавиша F" + seen + "; список расширен");
-                    }
                     if (_window != null) _window.RefreshDevices();
                 });
             };
@@ -228,6 +221,36 @@ namespace MagicKeys
                 if (old != null) old.Dispose();
             }
             catch (Exception e) { Diag.Log("значок в трее: не удалось обновить", e); }
+        }
+
+        /// <summary>
+        /// Подставить заводские назначения опознанной модели — но только пока человек
+        /// их не менял. У клавиатур 2021 и 2024 годов на F5 и F6 напечатаны диктовка
+        /// и «не беспокоить»; подписи в окне их показывали, а действие стояло «ничего»,
+        /// потому что набор по умолчанию был общий, от модели 2015 года.
+        /// </summary>
+        private bool AdoptModelDefaults()
+        {
+            try
+            {
+                AppleModel m = Devices.AppleModel;
+                if (m == null || m.Gen == AppleGen.Unknown) return false;
+                if (_settings.FKeysGen == m.Gen) return false;
+
+                // Меняем, только если набор ровно такой, каким мы его и оставили.
+                string[] mine = Models.DefaultFKeys(_settings.FKeysGen);
+                string[] now = _settings.FKeys;
+                if (now == null || now.Length != mine.Length) return false;
+                for (int i = 0; i < mine.Length; i++)
+                    if (now[i] != mine[i]) return false;
+
+                _settings.FKeys = Models.DefaultFKeys(m.Gen);
+                _settings.FKeysGen = m.Gen;
+                _settings.Save();
+                Diag.Log("подставлены заводские назначения: " + Models.GenName(m.Gen));
+                return true;
+            }
+            catch (Exception e) { Diag.Log("не удалось подставить заводские назначения", e); return false; }
         }
 
         private void UpdateTrayText()

@@ -160,17 +160,6 @@ namespace MagicKeys
             lock (Sync) return SeenKeys.Contains(vk);
         }
 
-        private static int[] AllUnused()
-        {
-            lock (Sync)
-            {
-                int[] a = new int[SeenKeys.Count];
-                SeenKeys.CopyTo(a);
-                Array.Sort(a);
-                return a;
-            }
-        }
-
         /// <summary>
         /// Почему перепись клавиш не работает, или null. Молчать здесь нельзя: без сырого
         /// ввода программа не знает, с какой клавиатуры пришло нажатие, — а заодно

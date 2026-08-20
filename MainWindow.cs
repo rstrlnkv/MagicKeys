@@ -172,12 +172,14 @@ namespace MagicKeys
         }
 
         /// <summary>
+        /// Что показывалось в прошлый раз — чтобы не пересобирать страницу зря.
+        /// </summary>
+        private string _deviceMark;
+
+        /// <summary>
         /// Обновляет строку об устройствах в подвале и пересобирает страницу: пришедшая
         /// клавиатура меняет и подписи клавиш, и заводские назначения верхнего ряда.
         /// </summary>
-        /// <summary>Что показывалось в прошлый раз — чтобы не пересобирать страницу зря.</summary>
-        private string _deviceMark;
-
         public void RefreshDevices()
         {
             IList<KeyboardInfo> all = Devices.Known;
@@ -198,7 +200,11 @@ namespace MagicKeys
             // и роняет раскрытый список под указателем.
             string now = all.Count + "|" + apple + "|" + KeyWatch.MaxFunctionKey + "|"
                        + (int)KeyWatch.DetectedPhysical + "|" + KeyboardBattery.Percent + "|"
-                       + (Devices.AppleModel == null ? "" : Devices.AppleModel.Name);
+                       + (Devices.AppleModel == null ? "" : Devices.AppleModel.Name) + "|"
+                       // Медиакоды и ⏏ страницы показывают не меньше, чем клавиатуры:
+                       // от первого медиакода зависит, кто занимается верхним рядом.
+                       + KeyWatch.MediaSeen + "|" + KeyWatch.EjectSeen + "|"
+                       + KeyWatch.AllUsages().Length + "|" + AppleDriver.TakesFunctionRow;
             if (now == _deviceMark) return;
             _deviceMark = now;
             BuildPage();
@@ -328,7 +334,7 @@ namespace MagicKeys
             {
                 new Choice { Value = true,  Text = "Медиафункции сразу (как в macOS)" },
                 new Choice { Value = false, Text = "F-клавиши сразу (как обычно в Windows)" }
-            }, _s.MediaFirst, delegate(object v) { _s.MediaFirst = (bool)v; Save(); });
+            }, _s.MediaFirst, delegate(object v) { _s.MediaFirst = (bool)v; Save(); BuildPage(); });
 
             stack.Children.Add(Card("Что делают F1–F12 без модификатора", null,
                 Row("Основной режим", null, modeBox)));
@@ -382,8 +388,9 @@ namespace MagicKeys
                           "строки — на ⌘←→."
                         : "Fn+↑↓ листают страницу, Fn+←→ уводят в начало и конец строки, " +
                           "Fn+Backspace удаляет вперёд, Fn+Enter — это Insert."),
-                Note(AppleDriver.TakesFunctionRow
-                    ? "С драйвером Apple настоящая Fn работает, и заменитель не нужен."
+                Note(YieldingNow
+                    ? "Сейчас верхним рядом занимается драйвер Apple: с ним работает настоящая Fn, " +
+                      "и заменитель не нужен."
                     : _s.FnSubstitute == ModKey.None
                     ? "Magic Keyboard не отправляет Fn в Windows — её обрабатывает сама " +
                       "клавиатура. Поэтому и нужна замена: выберите клавишу выше."
@@ -980,9 +987,9 @@ namespace MagicKeys
                      "а переводит сами сочетания. Поэтому получается и то, чего заменой " +
                      "клавиш не добиться: ⌘← уходит в начало строки, ⌘Q закрывает программу.")));
 
-            // Переключение окон — до общего выключателя: ⌘+Tab работает независимо
-            // от него (Engine спрашивает свою настройку), и, спрятав карточку вместе
-            // с остальными, мы отбирали у настройки единственного хозяина.
+            // Переключение окон — до раннего возврата: ⌘+Tab работает независимо
+            // от общего выключателя (перехват спрашивает свою настройку), и, спрятав
+            // карточку вместе с остальными, мы отбирали у настройки единственного хозяина.
             stack.Children.Add(Card("Переключение окон", null,
                 Toggle("⌘+Tab переключает окна, как Alt+Tab", _s.CmdTabSwitchesWindows,
                     delegate(bool v) { _s.CmdTabSwitchesWindows = v; Save(); })));
@@ -1328,7 +1335,7 @@ namespace MagicKeys
                     "Делает это драйвер; MagicKeys функциональный ряд не трогает. " +
                     "Яркость остаётся: драйвер переводит F1 и F2 в коды, которые Windows " +
                     "применяет только к панели ноутбука, — программа ловит их и отдаёт " +
-                    "внешним мониторам сама.",
+                    "внешним мониторам сама, пока переназначения включены.",
                     delegate { ApplyFnBehavior(1); }));
                 modes.Children.Add(PresetButton(
                     "F-клавиши сразу" + (fb == 0 ? "  ·  сейчас так" : ""),
@@ -1520,7 +1527,12 @@ namespace MagicKeys
 
             if (installed)
             {
-                var remove = new Button { Content = "Удалить драйвер", Margin = new Thickness(0, 0, 8, 8) };
+                var remove = new Button
+                {
+                    Content = "Удалить драйвер",
+                    Margin = new Thickness(0, 0, 8, 8),
+                    IsEnabled = !SetupBusy
+                };
                 remove.SetResourceReference(StyleProperty, "Btn");
                 remove.Click += delegate
                 {
@@ -1528,18 +1540,27 @@ namespace MagicKeys
                     // и всё это время наверху висит запрос прав. На потоке окна это
                     // означало бы «программа не отвечает» ровно тогда, когда человек
                     // на неё смотрит.
-                    remove.IsEnabled = false;
-                    SetupSay("Удаляю драйвер…");
+                    _driverBusy = true;
+                    _fnNotice = "Удаляю драйвер…";
+                    BuildPage();
+
                     ThreadPool.QueueUserWorkItem(delegate
                     {
                         string output;
                         bool ok = false;
                         try { ok = AppleDriverSetup.Uninstall("keymagic2.inf", out output); }
                         catch (Exception e) { output = e.Message; }
-                        SetupSay((ok ? "Драйвер удалён."
-                                     : "Удалить не вышло.") + "\n\n" + output);
                         try { AppleDriver.Refresh(true); } catch { }
-                        ToWindow(delegate { if (CurrentPage == "driver") BuildPage(); });
+
+                        string say = (ok ? "Драйвер удалён." : "Удалить не вышло.")
+                                   + (String.IsNullOrEmpty(output) ? "" : "\n\n" + output);
+                        ToWindow(delegate
+                        {
+                            _driverBusy = false;
+                            if (CurrentPage != "driver") return;
+                            _fnNotice = say;
+                            BuildPage();
+                        });
                     });
                 };
                 buttons.Children.Add(remove);
@@ -1588,7 +1609,13 @@ namespace MagicKeys
         private volatile string _setupText;
 
         /// <summary>Идёт ли сейчас работа с драйвером.</summary>
-        private bool SetupBusy { get { return _setupThread != null && _setupThread.IsAlive; } }
+        /// <summary>Идёт долгая работа с драйвером: удаление или запись его настройки.</summary>
+        private bool _driverBusy;
+
+        private bool SetupBusy
+        {
+            get { return _driverBusy || (_setupThread != null && _setupThread.IsAlive); }
+        }
 
         private void SetupSay(string text)
         {
@@ -2457,7 +2484,13 @@ namespace MagicKeys
         /// </summary>
         private void ApplyFnBehavior(int value)
         {
-            SetupSay("Записываю настройку драйвера…");
+            // Отчёт кладём в свой слот и перестраиваем страницу — в чужую карточку
+            // про скачивание пакета Apple ему не место: там он вдобавок оставался
+            // навсегда, затирая полезный текст про 7-Zip.
+            _fnNotice = "Записываю настройку драйвера…";
+            _driverBusy = true;
+            BuildPage();
+
             ThreadPool.QueueUserWorkItem(delegate
             {
                 string error = null;
@@ -2467,6 +2500,8 @@ namespace MagicKeys
 
                 ToWindow(delegate
                 {
+                    _driverBusy = false;
+                    if (CurrentPage != "driver") return;   // ушли со страницы — некому показывать
                     _fnNotice = ok
                         ? "Записано. Драйвер перечитает значение при следующем подключении "
                           + "клавиатуры — переподключите её или перезагрузитесь, до этого ряд "
@@ -2487,7 +2522,7 @@ namespace MagicKeys
         {
             var done = new List<string>();
 
-            if (AppleDriver.TakesFunctionRow)
+            if (YieldingNow)
             {
                 if (_s.FnSubstitute != ModKey.None)
                 {

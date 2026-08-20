@@ -103,9 +103,10 @@ namespace MagicKeys
                 if (!e.Media) return;
                 // Снимок: сюда приходят с потока переписи клавиш, а живой объект правит окно.
                 Settings s = _engine.Current;
-                // Без настройки: чужой драйвер шлёт эти коды или не шлёт, и подхватывать
-                // их безвредно в любом случае — Windows на обычном ПК всё равно применяет
-                // их только к встроенной панели, которой тут нет.
+                // Отдельной настройки нет: чужой драйвер шлёт эти коды или не шлёт,
+                // и подхватывать их безвредно в любом случае — Windows на обычном ПК всё
+                // равно применяет их только к встроенной панели, которой тут нет. А вот
+                // общий выключатель спрашиваем: «Переназначения: Выключены» значит всё.
                 if (s == null || !s.Enabled) return;
                 if (e.Code == Native.UsageBrightnessUp) Brightness.Nudge(Settings.BrightnessStep);
                 else if (e.Code == Native.UsageBrightnessDown) Brightness.Nudge(-Settings.BrightnessStep);
@@ -193,7 +194,10 @@ namespace MagicKeys
                 // Окно, если оно открыто, показывает то же самое списком — пересобираем,
                 // иначе там останется прежний ответ, и первый же щелчок по списку
                 // «выберет» показанное, а настройка к этому времени уже другая.
-                if (_window != null && _window.IsVisible) _window.Rebuild();
+                // И спрятанное тоже: закрытие прячет окно в трей, то есть спрятанное —
+                // обычное его состояние. Без этого страница показывала прежний ответ
+                // до следующего запуска, а первый щелчок по списку «выбирал» показанное.
+                if (_window != null) _window.Rebuild();
                 ApplyAndSave();
             };
 
@@ -296,20 +300,20 @@ namespace MagicKeys
         /// и «не беспокоить»; подписи в окне их показывали, а действие стояло «ничего»,
         /// потому что набор по умолчанию был общий, от модели 2015 года.
         /// </summary>
-        private bool AdoptModelDefaults()
+        private void AdoptModelDefaults()
         {
             try
             {
                 AppleModel m = Devices.AppleModel;
-                if (m == null || m.Gen == AppleGen.Unknown) return false;
-                if (_settings.FKeysGen == m.Gen) return false;
+                if (m == null || m.Gen == AppleGen.Unknown) return;
+                if (_settings.FKeysGen == m.Gen) return;
 
                 // Меняем, только если набор ровно такой, каким мы его и оставили.
                 string[] mine = Models.DefaultFKeys(_settings.FKeysGen);
                 string[] now = _settings.FKeys;
-                if (now == null || now.Length != mine.Length) return false;
+                if (now == null || now.Length != mine.Length) return;
                 for (int i = 0; i < mine.Length; i++)
-                    if (now[i] != mine[i]) return false;
+                    if (now[i] != mine[i]) return;
 
                 _settings.FKeys = Models.DefaultFKeys(m.Gen);
                 _settings.FKeysGen = m.Gen;
@@ -318,9 +322,8 @@ namespace MagicKeys
                 // верхний ряд остался бы прежним.
                 ApplyAndSave();
                 Diag.Log("подставлены заводские назначения: " + Models.GenName(m.Gen));
-                return true;
             }
-            catch (Exception e) { Diag.Log("не удалось подставить заводские назначения", e); return false; }
+            catch (Exception e) { Diag.Log("не удалось подставить заводские назначения", e); }
         }
 
         private void UpdateTrayText()

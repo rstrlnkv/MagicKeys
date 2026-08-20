@@ -93,7 +93,7 @@ namespace MagicKeys
                 (byte)(a.B + (b.B - a.B) * t));
         }
 
-        internal static double Luminance(Color c)
+        private static double Luminance(Color c)
         {
             return (0.299 * c.R + 0.587 * c.G + 0.114 * c.B) / 255.0;
         }

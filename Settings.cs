@@ -471,7 +471,7 @@ namespace MagicKeys
                     }
                 }
             }
-            catch { }
+            catch (Exception e) { Diag.Log("настройки не сохранились", e); }
         }
 
         /// <summary>
@@ -482,7 +482,26 @@ namespace MagicKeys
         /// Свести их можно только здесь: дальше файл никто не видит, а список в окне,
         /// не найдя своего значения, молча показывает первый пункт — то есть врёт.
         /// </summary>
-        private void Normalize()
+        /// <summary>
+        /// Во что превращается физическая клавиша по нынешним настройкам. Одно место
+        /// на программу: этот же вопрос задаёт окно, когда рассказывает, где сейчас
+        /// живёт ⌘.
+        /// </summary>
+        public ModKey TargetOf(ModKey phys)
+        {
+            switch (phys)
+            {
+                case ModKey.LCtrl: return MapLCtrl;
+                case ModKey.LWin: return MapLWin;
+                case ModKey.LAlt: return MapLAlt;
+                case ModKey.RAlt: return MapRAlt;
+                case ModKey.RWin: return MapRWin;
+                case ModKey.CapsLock: return MapCapsLock;
+                default: return phys;
+            }
+        }
+
+        public void Normalize()
         {
             if (FKeys == null || FKeys.Length != MaxFKeys)
             {
@@ -531,6 +550,13 @@ namespace MagicKeys
             // Третьему уровню нужен именно Alt: без него ⌥-символов не набрать.
             if (MapRAlt != ModKey.RAlt) OptLevel = OptLevel.Off;
 
+            // «Любой ⌥» — это прежде всего про левый: правый и так работает уровнем ниже.
+            // Уведя левый ⌥ на другую клавишу, человек получал обещание наоборот —
+            // меню он открывать не перестал, а символов не даёт. Опускаем до правого:
+            // третий уровень остаётся там, где он достижим.
+            if (OptLevel == OptLevel.AnyOption && MapLAlt != ModKey.LAlt)
+                OptLevel = OptLevel.RightOption;
+
             // Заменителя Fn это не касается вовсе. Перехват отслеживает его по физической
             // клавише, каким бы ни было её назначение, — то есть «правый ⌥ заменяет Fn
             // и приходит в Windows как правый control» работает и было выбрано в окне.
@@ -557,6 +583,40 @@ namespace MagicKeys
                 }
                 catch { return false; }
             }
+        }
+
+        /// <summary>
+        /// Поправить запись, если она указывает на файл, которого больше нет.
+        ///
+        /// Путь записывается в тот миг, когда человек включает переключатель, и больше
+        /// не меняется. Включили в переносимой копии, поставили пакетом, папку убрали —
+        /// Windows при входе запускает исчезнувший файл, установленная копия не стартует,
+        /// а переключатель в настройках всё так же показан включённым. Правим только этот
+        /// случай: пока записанный файл на месте, запись не наша, чтобы её переписывать.
+        /// </summary>
+        public static void FixIfBroken()
+        {
+            try
+            {
+                string value;
+                using (RegistryKey k = Registry.CurrentUser.OpenSubKey(Key, false))
+                {
+                    if (k == null) return;
+                    value = k.GetValue(Name) as string;
+                }
+                if (String.IsNullOrEmpty(value)) return;
+
+                string exe = value.Trim();
+                bool hidden = exe.EndsWith(" --tray", StringComparison.OrdinalIgnoreCase);
+                if (hidden) exe = exe.Substring(0, exe.Length - " --tray".Length).Trim();
+                if (exe.Length > 1 && exe.StartsWith("\"") && exe.EndsWith("\""))
+                    exe = exe.Substring(1, exe.Length - 2);
+                if (exe.Length == 0 || File.Exists(exe)) return;
+
+                Diag.Log("автозапуск указывал на исчезнувший файл: " + exe);
+                Set(true, hidden);
+            }
+            catch (Exception e) { Diag.Log("не удалось проверить автозапуск", e); }
         }
 
         public static void Set(bool on, bool hidden)

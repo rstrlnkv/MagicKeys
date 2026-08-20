@@ -68,19 +68,19 @@ namespace MagicKeys
             IsVisibleChanged += delegate
             {
                 if (IsVisible) { if (CurrentPage == "diag") BuildPage(); }
-                else DetachSelfTest();
+                else ForgetSelfTest();
             };
             // Сворачивание IsVisible не гасит, а окно при этом с глаз ушло: историю
             // нажатий копить в нём так же ни к чему.
             StateChanged += delegate
             {
-                if (WindowState == WindowState.Minimized) DetachSelfTest();
+                if (WindowState == WindowState.Minimized) ForgetSelfTest();
                 else if (CurrentPage == "diag" && _selfTest == null) BuildPage();
             };
             // И при потере фокуса. Окно может быть видно — на втором мониторе, сбоку, —
             // пока человек печатает в другой программе. Список последних нажатий тогда
             // копился бы дальше, и пароль оказался бы на экране у всех на виду.
-            Deactivated += delegate { DetachSelfTest(); };
+            Deactivated += delegate { ForgetSelfTest(); };
             Activated += delegate { if (CurrentPage == "diag" && _selfTest == null) BuildPage(); };
             UseLayoutRounding = true;
 
@@ -279,6 +279,10 @@ namespace MagicKeys
             _updStatus = null;
             _updAction = null;
 
+            // Ушли со страницы драйвера — на возврате пересчитаем размер скачанного
+            // и поищем 7-Zip заново: за это время их могли и добавить, и убрать.
+            if (CurrentPage != "driver") _probedFor = null;
+
             try
             {
                 switch (CurrentPage)
@@ -379,7 +383,11 @@ namespace MagicKeys
                 // Заменитель и ⌥ бывают одной клавишей, и тогда три сочетания из шести
                 // достаются таблице macOS. Перечислять всё, а следом оговариваться — значит
                 // сперва пообещать, потом отобрать: список сразу называет то, что работает.
-                Note(_s.FnSubstitute == ModKey.None
+                Note(!_s.FnNavigation
+                        ? "Навигация выключена: Fn со стрелками, Backspace и Enter сейчас " +
+                          "не работают. Заменитель при этом остаётся нужен — им вызывают " +
+                          "верхний ряд."
+                    : _s.FnSubstitute == ModKey.None
                         ? "Пока заменителя нет, нажать эти сочетания нечем: настоящая Fn " +
                           "до Windows не доходит."
                     : _s.MacShortcuts && _s.FnSubstitute == ModKey.RAlt
@@ -517,7 +525,7 @@ namespace MagicKeys
                           "нажмите, и назначение заработает."
                         : "Эта клавиша в Windows не приходит: её обрабатывает сама клавиатура, " +
                           "и драйвер тут не помогает. Настройка сработает на алюминиевых моделях " +
-                          "по USB — они ⏏ присылают.";
+                          "по USB — они её присылают.";
 
                 stack.Children.Add(Card("Клавиша Eject", null, ejGrid, Note(ejNote)));
             }
@@ -937,8 +945,11 @@ namespace MagicKeys
             else
             {
                 stack.Children.Add(Card("Заряд батареи", null,
-                    Note("Спросить не удалось: клавиатура не ответила. Придумывать число " +
-                         "программа не станет.")));
+                    Note(battery == KeyboardBattery.Unknown
+                        ? "Спрашиваю у клавиатуры… По Bluetooth ответ приходит не сразу; "  +
+                          "как только он придёт, число появится здесь само."
+                        : "Спросить не удалось: клавиатура не ответила. Придумывать число " +
+                          "программа не станет.")));
             }
 
             var refresh = new Button { Content = "Обновить", HorizontalAlignment = HorizontalAlignment.Left };
@@ -973,6 +984,37 @@ namespace MagicKeys
         private StackPanel _selfTestChecks;
         private readonly List<string> _selfTestLines = new List<string>();
 
+        /// <summary>
+        /// На какой клавише сейчас живёт ⌘. Пустая строка — на своей; null — ни на какой.
+        /// Спрашивать надо именно так: слой сочетаний перебирает нажатые клавиши
+        /// и смотрит, во что каждая превращается, — а не на надпись.
+        /// </summary>
+        private string CmdLivesOn()
+        {
+            var moved = new List<string>();
+            bool own = false;
+            ModKey[] all =
+            {
+                ModKey.CapsLock, ModKey.LCtrl, ModKey.LAlt, ModKey.RAlt,
+                ModKey.LWin, ModKey.RWin
+            };
+            string[] titles =
+            {
+                "Caps Lock", "control (левый)", "⌥ option (левый)", "⌥ option (правый)",
+                "⌘ command (левая)", "⌘ command (правая)"
+            };
+            for (int i = 0; i < all.Length; i++)
+            {
+                ModKey t = _s.TargetOf(all[i]);
+                if (t != ModKey.LWin && t != ModKey.RWin) continue;
+                if (all[i] == ModKey.LWin || all[i] == ModKey.RWin) own = true;
+                else moved.Add(titles[i]);
+            }
+            if (own) return "";
+            if (moved.Count == 0) return null;
+            return String.Join(" и ", moved.ToArray());
+        }
+
         /// <summary>Сочетания macOS: общий выключатель и таблица по разделам.</summary>
         private UIElement PageMacKeys()
         {
@@ -980,12 +1022,25 @@ namespace MagicKeys
 
             stack.Children.Add(StateCard());
 
+            // Слой сочетаний узнаёт ⌘ по назначению, а не по надписи на клавише. После
+            // готовой схемы «Как в Windows» ⌘ переезжает на клавишу ⌥, и молчать об этом
+            // нельзя: на клавише написано одно, а копирует другая.
+            string cmdOn = CmdLivesOn();
             stack.Children.Add(Card("Сочетания macOS", null,
                 Toggle("⌘C, ⌘←, ⌘Q и остальные работают как на маке", _s.MacShortcuts,
                     delegate(bool v) { _s.MacShortcuts = v; Save(); BuildPage(); }),
-                Note("⌘ остаётся клавишей Windows: программа не меняет её назначение, " +
-                     "а переводит сами сочетания. Поэтому получается и то, чего заменой " +
-                     "клавиш не добиться: ⌘← уходит в начало строки, ⌘Q закрывает программу.")));
+                Note(cmdOn == null
+                    ? "Сейчас ни одна клавиша не работает как ⌘ — её увели переназначения " +
+                      "на странице «Клавиши». Нажать сочетания ниже нечем."
+                    : cmdOn.Length == 0
+                    ? "⌘ остаётся клавишей Windows: программа не меняет её назначение, " +
+                      "а переводит сами сочетания. Поэтому получается и то, чего заменой " +
+                      "клавиш не добиться: ⌘← уходит в начало строки, ⌘Q закрывает программу."
+                    : "Программа не меняет назначение клавиш, а переводит сами сочетания — " +
+                      "поэтому получается и то, чего заменой не добиться: ⌘← уходит в начало " +
+                      "строки, ⌘Q закрывает программу. Но саму ⌘ увели переназначения: " +
+                      "сейчас её роль играет " + cmdOn + ", а клавиша с надписью ⌘ работает " +
+                      "иначе — см. страницу «Клавиши».")));
 
             // Переключение окон — до раннего возврата: ⌘+Tab работает независимо
             // от общего выключателя (перехват спрашивает свою настройку), и, спрятав
@@ -1121,7 +1176,7 @@ namespace MagicKeys
                 lines.Children.Add(Note("Windows отказала программе в подписке на ввод. Переназначения " +
                                         "работают, модель клавиатуры известна, а вот всё, что узнаётся " +
                                         "по нажатиям, — нет: исполнение клавиатуры, верхние F-клавиши, " +
-                                        "клавиша ⏏ и страница «Диагностика». Помогает перезапуск программы."));
+                                        "клавиша Eject и страница «Диагностика». Помогает перезапуск программы."));
 
             return Card(null, null, lines);
         }
@@ -1170,10 +1225,6 @@ namespace MagicKeys
         /// </summary>
         private void DetachSelfTest()
         {
-            // Стираем и то, что уже нарисовано. Подписку снять мало: окно может остаться
-            // видимым на другом мониторе, и последние два десятка нажатий висели бы
-            // на экране сколько угодно — при том что текст карточки обещает обратное.
-            if (_selfTestLog != null) _selfTestLog.Text = "";
             if (_selfTest != null)
             {
                 KeyWatch.Activity -= _selfTest;
@@ -1181,6 +1232,22 @@ namespace MagicKeys
             }
             _selfTestLog = null;
             _selfTestChecks = null;
+        }
+
+        /// <summary>
+        /// То же и вдобавок забыть накопленное. Разделено нарочно: пересборка той же
+        /// страницы — не уход с глаз. А пересобирается она сама и часто: марка показанного
+        /// включает и первый медиакод, и число замеченных клавиш, и ответ о заряде, —
+        /// то есть ровно те события, ради которых человек сюда и пришёл. Список стирался
+        /// той самой строкой, которую только что показал.
+        /// </summary>
+        private void ForgetSelfTest()
+        {
+            // Стираем и то, что уже нарисовано. Подписку снять мало: окно может остаться
+            // видимым на другом мониторе, и последние два десятка нажатий висели бы
+            // на экране сколько угодно — при том что текст карточки обещает обратное.
+            if (_selfTestLog != null) _selfTestLog.Text = "";
+            DetachSelfTest();
             _selfTestLines.Clear();
         }
 
@@ -1297,10 +1364,57 @@ namespace MagicKeys
             _selfTestChecks.Children.Add(Note(special.ToString()));
         }
 
+        /// <summary>Размер скачанного, посчитанный в стороне. −1 — ещё не считали.</summary>
+        private long _cacheBytes = -1;
+
+        /// <summary>Найденный 7-Zip, посчитанный там же. Пустая строка — искали, не нашли.</summary>
+        private string _sevenZip;
+
+        /// <summary>Идёт ли счёт прямо сейчас — чтобы не заводить второй.</summary>
+        private bool _probing;
+
+        /// <summary>Для какой страницы уже посчитано. Иначе пересборка звала бы счёт,
+        /// а счёт — пересборку, и они гоняли бы друг друга без остановки.</summary>
+        private string _probedFor;
+
+        /// <summary>
+        /// Обойти кэш и найти 7-Zip — в стороне от потока окна.
+        ///
+        /// Обе работы долгие и обе повторялись на каждой пересборке страницы, а
+        /// пересобирается она сама: от ответа о заряде, от впервые нажатой клавиши,
+        /// от опроса устройств. CacheSize перебирает всё дерево распакованного Boot Camp
+        /// — десятки тысяч файлов, — а поиск 7-Zip считает SHA-256 двух с лишним
+        /// мегабайт. Окно на это время замирало, в том числе прямо во время закачки,
+        /// которая в тот же каталог и пишет.
+        /// </summary>
+        private void ProbeDriverPage()
+        {
+            if (_probing || _probedFor == "driver") return;
+            _probedFor = "driver";
+            _probing = true;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                long bytes = -1;
+                string zip = null;
+                try { bytes = AppleDriverSetup.CacheSize(); } catch { }
+                try { zip = AppleDriverSetup.SevenZip(); } catch { }
+                ToWindow(delegate
+                {
+                    _probing = false;
+                    _cacheBytes = bytes;
+                    _sevenZip = zip == null ? "" : zip;
+                    if (CurrentPage == "driver") BuildPage();
+                });
+            });
+        }
+
         private UIElement PageDriver()
         {
             var stack = new StackPanel();
-            AppleDriver.Refresh(true);
+            // Не force: значение обновляет сторожевой таймер, а после своих же правок
+            // (запись режима, удаление драйвера) мы перечитываем его сами и в стороне.
+            AppleDriver.Refresh(false);
+            ProbeDriverPage();
             bool installed = AppleDriver.Installed;
 
             var status = new StackPanel();
@@ -1429,7 +1543,7 @@ namespace MagicKeys
                      "и ничего не качает без нажатия кнопки.")));
 
             // ---- добыча и установка ----
-            string sevenZip = AppleDriverSetup.SevenZip();
+            string sevenZip = String.IsNullOrEmpty(_sevenZip) ? null : _sevenZip;
             _setupLog = new TextBlock { TextWrapping = TextWrapping.Wrap, LineHeight = 19 };
             _setupLog.SetResourceReference(StyleProperty, "Caption");
             _setupLog.Text = _setupText != null ? _setupText
@@ -1484,7 +1598,7 @@ namespace MagicKeys
             };
             buttons.Children.Add(pick);
 
-            long cached = AppleDriverSetup.CacheSize();
+            long cached = _cacheBytes;
             if (cached > 0)
             {
                 var wipe = new Button
@@ -1508,6 +1622,7 @@ namespace MagicKeys
                         ? "Скачанное и распакованное убрано. На установленный драйвер это не влияет."
                         : "Убрать удалось не всё: " + err +
                           "\n\nОбычно это значит, что какой-то файл сейчас открыт другой программой.");
+                    _probedFor = null;   // кэша не стало — размер считаем заново
                     BuildPage();
                 };
                 buttons.Children.Add(wipe);
@@ -1608,7 +1723,6 @@ namespace MagicKeys
         /// <summary>Последнее сказанное о ходе работы — чтобы пережить перестройку страницы.</summary>
         private volatile string _setupText;
 
-        /// <summary>Идёт ли сейчас работа с драйвером.</summary>
         /// <summary>Идёт долгая работа с драйвером: удаление или запись его настройки.</summary>
         private bool _driverBusy;
 
@@ -1731,7 +1845,7 @@ namespace MagicKeys
                     // и после появления режима разработчика указывал уже на другую
                     // страницу — так что после установки драйвера она не обновлялась
                     // никогда, и человек видел прежнее «не установлен».
-                    ToWindow(delegate { if (CurrentPage == "driver") BuildPage(); });
+                    ToWindow(delegate { _probedFor = null; if (CurrentPage == "driver") BuildPage(); });
                 }
                 catch (Exception e)
                 {
@@ -2473,14 +2587,11 @@ namespace MagicKeys
         }
 
         /// <summary>
-        /// Переключает режим функционального ряда у драйвера Apple. Итог кладётся
-        /// в поле, а не в надпись: страница после этого пересобирается, чтобы
-        /// отметка «сейчас так» переехала на выбранный режим.
-        /// </summary>
-        /// <summary>
         /// Переключает режим верхнего ряда у драйвера. В стороне от потока окна: внутри
         /// запрос прав администратора и ожидание до тридцати секунд, а окно в это время
-        /// не должно превращаться в «не отвечает».
+        /// не должно превращаться в «не отвечает». Итог кладётся в поле, а не в надпись:
+        /// страница после этого пересобирается, и отметка «сейчас так» переезжает
+        /// на выбранный режим.
         /// </summary>
         private void ApplyFnBehavior(int value)
         {

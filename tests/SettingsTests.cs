@@ -1227,8 +1227,10 @@ namespace MagicKeys
         static void BrokenFile()
         {
             Head("Битый файл настроек");
+            // Normalize теперь зовут не только при чтении файла: ApplyAndSave проверяет
+            // согласие настроек на каждой правке из окна.
             MethodInfo norm = typeof(Settings).GetMethod("Normalize",
-                                  BindingFlags.NonPublic | BindingFlags.Instance);
+                                  BindingFlags.Public | BindingFlags.Instance);
             if (norm == null) { Check("Normalize на месте", false, "метода нет"); return; }
 
             Settings s = new Settings();

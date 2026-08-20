@@ -122,7 +122,7 @@ namespace MagicKeys
             if (s == null) return false;
             foreach (ModKey phys in _modsDown)
             {
-                ModKey t = TargetFor(s, phys);
+                ModKey t = s.TargetOf(phys);
                 if (t == a || t == b) return true;
             }
             return false;
@@ -553,7 +553,7 @@ namespace MagicKeys
                 // индикатор переключается, а нажатия самого Caps Lock не было.
                 // И только первое нажатие: автоповтор Windows переключателем не считает,
                 // а мы перевернули бы флаг столько раз, сколько пришло повторов.
-                bool toCaps = TargetFor(s, phys) == ModKey.CapsLock;
+                bool toCaps = s.TargetOf(phys) == ModKey.CapsLock;
                 if (toCaps)
                 {
                     // Переворачиваем, только когда Caps Lock не держала ни одна другая
@@ -1036,7 +1036,7 @@ namespace MagicKeys
 
         private bool HandleModifier(Settings s, ModKey phys, bool down)
         {
-            ModKey target = TargetFor(s, phys);
+            ModKey target = s.TargetOf(phys);
 
             // Переключатель окон закрываем, когда отпущена последняя ⌘, — не спрашивая,
             // какую клавишу отпустили. Спрашивали: условие стояло на именах клавиш Win,
@@ -1344,20 +1344,6 @@ namespace MagicKeys
                 Actions.End(a);
             }
             return true;
-        }
-
-        private static ModKey TargetFor(Settings s, ModKey phys)
-        {
-            switch (phys)
-            {
-                case ModKey.LCtrl: return s.MapLCtrl;
-                case ModKey.LWin: return s.MapLWin;
-                case ModKey.LAlt: return s.MapLAlt;
-                case ModKey.RAlt: return s.MapRAlt;
-                case ModKey.RWin: return s.MapRWin;
-                case ModKey.CapsLock: return s.MapCapsLock;
-                default: return phys;
-            }
         }
 
         /// <summary>

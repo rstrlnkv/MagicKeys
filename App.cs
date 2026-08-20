@@ -62,6 +62,9 @@ namespace MagicKeys
             _settings = Settings.Load();
             if (_settings.StartMinimized) startHidden = true;
 
+            // Запись автозапуска несёт в себе путь к файлу, а он мог переехать.
+            Autostart.FixIfBroken();
+
             _engine = new Engine();
             _engine.DevicesChanged += delegate
             {
@@ -87,7 +90,11 @@ namespace MagicKeys
             {
                 // Тоже с потока переписи клавиш — тоже снимок.
                 Settings s = _engine.Current;
-                if (s == null) return;
+                // Общий выключатель спрашиваем и здесь: «Переназначения: Выключены»
+                // значит всё. Перехват это делает, соседний обработчик яркости — тоже,
+                // а ⏏ идёт мимо перехвата и правило обходила: значок в трее приглушён,
+                // а клавиша работает.
+                if (s == null || !s.Enabled) return;
                 KeyAction a = Actions.Get(s.EjectKey);
                 if (a.Kind == ActionKind.PassThrough) return;
                 Actions.Begin(a, false, Settings.BrightnessStep);
@@ -393,6 +400,10 @@ namespace MagicKeys
 
         private void ApplyAndSave()
         {
+            // Согласие настроек сами с собой проверяем здесь, а не только при чтении
+            // файла: правил уже полдюжины, и повторять каждое в окне у каждого списка —
+            // значит однажды забыть одно. Место одно, и оно на пути любой правки.
+            _settings.Normalize();
             _engine.Apply(_settings);
             _settings.Save();
             UpdateTrayText();

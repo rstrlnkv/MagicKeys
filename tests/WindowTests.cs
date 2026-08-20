@@ -24,13 +24,25 @@ namespace MagicKeys
         static int _applied;
 
         // Автозапуск пишет в реестр Windows, а не в настройки программы: щёлкать его
-        // на стенде значило бы оставить след в чужом хозяйстве.
-        static readonly string[] Skip = { "Запускать вместе с Windows" };
+        // на стенде значило бы оставить след в чужом хозяйстве. «Свёрнутой в значок» —
+        // туда же: при включённом автозапуске окно переписывает ту же запись, и в ней
+        // оказывается путь к стенду вместо пути к программе.
+        static readonly string[] Skip =
+        {
+            "Запускать вместе с Windows",
+            "Запускаться свёрнутой в значок"
+        };
 
         [STAThread]
         static int Main()
         {
             Console.OutputEncoding = Encoding.UTF8;
+
+            // Ввод наружу не уходит. Стенд создаёт живой перехват, а тот при каждом
+            // применении настроек включает Num Lock, если ⌧ уведена с него, — то есть
+            // прогон стенда переключал Num Lock на машине, где его запустили.
+            Input.Sink = delegate(Native.INPUT[] batch) { };
+
             var app = new Application();
             app.Resources.MergedDictionaries.Add(Theme.Initial());
 
@@ -41,6 +53,10 @@ namespace MagicKeys
 
             string[] pages = { "PageMacKeys", "PageKeys", "PageLayout", "PageDriver", "PageAbout", "PageDiag" };
             foreach (string p in pages) Page(p);
+
+            Console.WriteLine();
+            Console.WriteLine("== кнопки ==");
+            foreach (string p in pages) Buttons(p);
 
             Console.WriteLine();
             Console.WriteLine("прошло " + _pass + ", провалено " + _fail);
@@ -77,6 +93,102 @@ namespace MagicKeys
 
             foreach (CheckBox cb in boxes) Flip(cb);
             foreach (ComboBox box in combos) Turn(box);
+        }
+
+        /// <summary>
+        /// Кнопки, меняющие по нескольку настроек разом. Именно там живут расхождения,
+        /// которых не поймать по одному переключателю: схема правит пять полей, и любые
+        /// два из них могут оказаться несовместимы.
+        ///
+        /// Список узкий и по подписи — нарочно. Нажать вслепую всё подряд значит нажать
+        /// «Скачать и установить» и «Удалить драйвер».
+        /// </summary>
+        static readonly string[] SafeButtons =
+        {
+            "⌘ работает как Ctrl", "Как в Windows", "Без изменений",
+            "Вернуть заводские для этой модели", "Настроить программу под драйвер"
+        };
+
+        static void Buttons(string page)
+        {
+            MethodInfo m = typeof(MainWindow).GetMethod(page, BindingFlags.NonPublic | BindingFlags.Instance);
+            if (m == null) return;
+            UIElement built;
+            try { built = (UIElement)m.Invoke(_win, null); }
+            catch { return; }
+
+            var found = new List<Button>();
+            Buttons(built, found);
+            Settings saved = _s.Snapshot();
+
+            foreach (Button b in found)
+            {
+                string title = TitleOf(b);
+                bool ours = false;
+                foreach (string w in SafeButtons) if (w == title) ours = true;
+                if (!ours) continue;
+
+                Restore(saved);
+                Dictionary<string, string> before = Snap();
+                int applied = _applied;
+                try { b.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); }
+                catch (Exception e) { Check("кнопка «" + title + "»", false, "щелчок сорвался: " + Inner(e)); continue; }
+
+                // «Ничего не изменила» — законный ответ: «Настроить программу под драйвер»
+                // при отсутствующем драйвере честно говорит, что менять нечего. Незаконно
+                // другое: изменить настройки и не отдать их перехвату.
+                string diff = Diff(before, Snap());
+                Check("кнопка «" + title + "»: изменённое дошло до перехвата",
+                      diff == "" || _applied > applied, "изменила " + diff + ", а перехвату не отдала");
+                Consistent("после «" + title + "»");
+            }
+            Restore(saved);
+        }
+
+        static void Buttons(object node, List<Button> found)
+        {
+            var b = node as Button;
+            if (b != null) { found.Add(b); return; }
+            if (!(node is DependencyObject)) return;
+
+            var content = node as ContentControl;
+            if (content != null) Buttons(content.Content, found);
+            var panel = node as Panel;
+            if (panel != null) foreach (UIElement c in panel.Children) Buttons(c, found);
+            var border = node as Border;
+            if (border != null) Buttons(border.Child, found);
+        }
+
+        static string TitleOf(Button b)
+        {
+            var p = b.Content as StackPanel;
+            if (p != null && p.Children.Count > 0)
+            {
+                var t = p.Children[0] as TextBlock;
+                if (t != null) return t.Text;
+            }
+            var one = b.Content as TextBlock;
+            if (one != null) return one.Text;
+            return "" + b.Content;
+        }
+
+        /// <summary>
+        /// То, что не должно разойтись ни от какого щелчка. Каждое правило здесь уже
+        /// однажды нарушалось: одна клавиша делала два дела, третий уровень оставался
+        /// на клавише, которой его не набрать, «любой ⌥» обещал левую клавишу, увёденную
+        /// на другую роль.
+        /// </summary>
+        static void Consistent(string where)
+        {
+            Check(where + ": правый ⌥ не заменяет Fn и не набирает символы разом",
+                  !(_s.FnSubstitute == ModKey.RAlt && _s.OptLevel != OptLevel.Off),
+                  "FnSubstitute=" + _s.FnSubstitute + ", OptLevel=" + _s.OptLevel);
+            Check(where + ": третьему уровню оставлен правый Alt",
+                  _s.OptLevel == OptLevel.Off || _s.MapRAlt == ModKey.RAlt,
+                  "MapRAlt=" + _s.MapRAlt + ", OptLevel=" + _s.OptLevel);
+            Check(where + ": «любой ⌥» достижим левой клавишей",
+                  _s.OptLevel != OptLevel.AnyOption || _s.MapLAlt == ModKey.LAlt,
+                  "MapLAlt=" + _s.MapLAlt + ", OptLevel=" + _s.OptLevel);
         }
 
         static void Walk(object node, List<CheckBox> boxes, List<ComboBox> combos)
@@ -198,7 +310,13 @@ namespace MagicKeys
 
         static void Turn(ComboBox box)
         {
-            if (box.Items.Count < 2) return;
+            // Список из одного пункта — не «нечего проверять», а пропавшие пункты:
+            // раньше такой список тихо не давал ни «прошло», ни «провалено».
+            if (box.Items.Count < 2)
+            {
+                Check("список из " + box.Items.Count + " пунктов", false, "выбирать не из чего");
+                return;
+            }
             int was = box.SelectedIndex;
             var seen = new List<string>();
             bool ok = true;

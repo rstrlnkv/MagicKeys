@@ -6,7 +6,8 @@
 param([string]$Source, [string]$Target)
 
 $text = [System.IO.File]::ReadAllText($Source)
-$text = $text -replace '\\', '\\\\' -replace '\{', '\{' -replace '\}', '\}'
+# В строке замены обратная косая ничего не экранирует: '\\\\' дало бы четыре штуки.
+$text = $text -replace '\\', '\\' -replace '\{', '\{' -replace '\}', '\}'
 $text = $text -replace "`r`n", "`n"
 
 $body = New-Object System.Text.StringBuilder

@@ -13,7 +13,6 @@ namespace MagicKeys
 {
     internal sealed class KeyboardInfo
     {
-        public string DevicePath;
         public int Vendor;
         public int ProductId;
         public bool IsApple;
@@ -183,12 +182,31 @@ namespace MagicKeys
         {
             List<KeyboardInfo> result = new List<KeyboardInfo>();
             statusPath = null;
-            uint count = 0;
             uint stride = (uint)Marshal.SizeOf(typeof(Native.RAWINPUTDEVICELIST));
-            if (Native.GetRawInputDeviceList(null, ref count, stride) == uint.MaxValue || count == 0) return result;
 
-            Native.RAWINPUTDEVICELIST[] list = new Native.RAWINPUTDEVICELIST[count];
-            if (Native.GetRawInputDeviceList(list, ref count, stride) == uint.MaxValue) return result;
+            // Спрашиваем дважды — сперва размер, потом сам список, — и между двумя
+            // вопросами в системе может появиться любое устройство: мышь, флешка,
+            // гарнитура, переподключившаяся по Bluetooth клавиатура. Тогда второй вопрос
+            // отвечает «мал буфер», и прежний код возвращал пустой список — не «опрос
+            // не удался», а «клавиатур нет ни одной». Дальше это шло по всей программе:
+            // подсказка значка мигала на «ожидание Magic Keyboard», зажатое отпускалось,
+            // угаданное исполнение терялось, заряд пропадал. Повторяем с запасом.
+            uint count = 0;
+            Native.RAWINPUTDEVICELIST[] list = null;
+            for (int attempt = 0; attempt < 4; attempt++)
+            {
+                uint want = 0;
+                if (Native.GetRawInputDeviceList(null, ref want, stride) == uint.MaxValue) return result;
+                if (want == 0) return result;
+                var buf = new Native.RAWINPUTDEVICELIST[want + 8];
+                count = (uint)buf.Length;
+                uint got = Native.GetRawInputDeviceList(buf, ref count, stride);
+                if (got == uint.MaxValue) continue;   // прибавилось между вопросами
+                list = buf;
+                count = got;
+                break;
+            }
+            if (list == null) return result;
 
             // Заодно ищем вендорную коллекцию Apple «Device Management»: через неё
             // спрашивается заряд. Её путь — обычный путь интерфейса HID, его можно открыть.
@@ -216,7 +234,6 @@ namespace MagicKeys
                 if (path.IndexOf("RDP_KBD", StringComparison.OrdinalIgnoreCase) >= 0) continue;
 
                 KeyboardInfo info = new KeyboardInfo();
-                info.DevicePath = path;
                 info.Bluetooth = path.IndexOf("BTHENUM", StringComparison.OrdinalIgnoreCase) >= 0
                               || path.IndexOf("00001124-0000-1000-8000-00805f9b34fb", StringComparison.OrdinalIgnoreCase) >= 0;
 
@@ -238,11 +255,13 @@ namespace MagicKeys
 
                 ReadStrings(path, info);
 
-                // Производитель из самого устройства надёжнее догадок по идентификатору.
-                // Само же правило по пути — общее, см. IsAppleDevicePath.
-                info.IsApple = info.Vendor == AppleUsb || info.Vendor == AppleBluetooth
-                            || (info.Manufacturer != null &&
-                                info.Manufacturer.IndexOf("Apple", StringComparison.OrdinalIgnoreCase) >= 0);
+                // Одно правило на программу — то же самое, что у IsAppleDevicePath.
+                // Строку производителя сюда не подмешиваем: перепись клавиш её не видит
+                // и судит только по пути, а расхождение этих двух ответов — ровно то,
+                // ради чего правило и сводили в одно место. Клавиатура с чужим VID,
+                // назвавшаяся «Apple», числилась бы своей в списке, а её события
+                // перепись бы не считала.
+                info.IsApple = IsAppleDevicePath(path);
                 if (info.IsApple)
                 {
                     info.Apple = Models.Find(info.ProductId);

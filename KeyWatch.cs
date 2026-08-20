@@ -353,8 +353,14 @@ namespace MagicKeys
 
                 if (usage != Native.UsageEject) continue;
                 if (!_ejectSeen) { _ejectSeen = true; Diag.Log("замечена клавиша ⏏"); }
-                Action h = EjectPressed;
-                if (h != null) h();
+                // Как и у Report: упавший подписчик не должен уносить с собой остальные
+                // коды из того же отчёта.
+                try
+                {
+                    Action h = EjectPressed;
+                    if (h != null) h();
+                }
+                catch (Exception e) { Diag.Log("Eject: подписчик не справился", e); }
             }
         }
 

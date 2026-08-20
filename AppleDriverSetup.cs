@@ -174,7 +174,21 @@ namespace MagicKeys
 
                 return found;
             }
-            catch (Exception e) { error = e.Message; return null; }
+            catch (Exception e) { error = Why("не удалось развернуть 7-Zip", e); return null; }
+        }
+
+        /// <summary>
+        /// Назвать беду по-русски и своими словами, а подробность оставить в журнале.
+        ///
+        /// Текст исключения .NET приходит на языке системы библиотек, то есть
+        /// по-английски, и говорит про свои понятия: человек читал «The remote server
+        /// returned an error: (404) Not Found» там, где ему нужно «каталог Apple
+        /// прочитать не вышло».
+        /// </summary>
+        private static string Why(string what, Exception e)
+        {
+            Diag.Log(what, e);
+            return what + ".";
         }
 
         /// <summary>Открыть файл на чтение, запретив запись всем остальным.</summary>
@@ -352,7 +366,7 @@ namespace MagicKeys
             foreach (string dir in new string[] { CacheFolder, ToolsFolder, RunFolder })
             {
                 try { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
-                catch (Exception e) { ok = false; error = e.Message; }
+                catch (Exception e) { ok = false; error = Why("не удалось убрать скачанное", e); }
             }
             return ok;
         }
@@ -437,7 +451,18 @@ namespace MagicKeys
             {
                 EnsureTls();
                 string xml;
-                using (var wc = new WebClient()) xml = wc.DownloadString(Catalog);
+                // Тем же путём, что и сам пакет: перенаправления идём своими руками
+                // и каждое проверяем на https. Именно ответ каталога решает, что будет
+                // скачано, распаковано и отдано pnputil с правами администратора, —
+                // проверять его слабее, чем сам пакет, значит запирать вторую дверь
+                // при открытой первой.
+                string catalogError;
+                using (HttpWebResponse resp = OpenHttps(Catalog, "GET", 0, out catalogError))
+                {
+                    if (resp == null) { error = catalogError; return false; }
+                    using (var reader = new StreamReader(resp.GetResponseStream()))
+                        xml = reader.ReadToEnd();
+                }
 
                 // В каталоге продукты идут как <key>002-34411</key><dict>…</dict>.
                 // Нас интересуют те, внутри которых встречается BootCampESD.pkg.
@@ -465,10 +490,33 @@ namespace MagicKeys
                 }
 
                 if (bestUrl == null) { error = "в каталоге Apple не нашлось ни одного пакета Boot Camp"; return false; }
+                // И хост тоже Apple. Выражение выше принимает любой https-адрес, а качаем
+                // мы по нему семьсот мегабайт, распаковываем и предлагаем поставить.
+                if (!AppleHost(bestUrl))
+                {
+                    error = "каталог Apple указал на чужой сервер — качать оттуда не буду";
+                    return false;
+                }
                 url = bestUrl; posted = bestDate;
                 return true;
             }
-            catch (Exception e) { error = e.Message; return false; }
+            catch (Exception e) { error = Why("каталог Apple прочитать не вышло", e); return false; }
+        }
+
+        /// <summary>
+        /// Ведёт ли ссылка на серверы Apple. Список каталога подписью не защищён,
+        /// и адрес в нём — такие же данные, как всё остальное.
+        /// </summary>
+        private static bool AppleHost(string url)
+        {
+            try
+            {
+                Uri u = new Uri(url);
+                if (u.Scheme != Uri.UriSchemeHttps) return false;
+                string host = u.Host.ToLowerInvariant();
+                return host == "apple.com" || host.EndsWith(".apple.com");
+            }
+            catch { return false; }
         }
 
         public static long SizeOf(string url)
@@ -684,7 +732,7 @@ namespace MagicKeys
                 catch { }
                 return true;
             }
-            catch (Exception e) { error = e.Message; return false; }
+            catch (Exception e) { error = Why("скачать пакет не вышло", e); return false; }
         }
 
         private static string Mb(long bytes)
@@ -739,7 +787,7 @@ namespace MagicKeys
                 if (error == null) error = "внутри пакета не нашлось файла драйвера клавиатуры";
                 return null;
             }
-            catch (Exception e) { error = e.Message; return null; }
+            catch (Exception e) { error = Why("распаковать пакет не вышло", e); return null; }
         }
 
         private static bool Run7z(string sevenZip, string args, out string error)
@@ -922,7 +970,7 @@ namespace MagicKeys
                     return true;
                 }
             }
-            catch (Exception e) { error = e.Message; return false; }
+            catch (Exception e) { error = Why("7-Zip запустить не вышло", e); return false; }
         }
 
         /// <summary>Ищет файл драйвера клавиатуры в распакованном дереве.</summary>
@@ -989,7 +1037,18 @@ namespace MagicKeys
         /// </summary>
         public static bool Uninstall(string infName, out string output)
         {
+            // Имя приходит одно, а поставить программа могла любое из четырёх: какое
+            // нашлось в пакете, то и поставили. Ищем по всем — иначе человек с алюминиевой
+            // клавиатурой читал «не нашлось, под каким именем драйвер лежит в хранилище»
+            // при драйвере, который программа сама и поставила.
             string published = PublishedInf(infName);
+            if (published == null)
+                foreach (string other in WantedInf)
+                {
+                    if (String.Equals(other, infName, StringComparison.OrdinalIgnoreCase)) continue;
+                    published = PublishedInf(other);
+                    if (published != null) break;
+                }
             if (published == null)
             {
                 output = "Не нашлось, под каким именем драйвер лежит в хранилище Windows. "

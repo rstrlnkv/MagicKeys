@@ -22,8 +22,13 @@ namespace MagicKeys
         private const int ReportSize = 3;
 
         private static readonly object Sync = new object();
-        private static int _percent = -1;
-        private static int _flags = -1;
+        // −2 — ещё не спрашивали, −1 — спросили и не ответила. Разница видна человеку:
+        // при −2 показывать «клавиатура не ответила» значит утверждать то, чего никто
+        // не проверял, — а по Bluetooth первый ответ приходит секундами позже.
+        private static int _percent = Unknown;
+
+        /// <summary>Ещё не спрашивали.</summary>
+        public const int Unknown = -2;
         private static DateTime _stamp = DateTime.MinValue;
 
         /// <summary>
@@ -62,7 +67,7 @@ namespace MagicKeys
                 {
                     int before;
                     lock (Sync) before = _percent;
-                    Refresh(true);
+                    Refresh();
                     int after;
                     lock (Sync) after = _percent;
                     if (after != before)
@@ -81,23 +86,16 @@ namespace MagicKeys
             lock (Sync) _stamp = DateTime.MinValue;
         }
 
-        /// <summary>
-        /// Перечитать, если прошло больше минуты. Зовут её из одного места и всегда
-        /// с force = true, но проверка срока остаётся здесь: она и есть тот самый срок,
-        /// а Wake лишь не даёт спрашивать двум потокам сразу.
-        /// </summary>
-        private static void Refresh(bool force)
+        /// <summary>Спросить клавиатуру о заряде. Срок держит Wake, здесь его нет.</summary>
+        private static void Refresh()
         {
             // Путь узнаём до срока: список устройств заполняется в своём потоке, а по
             // Bluetooth это секунды. Спросив раньше него, мы записывали «клавиатура
             // не ответила» и держали этот ответ минуту — при исправной клавиатуре.
             string path = Devices.AppleStatusPath;
 
-            lock (Sync)
-            {
-                if (!force && (DateTime.UtcNow - _stamp) < TimeSpan.FromSeconds(60)) return;
-                if (!String.IsNullOrEmpty(path)) _stamp = DateTime.UtcNow;
-            }
+            // Срок тратим, только если было кого спрашивать.
+            if (!String.IsNullOrEmpty(path)) { lock (Sync) _stamp = DateTime.UtcNow; }
 
             int percent = -1, flags = -1;
             if (!String.IsNullOrEmpty(path)) Ask(path, out percent, out flags);
@@ -108,7 +106,11 @@ namespace MagicKeys
             // клавиатуры больше нет.
             lock (Sync)
             {
-                if (percent >= 0 || String.IsNullOrEmpty(path)) { _percent = percent; _flags = flags; }
+                // Клавиатуры нет — не «не ответила», а «спрашивать было некого».
+                if (String.IsNullOrEmpty(path)) _percent = Unknown;
+                else if (percent >= 0) _percent = percent;
+                else if (_percent == Unknown) _percent = -1;
+                // Иначе не трогаем: известное число промах не стирает.
             }
             if (percent >= 0) Diag.Log("заряд клавиатуры: " + percent + " % (состояние " + flags + ")");
         }

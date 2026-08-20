@@ -67,7 +67,7 @@ namespace MagicKeys
             // на месте, но не отзывалась ни на одно нажатие.
             IsVisibleChanged += delegate
             {
-                if (IsVisible) { if (CurrentPage == "selftest") BuildPage(); }
+                if (IsVisible) { if (CurrentPage == "diag") BuildPage(); }
                 else DetachSelfTest();
             };
             // Сворачивание IsVisible не гасит, а окно при этом с глаз ушло: историю
@@ -75,13 +75,13 @@ namespace MagicKeys
             StateChanged += delegate
             {
                 if (WindowState == WindowState.Minimized) DetachSelfTest();
-                else if (CurrentPage == "selftest" && _selfTest == null) BuildPage();
+                else if (CurrentPage == "diag" && _selfTest == null) BuildPage();
             };
             // И при потере фокуса. Окно может быть видно — на втором мониторе, сбоку, —
             // пока человек печатает в другой программе. Список последних нажатий тогда
             // копился бы дальше, и пароль оказался бы на экране у всех на виду.
             Deactivated += delegate { DetachSelfTest(); };
-            Activated += delegate { if (CurrentPage == "selftest" && _selfTest == null) BuildPage(); };
+            Activated += delegate { if (CurrentPage == "diag" && _selfTest == null) BuildPage(); };
             UseLayoutRounding = true;
 
             var root = new Grid();
@@ -189,13 +189,13 @@ namespace MagicKeys
 
             string failure = _engine == null ? null : _engine.Failure;
             if (!String.IsNullOrEmpty(failure))
-                _deviceLine.Text = "Перехват клавиатуры не работает — переназначения не действуют.";
+                _deviceLine.Text = "MagicKeys не получает нажатия — переназначения не работают. Перезапустите программу.";
             else if (apple > 0)
-                _deviceLine.Text = "Magic Keyboard подключена. Клавиатур в системе: " + all.Count + ".";
+                _deviceLine.Text = "Magic Keyboard подключена.";
             else
                 _deviceLine.Text = "Клавиатура Apple не найдена. Клавиатур в системе: " + all.Count + ".";
 
-            if (CurrentPage == "devices") BuildPage();
+            if (CurrentPage == "diag") BuildPage();
         }
 
         // ------------------------------------------------------------------
@@ -250,7 +250,7 @@ namespace MagicKeys
             get
             {
                 int i = _nav.SelectedIndex;
-                return i >= 0 && i < _pages.Count ? _pages[i] : "fkeys";
+                return i >= 0 && i < _pages.Count ? _pages[i] : "mac";
             }
         }
 
@@ -273,7 +273,7 @@ namespace MagicKeys
                 switch (CurrentPage)
                 {
                     case "mac": Head("Как на маке", "⌘C, ⌘←, ⌘Q и ещё полсотни привычек — чтобы пальцы не переучивались."); _host.Content = PageMacKeys(); break;
-                    case "keys": Head("Клавиши", "Что делает каждая клавиша, которая на маке иная."); _host.Content = PageKeys(); break;
+                    case "keys": Head("Клавиши", "Что делает каждая клавиша, которая на маке устроена иначе."); _host.Content = PageKeys(); break;
                     case "layout": Head("Раскладка", "Какие символы печатаются — те, что напечатаны на клавишах Apple."); _host.Content = PageLayout(); break;
                     case "driver": Head("Драйвер Apple", "Родной драйвер Boot Camp и как программа с ним уживается."); _host.Content = PageDriver(); break;
                     case "diag": Head("Диагностика", "Что программа видит и что до неё доходит."); _host.Content = PageDiag(); break;
@@ -336,7 +336,7 @@ namespace MagicKeys
                     Note("Выбран режим «F-клавиши сразу», а заменителя Fn нет — значит " +
                          "F1–F12 всегда приходят обычными F-клавишами и уходят в программы " +
                          "как есть. Чтобы назначения заработали, выберите заменитель Fn " +
-                         "в карточке ниже или переключитесь на «Медиа сразу».")));
+                         "в карточке ниже или выберите «Медиафункции сразу» в карточке выше.")));
             }
 
             stack.Children.Add(Card("Заменитель Fn", null,
@@ -351,8 +351,8 @@ namespace MagicKeys
                     ? "С драйвером Apple настоящая Fn работает, и заменитель не нужен."
                     : "Magic Keyboard не отправляет Fn в Windows — её обрабатывает сама " +
                       "клавиатура. Поэтому нужна замена. Выбранная клавиша сохраняет своё " +
-                      "обычное значение; если она нужна только как Fn, выключите её " +
-                      "на странице «Модификаторы».")));
+                      "обычное значение; если она нужна только как Fn, выключите её ниже, " +
+                      "в карточке «Отдельные клавиши».")));
 
             string[] legends = Models.Legend(Generation);
             int fcount = Models.FunctionKeyCount();
@@ -420,7 +420,7 @@ namespace MagicKeys
             if (fm != null && fm.FunctionKeys > 12)
                 howMany += "У этой модели есть ряд F13–F" + fm.FunctionKeys + " над цифровым блоком. ";
             howMany += "Если нажать клавишу, которой в списке нет, она добавится сама — " +
-                       "программа считает нажатия по сырому вводу и знает, с какой они клавиатуры, " +
+                       "программа видит, с какой клавиатуры пришло нажатие, " +
                        "знает устройство.";
 
             stack.Children.Add(Card("Действия",
@@ -448,34 +448,24 @@ namespace MagicKeys
                     AddSingleRow(ejGrid, 0, "Eject", "Верхний правый угол, со значком извлечения",
                         _s.EjectKey, delegate(string id) { _s.EjectKey = id; Save(); });
 
-                    string ejNote =
-                        "На Magic Keyboard по Bluetooth эта " +
-                        "клавиша до Windows не доходит вообще. Проверено — пять нажатий подряд не дали " +
-                        "ни одного события ни по одному из путей: ни как клавиша, ни на медиастранице, " +
-                        "ни на системной, ни в вендорном отчёте Apple.\n\n" +
-                        "Причина в самой клавиатуре, и драйвер здесь не выручает — проверяли и с ним: " +
-                        "она заводит в Windows всего две " +
-                        "коллекции HID — клавиатуру и вендорную Apple, — а Eject живёт на медиастранице, " +
-                        "которой у неё просто нет.\n\n" +
-                        "Настройка ниже рассчитана на клавиатуры, которые Eject всё-таки присылают " +
-                        "(алюминиевые модели по USB): программа слушает медиастраницу через сырой ввод. " +
-                        "Проверить это здесь было не на чем — такой клавиатуры под рукой нет.";
-                    if (KeyWatch.EjectSeen)
-                        ejNote = "Клавиша Eject уже приходила с вашей клавиатуры — назначение работает.\n\n" + ejNote;
+                    string ejNote = KeyWatch.EjectSeen
+                        ? "Эта клавиша с вашей клавиатуры приходит — назначение работает."
+                        : "Magic Keyboard эту клавишу в Windows не отправляет: её обрабатывает сама " +
+                          "клавиатура, и драйвер тут не помогает. Настройка сработает на алюминиевых " +
+                          "моделях по USB — они Eject присылают.";
 
                     stack.Children.Add(Card("Клавиша Eject", null, ejGrid, Note(ejNote)));
                 }
 
                 stack.Children.Add(Card("Цифровой блок", null, padGrid,
-                    Note("Две клавиши цифрового блока Apple в Windows ведут себя не так, как " +
-                         "напечатано. Проверено на подключённой клавиатуре.\n\n" +
+                    Note("Две клавиши цифрового блока в Windows ведут себя не так, как напечатано.\n\n" +
                          "Clear отдаёт Num Lock — то есть попадание по ней молча превращает " +
                          "цифровой блок в навигационный. По умолчанию она делает Delete, как ближайший " +
                          "к маковскому «очистить» смысл. Пока эта клавиша уведена с Num Lock, программа " +
                          "сама следит, чтобы цифровой блок оставался включённым: переключить его иначе " +
                          "было бы нечем.\n\n" +
-                         "«=» приходит не знаком равенства, а кодом «очистить», которого не понимает почти " +
-                         "ни одна программа, поэтому по умолчанию она печатает знак «=» напрямую.")));
+                         "Клавиша «=» приходит кодом «очистить», которого почти никто не понимает, — " +
+                         "программа печатает «=» сама.")));
             }
 
             // Правый ⌥ — одним вопросом, до модификаторов: он и есть самая спорная клавиша.
@@ -571,8 +561,8 @@ namespace MagicKeys
 
             string what =
                 now == "fn"
-                    ? "Переключает верхний ряд и даёт Fn+стрелки. Настоящей Fn у Magic Keyboard " +
-                      "в Windows нет — без замены до F-клавиш не добраться совсем."
+                    ? "Переключает верхний ряд и даёт Fn+стрелки. Без драйвера Apple настоящая Fn " +
+                      "до Windows не доходит, поэтому нужна замена."
                 : now == "symbols"
                     ? "Набирает символы, напечатанные на клавише третьими. Работает, только когда " +
                       "включены раскладки Apple."
@@ -654,8 +644,8 @@ namespace MagicKeys
                      "Здесь то же самое делается без установки раскладок в систему: программа " +
                      "подменяет только те клавиши, которые в действующей раскладке Windows дают " +
                      "не то, что напечатано на клавише Apple. Остальные нажатия идут как обычно.\n\n" +
-                     "Таблицы взяты из Unicode CLDR (keyboards/osx) — это те же данные, по которым " +
-                     "работает сама macOS; мёртвые клавиши (´ ` ¨ ˆ ~) поддерживаются.\n\n" +
+                     "Таблицы — те же данные, по которым раскладку рисует сама macOS; мёртвые " +
+                     "клавиши (´ ` ¨ ˆ ~) работают.\n\n" +
                      "«Любой ⌥» точнее повторяет Mac, но тогда Alt перестаёт открывать меню программ; " +
                      "«правый ⌥» — привычный для Windows размен.")));
 
@@ -962,13 +952,13 @@ namespace MagicKeys
             // осмысленны три, а «выключено, но приостанавливать» не значит ничего.
             Choice[] when =
             {
-                new Choice { Value = "apple", Text = "Только пока Magic Keyboard подключена" },
-                new Choice { Value = "always", Text = "Всегда, на любой клавиатуре" },
-                new Choice { Value = "off",    Text = "Приостановлено" }
+                new Choice { Value = "apple", Text = "Только с Magic Keyboard" },
+                new Choice { Value = "always", Text = "На любой клавиатуре" },
+                new Choice { Value = "off",    Text = "Выключены" }
             };
             string nowWhen = !_s.Enabled ? "off" : (_s.PauseWhenAppleAbsent ? "apple" : "always");
 
-            lines.Children.Add(Row("Работает", null, Combo(when, nowWhen, delegate(object v)
+            lines.Children.Add(Row("Переназначения", null, Combo(when, nowWhen, delegate(object v)
             {
                 string pick = (string)v;
                 _s.Enabled = pick != "off";
@@ -1208,10 +1198,10 @@ namespace MagicKeys
                              "медиакод, она снова уступит драйверу.\n\n" +
                              "Проверить, что именно приходит, можно на странице «Проверка клавиш» — " +
                              "одного нажатия достаточно."),
-                        _pages.Contains("selftest")
-                            ? (UIElement)LinkButton("Перейти к проверке клавиш", delegate { GoTo("selftest"); })
-                            : (UIElement)Note("Посмотреть, что приходит с клавиатуры, можно на странице " +
-                                   "«Проверка клавиш» — она открывается в режиме разработчика.")));
+                        _pages.Contains("diag")
+                            ? (UIElement)LinkButton("Открыть диагностику", delegate { GoTo("diag"); })
+                            : (UIElement)Note("Что приходит с клавиатуры, видно на странице «Диагностика» — " +
+                                   "она открывается в режиме разработчика.")));
                 }
 
                 stack.Children.Add(Card("Кто занимается функциональным рядом", null,
@@ -1525,8 +1515,8 @@ namespace MagicKeys
                 column.Children.Add(Card("Режим разработчика", "Включён",
                     Toggle("Показывать служебные страницы и настройки", _s.DeveloperMode,
                         delegate(bool v) { _s.DeveloperMode = v; Save(); FillNav(); BuildPage(); }),
-                    Note("Открывает «Устройства» и «Проверку клавиш», а на остальных страницах — " +
-                         "исполнение клавиатуры, японские клавиши и номера языков ввода.")));
+                    Note("Открывает «Диагностику», а на других страницах — " +
+                         "исполнение клавиатуры и коды языков ввода.")));
 
             return column;
         }
@@ -2170,14 +2160,14 @@ namespace MagicKeys
                 {
                     _s.FnSubstitute = ModKey.None;
                     done.Add("• Заменитель Fn выключен: с драйвером работает настоящая клавиша Fn "
-                           + "(замерено — Fn+F1 даёт настоящий F1), и подменять её больше нечем.");
+                           + "и подменять её больше нечем.");
                 }
                 if (_s.FnNavigation)
                 {
                     _s.FnNavigation = false;
                     done.Add("• Навигация Fn+стрелки выключена: её должен взять на себя драйвер. "
                            + "Проверьте Fn+← — если в начало строки не уходит, включите её "
-                           + "обратно на странице «Функциональные клавиши».");
+                           + "обратно в карточке «Заменитель Fn» на странице «Клавиши».");
                 }
             }
 

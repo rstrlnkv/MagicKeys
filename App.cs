@@ -170,7 +170,7 @@ namespace MagicKeys
             open.Click += delegate { ShowWindow(); };
             open.Font = new System.Drawing.Font(open.Font, System.Drawing.FontStyle.Bold);
 
-            _enabledItem = new Forms.ToolStripMenuItem("Переназначения включены");
+            _enabledItem = new Forms.ToolStripMenuItem("Переназначения работают");
             _enabledItem.CheckOnClick = true;
             _enabledItem.Checked = _settings.Enabled;
             _enabledItem.Click += delegate

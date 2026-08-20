@@ -152,7 +152,7 @@ namespace MagicKeys
             // не управляется, — например, телевизор без DDC/CI.
             _unsupported = new TextBlock
             {
-                Text = "яркость недоступна",
+                Text = "этот монитор яркость не меняет",
                 VerticalAlignment = VerticalAlignment.Center,
                 Visibility = Visibility.Collapsed
             };

@@ -64,7 +64,7 @@ namespace MagicKeys
         static Actions()
         {
             Add("none", "Без изменений", "Оставить как есть", ActionKind.PassThrough, 0, null, false, null);
-            Add("swallow", "Без изменений", "Ничего не делать", ActionKind.Swallow, 0, null, false, null);
+            Add("swallow", "Без изменений", "Отключить клавишу", ActionKind.Swallow, 0, null, false, null);
 
             Add("brightness.down", "Экран", "Яркость экрана меньше", ActionKind.BrightnessDown, 0, null, true, null);
             Add("brightness.up", "Экран", "Яркость экрана больше", ActionKind.BrightnessUp, 0, null, true, null);
@@ -117,8 +117,8 @@ namespace MagicKeys
             Add("text.period", "Знаки", "Печатать «.»", ActionKind.Text, 0, null, true, ".");
 
             Add("ime.kana", "Ввод иероглифов", "Кана / カナ", ActionKind.Key, Vk.Kana, null, false, null);
-            Add("ime.on", "Ввод иероглифов", "Включить редактор метода ввода", ActionKind.Key, Vk.ImeOn, null, false, null);
-            Add("ime.off", "Ввод иероглифов", "Выключить редактор метода ввода", ActionKind.Key, Vk.ImeOff, null, false, null);
+            Add("ime.on", "Ввод иероглифов", "Включить японский ввод", ActionKind.Key, Vk.ImeOn, null, false, null);
+            Add("ime.off", "Ввод иероглифов", "Выключить японский ввод", ActionKind.Key, Vk.ImeOff, null, false, null);
             Add("ime.convert", "Ввод иероглифов", "Преобразовать / 変換", ActionKind.Key, Vk.Convert, null, false, null);
             Add("ime.nonconvert", "Ввод иероглифов", "Не преобразовывать / 無変換", ActionKind.Key, Vk.NonConvert, null, false, null);
         }

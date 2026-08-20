@@ -353,13 +353,17 @@ namespace MagicKeys
 
             stack.Children.Add(Card("Заменитель Fn", null,
                 Row("Клавиша", "С ней режим временно переворачивается", fnBox),
-                Toggle("Навигация как в macOS: Fn+↑↓ — PgUp и PgDn, Fn+←→ — начало и конец строки, " +
-                       "Fn+Backspace — Delete, Fn+Enter — Insert",
+                Toggle("Навигация как в macOS: Fn со стрелками, Backspace и Enter",
                     _s.FnNavigation, delegate(bool v) { _s.FnNavigation = v; Save(); }),
-                _s.FnNavigation && _s.MacShortcuts && (_s.FnSubstitute == ModKey.RAlt || _s.FnSubstitute == ModKey.LAlt)
-                    ? (UIElement)Note("Fn+←/→ и Fn+Backspace достаются сочетаниям macOS: там " +
-                                      "⌥ ходит по словам. Начало и конец строки — на ⌘←/→.")
-                    : new StackPanel { Visibility = Visibility.Collapsed },
+                // Заменитель и ⌥ бывают одной клавишей, и тогда три сочетания из шести
+                // достаются таблице macOS. Перечислять всё, а следом оговариваться — значит
+                // сперва пообещать, потом отобрать: список сразу называет то, что работает.
+                Note(_s.MacShortcuts && (_s.FnSubstitute == ModKey.RAlt || _s.FnSubstitute == ModKey.LAlt)
+                        ? "Fn+↑↓ листают страницу, Fn+Enter — это Insert. Fn+←→ и Fn+Backspace " +
+                          "достаются сочетаниям macOS: там ⌥ ходит по словам, а начало и конец " +
+                          "строки — на ⌘←→."
+                        : "Fn+↑↓ листают страницу, Fn+←→ уводят в начало и конец строки, " +
+                          "Fn+Backspace удаляет вперёд, Fn+Enter — это Insert."),
                 Note(AppleDriver.TakesFunctionRow
                     ? "С драйвером Apple настоящая Fn работает, и заменитель не нужен."
                     : "Magic Keyboard не отправляет Fn в Windows — её обрабатывает сама " +
@@ -607,10 +611,13 @@ namespace MagicKeys
                     _s.OptLevel == OptLevel.AnyOption,
                     delegate(bool v) { _s.OptLevel = v ? OptLevel.AnyOption : OptLevel.RightOption; Save(); }));
 
-            // Пока клавиша ничего не забирает, ею можно распорядиться как любым
-            // модификатором. Прежде это поле правили только готовые схемы, и карточка
-            // уверяла «обычный Alt», когда клавиша давно приходила клавишей Windows.
-            if (now == "plain")
+            // Чем клавиша приходит в Windows — спрашиваем всегда, кроме роли «символы»:
+            // там она обязана оставаться Alt, иначе третьего уровня не набрать. Заменителю
+            // Fn это нужно не меньше: подсказка выше предлагает отключить обычное значение
+            // клавиши, если она нужна только как Fn, — и делать это негде, если не спросить.
+            // Прежде поле правили только готовые схемы, и карточка уверяла «обычный Alt»,
+            // когда клавиша давно приходила клавишей Windows.
+            if (now != "symbols")
             {
                 var comesGrid = new Grid();
                 comesGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -716,8 +723,8 @@ namespace MagicKeys
                 {
                     Value = "auto",
                     Text = guessed == null
-                        ? "Подобрать по языку (для этого языка раскладки нет)"
-                        : "Подобрать по языку — сейчас " + guessed.Title
+                        ? "Подобрать самой (раскладки нет)"
+                        : "Подобрать самой — " + guessed.Title
                 });
                 choices.Add(new Choice { Value = "", Text = "Не подменять" });
                 foreach (AppleLayoutFile f in Layouts.All)
@@ -2086,17 +2093,29 @@ namespace MagicKeys
             grid.Children.Add(box);
         }
 
+        /// <summary>
+        /// Список действий — с разделами. Сорок пять строк подряд глазом не берутся,
+        /// а раздел у каждого действия давно записан и до сих пор никем не читался.
+        /// </summary>
         private ComboBox ActionCombo(string currentId, Action<string> onSet)
         {
             var box = new ComboBox { Style = (Style)Application.Current.Resources["Combo"] };
-            int selected = 0, i = 0;
-            foreach (KeyAction a in Actions.All)
-            {
-                box.Items.Add(a);
-                if (a.Id == currentId) selected = i;
-                i++;
-            }
-            box.SelectedIndex = selected;
+
+            var view = new System.Windows.Data.CollectionViewSource();
+            var items = new List<KeyAction>(Actions.All);
+            view.Source = items;
+            view.GroupDescriptions.Add(new System.Windows.Data.PropertyGroupDescription("Group"));
+            box.ItemsSource = view.View;
+
+            var header = new Style(typeof(GroupItem));
+            header.Setters.Add(new Setter(GroupItem.TemplateProperty, GroupTemplate()));
+            var style = new GroupStyle();
+            style.ContainerStyle = header;
+            box.GroupStyle.Add(style);
+
+            KeyAction pick = null;
+            foreach (KeyAction a in items) if (a.Id == currentId) { pick = a; break; }
+            box.SelectedItem = pick != null ? pick : (items.Count > 0 ? items[0] : null);
             box.SelectionChanged += delegate
             {
                 if (_building) return;
@@ -2104,6 +2123,25 @@ namespace MagicKeys
                 if (a != null) onSet(a.Id);
             };
             return box;
+        }
+
+        /// <summary>Заголовок раздела в списке: подпись и сами строки под ней.</summary>
+        private static ControlTemplate GroupTemplate()
+        {
+            var panel = new FrameworkElementFactory(typeof(StackPanel));
+
+            var title = new FrameworkElementFactory(typeof(TextBlock));
+            title.SetBinding(TextBlock.TextProperty, new System.Windows.Data.Binding("Name"));
+            title.SetValue(FrameworkElement.MarginProperty, new Thickness(10, 8, 10, 2));
+            title.SetResourceReference(FrameworkElement.StyleProperty, "Caption");
+            panel.AppendChild(title);
+
+            var items = new FrameworkElementFactory(typeof(ItemsPresenter));
+            panel.AppendChild(items);
+
+            var tpl = new ControlTemplate(typeof(GroupItem));
+            tpl.VisualTree = panel;
+            return tpl;
         }
 
         private ComboBox Combo(Choice[] choices, object current, Action<object> onSet)

@@ -112,7 +112,14 @@ namespace MagicKeys
         /// Отдельно от Forget(): та забывает и медиакоды, а с ними меняется и то,
         /// кто обрабатывает функциональный ряд.
         /// </summary>
-        public static void ForgetPhysical() { _detectedPhys = (int)PhysLayout.Ansi; }
+        public static void ForgetPhysical()
+        {
+            _detectedPhys = (int)PhysLayout.Ansi;
+            // Заодно и счёт F-клавиш: он тоже умеет только расти, и одна чужая
+            // полноразмерная клавиатура иначе оставляла бы строки F13–F19 в окне
+            // до перезапуска. Ровно за это из настроек убрали ObservedFunctionKeys.
+            _maxFunctionKey = 0;
+        }
 
         private static void NoteScan(int scan)
         {
@@ -364,7 +371,9 @@ namespace MagicKeys
                 else
                     Marshal.FreeHGlobal(b);
             }
-            lock (Sync) Preparsedes[device] = result;
+            // То же и здесь: пустоту запоминаем, только если Windows правда ответила,
+            // что описания отчётов нет, а не если запрос не удался.
+            if (result != IntPtr.Zero || size == 0) lock (Sync) Preparsedes[device] = result;
             return result;
         }
 
@@ -402,6 +411,7 @@ namespace MagicKeys
             lock (Sync) if (IsApple.TryGetValue(device, out known)) return known;
 
             bool apple = false;
+            bool asked = false;          // спросили и получили ответ — только тогда запоминаем
             uint size = 0;
             Native.GetRawInputDeviceInfoW(device, Native.RIDI_DEVICENAME, IntPtr.Zero, ref size);
             if (size > 0 && size < 4096)
@@ -412,12 +422,18 @@ namespace MagicKeys
                     if (Native.GetRawInputDeviceInfoW(device, Native.RIDI_DEVICENAME, b, ref size) != uint.MaxValue)
                     {
                         apple = Devices.IsAppleDevicePath(Marshal.PtrToStringUni(b));
+                        asked = true;
                     }
                 }
                 finally { Marshal.FreeHGlobal(b); }
             }
 
-            lock (Sync) IsApple[device] = apple;
+            // Неответ — не ответ. Раньше сбой запоминался как «не Apple» до отключения
+            // устройства: один промах при подключении по Bluetooth — и до конца сеанса
+            // клавиатура не своя, перепись молчит, исполнение не угадывается, ⏏ не
+            // работает. Выглядело как «программа перестала видеть клавиатуру», а было
+            // успешно закэшированным сбоем.
+            if (asked) lock (Sync) IsApple[device] = apple;
             return apple;
         }
 

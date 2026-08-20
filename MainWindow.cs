@@ -77,6 +77,11 @@ namespace MagicKeys
                 if (WindowState == WindowState.Minimized) DetachSelfTest();
                 else if (CurrentPage == "selftest" && _selfTest == null) BuildPage();
             };
+            // И при потере фокуса. Окно может быть видно — на втором мониторе, сбоку, —
+            // пока человек печатает в другой программе. Список последних нажатий тогда
+            // копился бы дальше, и пароль оказался бы на экране у всех на виду.
+            Deactivated += delegate { DetachSelfTest(); };
+            Activated += delegate { if (CurrentPage == "selftest" && _selfTest == null) BuildPage(); };
             UseLayoutRounding = true;
 
             var root = new Grid();
@@ -263,7 +268,7 @@ namespace MagicKeys
             {
                 switch (CurrentPage)
                 {
-                    case "fkeys": Head("Функциональные клавиши", "Что делают F1–F" + Models.FunctionKeyCount(_s) + ". По умолчанию — то же, что напечатано на клавишах Apple."); _host.Content = PageFKeys(); break;
+                    case "fkeys": Head("Функциональные клавиши", "Что делают F1–F" + Models.FunctionKeyCount() + ". По умолчанию — то же, что напечатано на клавишах Apple."); _host.Content = PageFKeys(); break;
                     case "mods": Head("Модификаторы", "Куда ведут ⌘, ⌥, control и Caps Lock."); _host.Content = PageModifiers(); break;
                     case "mac": Head("Сочетания macOS", "⌘C, ⌘←, ⌘Q и остальные — чтобы пальцы не переучивались."); _host.Content = PageMacKeys(); break;
                     case "layout": Head("Раскладка", "Раскладки macOS — то, что напечатано на клавишах Apple."); _host.Content = PageLayout(); break;
@@ -349,7 +354,7 @@ namespace MagicKeys
                       "продолжит работать.")));
 
             string[] legends = Models.Legend(Generation);
-            int fcount = Models.FunctionKeyCount(_s);
+            int fcount = Models.FunctionKeyCount();
             var table = new Grid { Margin = new Thickness(0, 2, 0, 0) };
             table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(56) });
             table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
@@ -403,6 +408,9 @@ namespace MagicKeys
             reset.Click += delegate
             {
                 _s.FKeys = Models.DefaultFKeys(Generation);
+                // Запоминаем и поколение: иначе набор перестаёт совпадать с эталоном,
+                // и подстановка заводских при смене клавиатуры выключается навсегда.
+                _s.FKeysGen = Generation;
                 Save();
                 BuildPage();
             };
@@ -1059,7 +1067,7 @@ namespace MagicKeys
 
             _selfTestChecks.Children.Clear();
 
-            int keys = Models.FunctionKeyCount(_s);
+            int keys = Models.FunctionKeyCount();
             var frow = new System.Text.StringBuilder();
             int fseen = 0;
             for (int i = 0; i < keys; i++)

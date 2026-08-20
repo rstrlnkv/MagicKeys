@@ -125,13 +125,15 @@ namespace MagicKeys
 
                 string target = Path.Combine(ToolsFolder, "7zip");
                 report(0.9, "разворачиваю 7-Zip…");
-                var psi = new ProcessStartInfo("msiexec.exe",
+                var psi = new ProcessStartInfo(
+                    Path.Combine(Environment.SystemDirectory, "msiexec.exe"),
                     "/a \"" + msi + "\" TARGETDIR=\"" + target + "\" /qn");
                 psi.UseShellExecute = false;
                 psi.CreateNoWindow = true;
                 using (Process p = Process.Start(psi))
                 {
                     p.WaitForExit(180000);
+                    if (!p.HasExited) { error = "разворачивание 7-Zip не уложилось в срок"; return null; }
                     if (p.ExitCode != 0)
                     {
                         Diag.Log("7-Zip: msiexec вернул " + p.ExitCode);
@@ -673,8 +675,18 @@ namespace MagicKeys
 
             try
             {
-                var psi = new ProcessStartInfo("cmd.exe",
-                    "/c pnputil " + args + " > \"" + log + "\" 2>&1");
+                // Оба имени — полными путями. ShellExecute ищет cmd.exe в том числе
+                // в текущем каталоге, а сам cmd так же ищет pnputil; каталог у переносимой
+                // программы её собственный и доступен на запись любому процессу того же
+                // пользователя. Подмена любого из двух дала бы исполнение с правами
+                // администратора. Имя файла вывода тут уже случайное — а исполняемые
+                // файлы оставались беззащитными.
+                string sys = Environment.SystemDirectory;
+                var psi = new ProcessStartInfo(
+                    Path.Combine(sys, "cmd.exe"),
+                    "/c \"" + Path.Combine(sys, "pnputil.exe") + "\" " + args +
+                    " > \"" + log + "\" 2>&1");
+                psi.WorkingDirectory = sys;
                 psi.UseShellExecute = true;      // нужно для запроса прав
                 psi.Verb = "runas";
                 psi.CreateNoWindow = true;
@@ -683,6 +695,11 @@ namespace MagicKeys
                 {
                     p.WaitForExit(120000);
                     output = ReadPlainFile(log);
+                    if (!p.HasExited)
+                    {
+                        output = "установка драйвера не уложилась в срок";
+                        return false;
+                    }
                     return p.ExitCode == 0;
                 }
             }

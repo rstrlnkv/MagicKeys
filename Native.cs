@@ -148,9 +148,6 @@ namespace MagicKeys
         public static extern int GetSystemMetrics(int index);
 
         // С индексом −1 возвращает число значков в файле, ничего не загружая.
-        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
-        public static extern int ExtractIconEx(string file, int index, IntPtr[] large, IntPtr[] small, int count);
-
         // ---------- низкоуровневый хук клавиатуры ----------
 
         public const int WH_KEYBOARD_LL = 13;

@@ -90,10 +90,17 @@ namespace MagicKeys
 
             try
             {
-                var psi = new System.Diagnostics.ProcessStartInfo("reg.exe",
+                // Полный путь, а не имя. ShellExecute ищет имя без пути и в текущем
+                // каталоге тоже, а он у переносимой программы — её собственная папка,
+                // доступная на запись любому процессу того же пользователя. Подложенный
+                // туда reg.exe исполнился бы с правами администратора: готовый переход
+                // из пользователя в администраторы, ради одного нажатия кнопки.
+                var psi = new System.Diagnostics.ProcessStartInfo(
+                    System.IO.Path.Combine(Environment.SystemDirectory, "reg.exe"),
                     "add \"" + path + "\" /v OSXFnBehavior /t REG_DWORD /d " + value + " /f");
                 psi.UseShellExecute = true;
                 psi.Verb = "runas";
+                psi.WorkingDirectory = Environment.SystemDirectory;
                 psi.WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden;
                 using (System.Diagnostics.Process p = System.Diagnostics.Process.Start(psi))
                 {

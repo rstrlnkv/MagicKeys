@@ -110,6 +110,12 @@ namespace MagicKeys
                 else if (e.Code == Native.UsageBrightnessDown) Brightness.Nudge(-s.BrightnessStep);
             };
 
+            // Один раз при запуске: событие DevicesChanged поднимается только когда
+            // набор клавиатур изменился, а самое первое появление съедает Devices.Rescan
+            // внутри Engine.Start. С уже подключённой клавиатурой заводские назначения
+            // иначе не подставлялись бы никогда — а именно так программу и запускают.
+            if (AdoptModelDefaults()) _engine.Apply(_settings);
+
             KeyWatch.Start();
 
             // Индикатор показываем на том мониторе, яркость которого изменилась.
@@ -174,8 +180,23 @@ namespace MagicKeys
             // Пользователь может переключить тему на ходу — значок должен перекраситься.
             Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
             Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+            Microsoft.Win32.SystemEvents.PowerModeChanged += OnPowerModeChanged;
 
             UpdateTrayText();
+        }
+
+        /// <summary>
+        /// Машина проснулась. За сон устаревает всё разом, а сроки у кэшей разные —
+        /// от двадцати секунд до бессрочного. Гасим те три, которым это правда важно;
+        /// остальные обновятся сами: набор устройств опрашивается раз в две секунды,
+        /// а описания отчётов снимаются по уходу устройства.
+        /// </summary>
+        private void OnPowerModeChanged(object sender, Microsoft.Win32.PowerModeChangedEventArgs e)
+        {
+            if (e.Mode != Microsoft.Win32.PowerModes.Resume) return;
+            try { Brightness.Invalidate(); } catch { }
+            try { KeyboardBattery.Invalidate(); } catch { }
+            try { AppleDriver.Refresh(true); } catch { }
         }
 
         /// <summary>Мониторы переключили, подключили или отключили.</summary>
@@ -327,6 +348,7 @@ namespace MagicKeys
             try { if (_engine != null) _engine.Stop(); } catch { }
             try { Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged; } catch { }
             try { Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged; } catch { }
+            try { Microsoft.Win32.SystemEvents.PowerModeChanged -= OnPowerModeChanged; } catch { }
             try
             {
                 if (_tray != null)

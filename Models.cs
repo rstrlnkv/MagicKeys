@@ -200,12 +200,13 @@ namespace MagicKeys
         /// оно умело только расти, и одна чужая полноразмерная клавиатура оставляла
         /// строки F13–F19 в окне навсегда.
         /// </summary>
-        public static int FunctionKeyCount(Settings s)
+        public static int FunctionKeyCount()
         {
             int n = 12;
             AppleModel m = Devices.AppleModel;
             if (m != null && m.FunctionKeys > n) n = m.FunctionKeys;
             if (KeyWatch.MaxFunctionKey > n) n = KeyWatch.MaxFunctionKey;
+
             return n > Settings.MaxFKeys ? Settings.MaxFKeys : n;
         }
 

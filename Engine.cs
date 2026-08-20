@@ -54,6 +54,16 @@ namespace MagicKeys
         private readonly HashSet<ModKey> _ctrlSources = new HashSet<ModKey>();
         private readonly HashSet<ModKey> _winSources = new HashSet<ModKey>();
         private bool _capsHeld;
+
+        // На каком нажатии аккорд macOS уже сработал. Нужно против автоповтора:
+        // он приходит теми же нажатиями, а закрывать окно за окном при удержании ⌘Q
+        // никто не просил.
+        private int _macFiredVk;
+
+        // Что мы держим за человека помимо модификаторов: действие на одиночной клавише
+        // и подставленный скан-код перестановки ISO. Без учёта их некому отпустить.
+        private readonly Dictionary<int, string> _singleAction = new Dictionary<int, string>();
+        private readonly HashSet<uint> _isoSwapped = new HashSet<uint>();
         private readonly Dictionary<ModKey, int> _injected = new Dictionary<ModKey, int>();
         private readonly HashSet<uint> _swallowed = new HashSet<uint>();
         private readonly HashSet<int> _navActive = new HashSet<int>();
@@ -151,7 +161,16 @@ namespace MagicKeys
                     }
                 }
                 catch { }
-            }, null, 2000, 2000);
+                finally
+                {
+                    // Перепланируем себя, а не тикаем по расписанию: внутри открытие
+                    // каждого HID-устройства и перебор реестра, и по Bluetooth это
+                    // может занять больше двух секунд. Наложившиеся проходы считали
+                    // «изменилось» друг против друга.
+                    try { if (_watch != null) _watch.Change(2000, Timeout.Infinite); }
+                    catch { }
+                }
+            }, null, 2000, Timeout.Infinite);
 
             // Прогреваем раскладки заранее. Иначе первое же нажатие грузило бы 33 файла
             // XML прямо в хуке — сотни миллисекунд там, где их отпущено 300.
@@ -370,7 +389,7 @@ namespace MagicKeys
             ModKey phys;
             if (TryPhysical(vk, ext, out phys))
             {
-                if (!phantomCtrl) TrackModifier(s, phys, down);
+                TrackModifier(s, phys, down);
                 // Считаем по тому, что реально ушло в Windows, а не по тому, что нажали.
                 // Caps Lock мог быть переназначен — у тех, кто пришёл с мака, на нём
                 // обычно control, — и тогда индикатор не переключается, флаг трогать
@@ -425,6 +444,7 @@ namespace MagicKeys
 
             // Сочетания macOS: ⌘C, ⌘←, ⌥← и прочие. Проверяем до функционального
             // ряда, но после модификаторов — состояние ⌘ и ⌥ к этому моменту известно.
+            bool cmdMiss = false;
             if (s.MacShortcuts)
             {
                 MacMod mm = MacMod.None;
@@ -449,19 +469,21 @@ namespace MagicKeys
                     MacShortcut sc = MacKeys.Find(vk, mm);
                     if (sc != null && s.MacEnabled(sc.Id))
                     {
-                        if (down) MacSend(sc);
+                        // Аккорд отправляем один раз на удержание. Автоповтор приходит
+                        // теми же нажатиями, а на маке такие сочетания не повторяются:
+                        // задержал ⌘Q на полсекунды — и Alt+F4 уходит три десятка раз,
+                        // закрывая окно за окном. Движения по тексту, наоборот, повторять
+                        // надо, и они это про себя объявляют сами.
+                        if (down)
+                        {
+                            if (sc.Repeats || _macFiredVk != vk) { _macFiredVk = vk; MacSend(sc); }
+                        }
+                        else if (_macFiredVk == vk) _macFiredVk = 0;
                         return true;
                     }
 
-                    // Сочетание с ⌘, которого в таблице нет, глотаем, а не пропускаем.
-                    // Пропустить нельзя по двум причинам, и обе плохи. Первая: после
-                    // MacSend клавиша Windows уже отпущена без возврата, и в приложение
-                    // улетела бы голая буква — ⌘1 после ⌘A печатало «1» прямо в текст.
-                    // Вторая: для пришедшего с мака промах обернулся бы не «ничем»,
-                    // а действием Windows — ⌘I это Win+I, то есть Параметры поверх
-                    // работы, ⌘L — блокировка экрана. Молчание тут единственный
-                    // безобидный ответ.
-                    if ((mm & MacMod.Cmd) != 0) return true;
+                    // Промах мимо таблицы отмечаем, но глотаем не здесь — см. конец Handle.
+                    if ((mm & MacMod.Cmd) != 0) cmdMiss = true;
                 }
             }
 
@@ -483,8 +505,8 @@ namespace MagicKeys
 
             // Цифровой блок Apple: ⌧ приходит как Num Lock и невзначай выключает блок,
             // а «=» шлёт VK_CLEAR со скан-кодом 0x59, который Windows просто игнорирует.
-            if (vk == Vk.NumLock) { if (HandleSingle(s, s.NumpadClear, down)) return true; }
-            else if (k.scanCode == 0x59 && vk == Vk.Clear) { if (HandleSingle(s, s.NumpadEquals, down)) return true; }
+            if (vk == Vk.NumLock) { if (HandleSingle(s, vk, s.NumpadClear, down)) return true; }
+            else if (k.scanCode == 0x59 && vk == Vk.Clear) { if (HandleSingle(s, vk, s.NumpadEquals, down)) return true; }
 
             // Клавиши японской раскладки: かな, 変換, 無変換, ろ, ¥.
             for (int i = 0; i < JisScans.Length; i++)
@@ -509,10 +531,41 @@ namespace MagicKeys
             // не выполнялась, и выходило, что по-русски клавиши стоят правильно,
             // а по-английски переставлены, — при том что переключатель в окне погашен
             // и обещает, что раскладки Apple всё расставят сами.
-            if (s.SwapIsoKeys && Physical(s) == PhysLayout.Iso)
+            // Отпускание идёт туда же, куда ушло нажатие, — по запомненному, а не по
+            // нынешним настройкам. Иначе достаточно, чтобы между нажатием и отпусканием
+            // сменилось исполнение (а оно сбрасывается на каждом переподключении
+            // клавиатуры по Bluetooth, то есть на каждом пробуждении), — и подставленная
+            // клавиша осталась бы зажатой навсегда.
+            if (!down && _isoSwapped.Remove(k.scanCode))
             {
-                if (k.scanCode == 0x29) { Input.Scan(0x56, false, down); return true; }
-                if (k.scanCode == 0x56) { Input.Scan(0x29, false, down); return true; }
+                Input.Scan((ushort)(k.scanCode == 0x29 ? 0x56 : 0x29), false, false);
+                return true;
+            }
+            if (down && s.SwapIsoKeys && Physical(s) == PhysLayout.Iso
+                && (k.scanCode == 0x29 || k.scanCode == 0x56))
+            {
+                _isoSwapped.Add(k.scanCode);
+                Input.Scan((ushort)(k.scanCode == 0x29 ? 0x56 : 0x29), false, true);
+                return true;
+            }
+
+            // Сочетание с ⌘, которого в таблице нет. Глотаем — но в самом конце, когда
+            // все прочие правила уже отказались: раньше это стояло сразу после таблицы
+            // и съедало отпускания, нужные F-ряду, цифровому блоку и раскладке, а те
+            // оставались с зажатой синтетической клавишей.
+            //
+            // Пропустить нельзя: после MacSend клавиша Windows отпущена без возврата,
+            // и в приложение улетела бы голая буква; а для пришедшего с мака промах
+            // обернулся бы действием Windows — ⌘I это Win+I, ⌘L блокировка экрана.
+            //
+            // И обязательно затычка. Windows считает нажатие Win одиночным, если между
+            // ним и отпусканием ничего не было, — а мы как раз съели то, что было между.
+            // Без неё Win+E не «ничего не делает», а вываливает «Пуск» поверх работы:
+            // замерено стендом, ⌘1 открывал меню и забирал фокус.
+            if (cmdMiss)
+            {
+                if (down && _winDown) Input.Tap(VkNoop);
+                return true;
             }
 
             return false;
@@ -815,12 +868,38 @@ namespace MagicKeys
         }
 
         /// <summary>Одиночная клавиша со своим назначением. false — оставить как есть.</summary>
-        private bool HandleSingle(Settings s, string actionId, bool down)
+        /// <summary>
+        /// Клавиша с одним назначением: ⌧, «=» цифрового блока, японские.
+        ///
+        /// Действие защёлкивается на первом нажатии по тем же трём причинам, что и у
+        /// F-ряда: настройки меняются из окна под зажатой клавишей, автоповтор приходит
+        /// теми же нажатиями, а между нажатием и отпусканием программу могут поставить
+        /// на паузу. Любая из трёх оставляла синтетическую клавишу нажатой — а по
+        /// умолчанию на ⌧ висит Delete, которой на Magic Keyboard физически нет,
+        /// и снять её было бы нечем.
+        /// </summary>
+        private bool HandleSingle(Settings s, int sourceVk, string actionId, bool down)
         {
-            KeyAction a = Actions.Get(actionId);
-            if (a.Kind == ActionKind.PassThrough) return false;
-            if (down) Actions.Begin(a, false, s.BrightnessStep);
-            else Actions.End(a);
+            string id;
+            if (down)
+            {
+                if (!_singleAction.TryGetValue(sourceVk, out id))
+                {
+                    id = actionId;
+                    if (Actions.Get(id).Kind == ActionKind.PassThrough) return false;
+                    _singleAction[sourceVk] = id;
+                    Actions.Begin(Actions.Get(id), false, s.BrightnessStep);
+                    return true;
+                }
+                // Автоповтор: то же действие, но повтором — аккорды и запуск программ
+                // на нём не срабатывают, иначе удержание плодило бы окна калькулятора.
+                Actions.Begin(Actions.Get(id), true, s.BrightnessStep);
+                return true;
+            }
+
+            if (!_singleAction.TryGetValue(sourceVk, out id)) return false;
+            _singleAction.Remove(sourceVk);
+            Actions.End(Actions.Get(id));
             return true;
         }
 
@@ -1024,6 +1103,7 @@ namespace MagicKeys
                 _subReleased = 0;
                 _phantomCtrl = false;
                 _cmdHeld = false;
+                _macFiredVk = 0;
                 _deadPrefix = null;
                 _swallowed.Clear();
                 _ctrlSources.Clear();
@@ -1039,6 +1119,18 @@ namespace MagicKeys
                     if (target != 0) Input.Key(target, false);
                 }
                 _navActive.Clear();
+
+                // Одиночные клавиши и перестановка ISO — то же самое: отпустить некому.
+                foreach (KeyValuePair<int, string> pair in new List<KeyValuePair<int, string>>(_singleAction))
+                {
+                    try { Actions.End(Actions.Get(pair.Value)); }
+                    catch (Exception e) { Diag.Log("не удалось отпустить одиночную клавишу", e); }
+                }
+                _singleAction.Clear();
+
+                foreach (uint scan in new List<uint>(_isoSwapped))
+                    Input.Scan((ushort)(scan == 0x29 ? 0x56 : 0x29), false, false);
+                _isoSwapped.Clear();
 
                 // И начатые действия: зажатая медиаклавиша сама не отпустится.
                 // У настоящей F-клавиши синтетическая совпадает с физической, поэтому

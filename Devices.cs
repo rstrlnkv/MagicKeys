@@ -50,6 +50,17 @@ namespace MagicKeys
 
         private static readonly object Sync = new object();
         private static volatile bool _appleConnected;
+        private static volatile string _mark = "";
+
+        /// <summary>Отпечаток набора клавиатур: по нему видно любую замену, а не только уход Apple.</summary>
+        private static string Mark(List<KeyboardInfo> list)
+        {
+            var ids = new List<string>();
+            foreach (KeyboardInfo k in list)
+                ids.Add(k.Vendor.ToString("X4") + ":" + k.ProductId.ToString("X4") + ":" + (k.IsApple ? "A" : "-"));
+            ids.Sort();
+            return String.Join(",", ids.ToArray());
+        }
         private static AppleModel _appleModel;
         private static string _appleStatusPath;
         private static List<KeyboardInfo> _cache = new List<KeyboardInfo>();
@@ -72,9 +83,19 @@ namespace MagicKeys
         public static bool IsAppleDevicePath(string path)
         {
             if (String.IsNullOrEmpty(path)) return false;
-            if (path.IndexOf("VID_05AC", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-            // По Bluetooth путь записан иначе: VID&xxxx004C, где xxxx — вид шины.
-            return Regex.IsMatch(path, "VID&[0-9A-Fa-f]{4}004C", RegexOptions.IgnoreCase);
+
+            // Теми же выражениями, что и при перечислении устройств, — иначе «одно
+            // правило» осталось бы двумя: прежняя проверка знала только VID_05AC и
+            // VID&xxxx004C, а перечисление принимало оба идентификатора в обоих
+            // написаниях. Клавиатура, чей путь по Bluetooth записан через USB-образец,
+            // считалась бы своей в одном месте и чужой в другом.
+            Match m = UsbIds.Match(path);
+            if (!m.Success) m = BtIds.Match(path);
+            if (!m.Success) return false;
+            int vendor;
+            if (!Int32.TryParse(m.Groups[1].Value, NumberStyles.HexNumber,
+                                CultureInfo.InvariantCulture, out vendor)) return false;
+            return vendor == AppleUsb || vendor == AppleBluetooth;
         }
 
         public static IList<KeyboardInfo> Known
@@ -95,9 +116,15 @@ namespace MagicKeys
                 if (model == null && k.Apple != null) model = k.Apple;
             }
 
-            bool changed = apple != _appleConnected;
+            // «Изменилось» — это про весь набор, а не только про «есть ли Apple».
+            // Читают этот ответ трое: сброс догадки об исполнении, подстановка заводских
+            // назначений и обновление окна, и всем троим важна замена одной клавиатуры
+            // на другую — а прежнее условие её не замечало.
+            string mark = Mark(found);
+            bool changed = mark != _mark;
             lock (Sync) { _cache = found; _appleModel = model; }
             _appleConnected = apple;
+            _mark = mark;
             return changed;
         }
 

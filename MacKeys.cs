@@ -32,6 +32,7 @@ namespace MagicKeys
         public int SendVk;       // и какую клавишу
         public int[] Then;       // второе нажатие, если одного мало
         public int[] ThenMods;
+        public bool Repeats;     // повторять ли при удержании
     }
 
     /// <summary>
@@ -60,7 +61,8 @@ namespace MagicKeys
             Edit("copy", "Копировать", "⌘C", Vk.C, Vk.C);
             Edit("paste", "Вставить", "⌘V", Vk.V, Vk.V);
             Edit("cut", "Вырезать", "⌘X", Vk.X, Vk.X);
-            Edit("undo", "Отменить", "⌘Z", Vk.Z, Vk.Z);
+            // Отмену и повтор держат, чтобы откатиться на несколько шагов, — им повтор нужен.
+            Edit("undo", "Отменить", "⌘Z", Vk.Z, Vk.Z).Repeats = true;
             Add("redo", GroupEdit, "Повторить", "⇧⌘Z", "Ctrl+Y",
                 MacMod.Cmd | MacMod.Shift, Vk.Z, new int[] { Vk.LControl }, Vk.Y);
             Edit("selectall", "Выделить всё", "⌘A", Vk.A, Vk.A);
@@ -136,8 +138,14 @@ namespace MagicKeys
                 MacMod.Cmd, Vk.OemComma, new int[] { Vk.LWin }, Vk.I);
             Add("screenrec", GroupSystem, "Запись экрана", "⇧⌘5", "Win+Alt+R",
                 MacMod.Cmd | MacMod.Shift, Vk.D5, new int[] { Vk.LWin, Vk.LMenu }, Vk.R);
-            Add("windownext", GroupSystem, "Следующее окно программы", "⌘`", "Alt+Esc",
+            // На маке ⌘` листает окна текущей программы; в Windows такого сочетания нет,
+            // и Alt+Esc листает окна всех подряд. Называем тем, что получается, а не тем,
+            // что было на маке. Клавиша заведена дважды: на ANSI обратный апостроф слева
+            // от «1», на ISO — слева от «Z», и приходит другим кодом.
+            Add("windownext", GroupSystem, "Следующее окно", "⌘`", "Alt+Esc",
                 MacMod.Cmd, Vk.Oem3, new int[] { Vk.LMenu }, Vk.Escape);
+            Add("windownext.iso", GroupSystem, "Следующее окно (ISO)", "⌘`", "Alt+Esc",
+                MacMod.Cmd, Vk.Oem102, new int[] { Vk.LMenu }, Vk.Escape);
 
             // Листание вкладок. На маке это ⌘⌥←/→, в Windows — Ctrl+PgUp/PgDn.
             // ⌘W и ⌘T уже были, а перехода между вкладками не хватало заметнее всего:
@@ -148,16 +156,22 @@ namespace MagicKeys
                 MacMod.Cmd | MacMod.Opt, Vk.Right, new int[] { Vk.LControl }, Vk.Next);
         }
 
-        private static void Edit(string id, string title, string mac, int vk, int sendVk)
+        private static MacShortcut Edit(string id, string title, string mac, int vk, int sendVk)
         {
-            Add(id, GroupEdit, title, mac, "Ctrl+" + Vk.Name(sendVk),
+            return Add(id, GroupEdit, title, mac, "Ctrl+" + Vk.Name(sendVk),
                 MacMod.Cmd, vk, new int[] { Vk.LControl }, sendVk);
         }
 
+        /// <summary>
+        /// Движение по тексту. Такие сочетания повторяются при удержании — на маке
+        /// зажатое ⌥← идёт по словам, и здесь должно идти так же. Всё остальное
+        /// (закрыть, открыть, снять снимок) срабатывает один раз на нажатие.
+        /// </summary>
         private static void Nav(string id, string title, string mac, MacMod mods, int vk,
                                 int[] sendMods, int sendVk)
         {
-            Add(id, GroupText, title, mac, Describe(sendMods, sendVk), mods, vk, sendMods, sendVk);
+            Add(id, GroupText, title, mac, Describe(sendMods, sendVk), mods, vk, sendMods, sendVk)
+                .Repeats = true;
         }
 
         private static MacShortcut Add(string id, string group, string title, string mac, string win,

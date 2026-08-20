@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Threading;
 using System.Xml;
 
 namespace MagicKeys
@@ -181,15 +182,18 @@ namespace MagicKeys
         private static void EnsureLoaded()
         {
             if (_loaded) return;
-            // Двойная проверка. Прогрев идёт в своём потоке, а нажатие может прийти
-            // в те же миллисекунды — и поток хука начал бы второй полный разбор
-            // тридцати трёх файлов прямо в обработчике, то есть ровно то, от чего
-            // прогрев и заводили.
-            lock (LoadLock)
+            // Не lock, а попытка. Двойная проверка спасала от второго разбора, но не
+            // от ожидания: нажатие, пришедшее пока идёт прогрев, вставало на замок на всё
+            // время разбора тридцати трёх файлов — сотни миллисекунд при бюджете в триста,
+            // после которых Windows снимает перехват. Пропустить одно нажатие своим ходом
+            // дешевле, чем потерять перехват целиком.
+            if (!Monitor.TryEnter(LoadLock)) return;
+            try
             {
                 if (_loaded) return;
                 Reload();
             }
+            finally { Monitor.Exit(LoadLock); }
         }
 
         public static void Reload()

@@ -63,6 +63,7 @@ namespace MagicKeys
             // и в Alt+Tab система возьмёт подходящий размер, а не растянет один.
             if (!Fluent.HasEmbeddedIcon()) Icon = Fluent.MakeWindowIcon();
             SnapsToDevicePixels = true;
+            IsVisibleChanged += delegate { if (!IsVisible) DetachSelfTest(); };
             UseLayoutRounding = true;
 
             var root = new Grid();
@@ -243,13 +244,7 @@ namespace MagicKeys
 
             // Уходим со страницы проверки — снимаем подписку, иначе они копятся,
             // а надписи, на которые они ссылаются, уже выброшены.
-            if (_selfTest != null)
-            {
-                KeyWatch.Activity -= _selfTest;
-                _selfTest = null;
-                _selfTestLog = null;
-                _selfTestChecks = null;
-            }
+            DetachSelfTest();
 
             try
             {
@@ -700,11 +695,11 @@ namespace MagicKeys
                     jisGrid.Children.Add(box);
                 }
                 if (_s.DeveloperMode)
-
-                stack.Children.Add(Card("Клавиши японской раскладки", null, jisGrid,
-                    Note("Раздел появляется, только когда клавиатура опознана как JIS. " +
-                         "Проверить его на настоящей японской клавиатуре не удалось — её здесь нет, " +
-                         "так что скан-коды взяты из документации, а не из опыта.")));
+                    stack.Children.Add(Card("Клавиши японской раскладки", null, jisGrid,
+                        Note("Раздел появляется, когда клавиатура опознана как JIS и включён " +
+                             "режим разработчика. Проверить его на настоящей японской клавиатуре " +
+                             "не удалось — её здесь нет, так что скан-коды взяты из документации, " +
+                             "а не из опыта.")));
             }
 
             return stack;
@@ -946,6 +941,26 @@ namespace MagicKeys
             grid.Children.Add(mid);
             grid.Children.Add(win);
             return grid;
+        }
+
+        /// <summary>
+        /// Снять подписку страницы проверки и стереть накопленное.
+        ///
+        /// Важно не только при уходе со страницы, но и когда окно прячут: закрытие окна
+        /// программу не выключает, а список последних нажатий — упорядоченная история
+        /// с человеческими именами клавиш. Оставленная в спрятанном окне, она через час
+        /// показала бы набранный за это время пароль тому, кто снова откроет окно.
+        /// </summary>
+        private void DetachSelfTest()
+        {
+            if (_selfTest != null)
+            {
+                KeyWatch.Activity -= _selfTest;
+                _selfTest = null;
+            }
+            _selfTestLog = null;
+            _selfTestChecks = null;
+            _selfTestLines.Clear();
         }
 
         private UIElement PageSelfTest()
@@ -1199,8 +1214,9 @@ namespace MagicKeys
             _setupLog.Text = sevenZip != null
                 ? "7-Zip найден: " + sevenZip
                 : "7-Zip не найден. Он нужен для распаковки: внутри пакета Apple лежит образ DMG, "
-                  + "а его встроенные средства Windows читать не умеют. Программа 7-Zip тоже не "
-                  + "поставляет — поставьте его отдельно, и кнопка заработает.";
+                  + "а его встроенные средства Windows читать не умеют. В программу он не вложен, "
+                  + "но она может забрать официальный установщик сама — проверив подпись и ничего "
+                  + "не устанавливая в систему. Это произойдёт по кнопке «Скачать и установить».";
 
             var buttons = new WrapPanel { Margin = new Thickness(0, 0, -8, -8) };
 
@@ -1211,7 +1227,6 @@ namespace MagicKeys
 
             var get = new Button { Content = "Скачать и установить", Margin = new Thickness(0, 0, 8, 8) };
             get.SetResourceReference(StyleProperty, "BtnAccent");
-            get.IsEnabled = sevenZip != null;
             get.Click += delegate { StartSetup(true, null); };
             buttons.Children.Add(get);
 
@@ -1227,6 +1242,28 @@ namespace MagicKeys
                 }
             };
             buttons.Children.Add(pick);
+
+            long cached = AppleDriverSetup.CacheSize();
+            if (cached > 0)
+            {
+                var wipe = new Button
+                {
+                    Content = "Убрать скачанное (" + (cached / 1024 / 1024) + " МБ)",
+                    Margin = new Thickness(0, 0, 8, 8)
+                };
+                wipe.SetResourceReference(StyleProperty, "Btn");
+                wipe.Click += delegate
+                {
+                    string err;
+                    bool ok = AppleDriverSetup.ClearCache(out err);
+                    SetupSay(ok
+                        ? "Скачанное и распакованное убрано. На установленный драйвер это не влияет."
+                        : "Убрать удалось не всё: " + err +
+                          "\n\nОбычно это значит, что какой-то файл сейчас открыт другой программой.");
+                    BuildPage();
+                };
+                buttons.Children.Add(wipe);
+            }
 
             if (sevenZip == null)
             {
@@ -1270,11 +1307,12 @@ namespace MagicKeys
                 Bullet("Нужная часть внутри — папка BootCamp\\Drivers\\Apple\\AppleKeyboardMagic2. " +
                        "Устанавливается правым щелчком по Keymagic2.inf → «Установить»."),
                 Bullet("После установки клавиатуру стоит переподключить. Служба появится в реестре " +
-                       "под именем KeyMagic, и программа это заметит сама."),
+                       "под именем KeyMagic2, и программа это заметит сама."),
                 Bullet("Поведение Fn у драйвера переворачивается значением OSXFnBehavior в его ветке " +
-                       "реестра: 1 — медиа сразу, 0 — наоборот. Программа его показывает, но не меняет: " +
-                       "это чужая настройка."),
-                Note("Проверено на этой машине: сейчас службы KeyMagic нет. Из следов Apple найдены " +
+                       "реестра: 1 — медиа сразу, 0 — наоборот. Настройка чужая, поэтому программа " +
+                       "меняет её только по нажатию кнопки выше и только с правами администратора: " +
+                       "их спросит Windows."),
+                Note("Проверено на этой машине: сейчас службы KeyMagic2 нет. Из следов Apple найдены " +
                      "только AppleLowerFilter и AppleSSD — они от другого программного обеспечения " +
                      "и к клавиатуре отношения не имеют.")));
 
@@ -1327,7 +1365,19 @@ namespace MagicKeys
                         if (!install) return;
 
                         string sevenZip = AppleDriverSetup.SevenZip();
-                        if (sevenZip == null) { SetupSay(head + "\n\nБез 7-Zip распаковать нечем."); return; }
+                        if (sevenZip == null)
+                        {
+                            SetupSay(head + "\n\n7-Zip не найден — забираю официальный установщик…");
+                            sevenZip = AppleDriverSetup.FetchSevenZip(
+                                delegate(double part, string what) { SetupSay(head + "\n\n" + what); },
+                                out error);
+                            if (sevenZip == null)
+                            {
+                                SetupSay(head + "\n\nБез 7-Zip распаковать нечем: " + error +
+                                         "\n\nМожно поставить 7-Zip самостоятельно — кнопка ниже открывает его страницу.");
+                                return;
+                            }
+                        }
 
                         string package = System.IO.Path.Combine(AppleDriverSetup.CacheFolder, "BootCampESD.pkg");
                         if (!AppleDriverSetup.Download(url, package,
@@ -1418,7 +1468,8 @@ namespace MagicKeys
                         delegate(bool v) { _s.DeveloperMode = v; Save(); FillNav(); BuildPage(); }),
                     Note("Открывает «Устройства» и «Проверку клавиш», а на остальных страницах — " +
                          "исполнение клавиатуры, японские клавиши, третий уровень раскладки, " +
-                         "журнал и техническую часть страницы драйвера.\n\n" +
+                         "подмену всех клавиш и техническую часть страницы драйвера.\n\n" +
+                         "Журнал сюда не относится: он пишется только при запуске с ключом --log.\n\n" +
                          "Включается пятью щелчками по карточке с названием программы или ключом " +
                          "--dev при запуске.")));
             }

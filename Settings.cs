@@ -127,7 +127,8 @@ namespace MagicKeys
         /// <summary>
         /// Режим разработчика: показывает страницы и настройки, которые обычному
         /// человеку только мешают, — перепись клавиш, устройства, исполнение
-        /// клавиатуры, японские клавиши, журнал.
+        /// клавиатуры, японские клавиши, подмену всех клавиш и техническую часть
+        /// страницы драйвера. Журнал сюда не относится — он включается ключом --log.
         /// </summary>
         public bool DeveloperMode = false;
 
@@ -268,8 +269,11 @@ namespace MagicKeys
                 string tmp = FilePath + ".tmp";
                 using (FileStream fs = File.Create(tmp))
                     new XmlSerializer(typeof(Settings)).Serialize(fs, this);
-                if (File.Exists(FilePath)) File.Delete(FilePath);
-                File.Move(tmp, FilePath);
+                // Replace вместо «удалить и переименовать»: между теми двумя строками
+                // настроек не существовало ни под одним именем, и падение или пропажа
+                // питания ровно там стирали их целиком — человек получал умолчания.
+                if (File.Exists(FilePath)) File.Replace(tmp, FilePath, null);
+                else File.Move(tmp, FilePath);
             }
             catch { }
         }

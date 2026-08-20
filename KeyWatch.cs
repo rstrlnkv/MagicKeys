@@ -143,11 +143,11 @@ namespace MagicKeys
                 var rid = new Native.RAWINPUTDEVICE[2];
                 rid[0].usUsagePage = 0x01;   // Generic Desktop
                 rid[0].usUsage = 0x06;       // Keyboard
-                rid[0].dwFlags = Native.RIDEV_INPUTSINK;
+                rid[0].dwFlags = Native.RIDEV_INPUTSINK | Native.RIDEV_DEVNOTIFY;
                 rid[0].hwndTarget = _window;
                 rid[1].usUsagePage = 0x0C;   // Consumer Control — там живёт Eject
                 rid[1].usUsage = 0x01;
-                rid[1].dwFlags = Native.RIDEV_INPUTSINK;
+                rid[1].dwFlags = Native.RIDEV_INPUTSINK | Native.RIDEV_DEVNOTIFY;
                 rid[1].hwndTarget = _window;
                 if (!Native.RegisterRawInputDevices(rid, (uint)rid.Length, (uint)Marshal.SizeOf(typeof(Native.RAWINPUTDEVICE))))
                 {
@@ -177,6 +177,15 @@ namespace MagicKeys
             {
                 try { Handle(l); }
                 catch { }
+            }
+            else if (msg == Native.WM_INPUT_DEVICE_CHANGE)
+            {
+                // Дескриптор устройства живёт до отключения, а потом Windows выдаёт его
+                // заново — возможно, уже другому устройству. Кэш, привязанный к нему,
+                // надо снимать сразу: иначе он растёт при каждом переподключении (Magic
+                // Keyboard по Bluetooth переподключается на каждом пробуждении) и однажды
+                // отдаёт чужое описание отчётов не тому устройству.
+                if (w.ToInt64() == Native.GIDC_REMOVAL) { try { Drop(l); } catch { } }
             }
             return Native.DefWindowProcW(hwnd, msg, w, l);
         }
@@ -215,7 +224,29 @@ namespace MagicKeys
         /// У Magic Keyboard такой коллекции нет вовсе, так что для неё сюда не попадают;
         /// у алюминиевых моделей с USB — должны.
         /// </summary>
+        private static void Drop(IntPtr device)
+        {
+            lock (Sync)
+            {
+                IntPtr p;
+                if (Preparsedes.TryGetValue(device, out p))
+                {
+                    if (p != IntPtr.Zero) Marshal.FreeHGlobal(p);
+                    Preparsedes.Remove(device);
+                }
+                IsApple.Remove(device);
+            }
+        }
+
+        // Под замком целиком. Описание отчётов освобождается из другого потока — при
+        // отключении устройства и по кнопке «Начать заново», — а разбор без замка ушёл бы
+        // по уже освобождённой памяти внутри чужого кода HID: падение без объяснений.
         private static void HandleHid(IntPtr device, IntPtr buf, int headerSize)
+        {
+            lock (Sync) HandleHidLocked(device, buf, headerSize);
+        }
+
+        private static void HandleHidLocked(IntPtr device, IntPtr buf, int headerSize)
         {
             IntPtr preparsed = Preparsed(device);
             if (preparsed == IntPtr.Zero) return;

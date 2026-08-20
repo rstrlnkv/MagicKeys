@@ -118,6 +118,8 @@ namespace MagicKeys
                     // свой тридцатисекундный срок, так что работы почти нет, — но реестр
                     // читается на этом потоке, а не на пути нажатия клавиши.
                     AppleDriver.Refresh(false);
+                    if (_threadId != 0)
+                        Native.PostThreadMessageW(_threadId, WmCheck, IntPtr.Zero, IntPtr.Zero);
 
                     if (Devices.Rescan())
                     {
@@ -146,8 +148,57 @@ namespace MagicKeys
             _thread = null;
         }
 
-        // WM_APP + 1: своё сообщение потоку хука, чужим кодом не занято.
+        // WM_APP + 1 и + 2: свои сообщения потоку хука, чужим кодом не заняты.
         private const uint WmRelease = 0x8000 + 1;
+        private const uint WmCheck = 0x8000 + 2;
+
+        private volatile uint _lastHookTick;
+        private uint _lastCheckTick;
+
+        /// <summary>
+        /// Windows снимает низкоуровневый перехват молча, стоит обработчику один раз
+        /// задуматься дольше LowLevelHooksTimeout. Ни события, ни ошибки, ни изменения
+        /// дескриптора при этом нет: программа продолжает считать, что всё работает,
+        /// а не работает ничего, и человек ищет неисправность не там.
+        ///
+        /// Спросить у Windows нельзя, поэтому судим косвенно: в системе ввод идёт,
+        /// а до нас не доходит. Отличить «перехват умер» от «человек только водит
+        /// мышью» этим способом невозможно, и мы не пытаемся — просто ставим перехват
+        /// заново. Это один вызов ядра, для человека незаметный, а ложное срабатывание
+        /// не стоит ничего. Активная проверка (подать себе клавишу и посмотреть, дошла
+        /// ли) была бы точнее, но она сбрасывает счётчик простоя и мешает машине уснуть.
+        /// </summary>
+        private void CheckHookAlive()
+        {
+            try
+            {
+                var li = new Native.LASTINPUTINFO();
+                li.cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(Native.LASTINPUTINFO));
+                if (!Native.GetLastInputInfo(ref li)) return;
+
+                uint now = Native.GetTickCount();
+                if (unchecked(li.dwTime - _lastHookTick) < 5000) return;
+                if (unchecked(now - _lastCheckTick) < 30000) return;
+                _lastCheckTick = now;
+
+                if (_hook != IntPtr.Zero) Native.UnhookWindowsHookEx(_hook);
+                _hook = Native.SetWindowsHookExW(Native.WH_KEYBOARD_LL, _proc,
+                                                 Native.GetModuleHandleW(null), 0);
+                if (_hook == IntPtr.Zero)
+                {
+                    Failure = "Windows сняла перехват клавиатуры и не дала поставить его заново. " +
+                              "Переназначения сейчас не работают — перезапустите программу.";
+                    Diag.Log("перехват не удалось поставить заново, ошибка " +
+                             System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+                }
+                else
+                {
+                    Failure = null;
+                    _lastHookTick = Native.GetTickCount();
+                }
+            }
+            catch (Exception e) { Diag.Log("проверка перехвата: сбой", e); }
+        }
 
         /// <summary>Попросить поток хука отпустить всё зажатое — с любого потока.</summary>
         private void PostRelease()
@@ -184,6 +235,7 @@ namespace MagicKeys
                     // случае обработчик зацикливается: Windows снимает перехват, а всё
                     // зажатое так и остаётся зажатым.
                     if (msg.hwnd == IntPtr.Zero && msg.message == WmRelease) { ReleaseEverything(); continue; }
+                    if (msg.hwnd == IntPtr.Zero && msg.message == WmCheck) { CheckHookAlive(); continue; }
                     Native.TranslateMessage(ref msg);
                     Native.DispatchMessageW(ref msg);
                 }
@@ -211,6 +263,7 @@ namespace MagicKeys
         {
             if (code == Native.HC_ACTION)
             {
+                _lastHookTick = Native.GetTickCount();
                 bool swallow = false;
                 try
                 {
@@ -281,6 +334,11 @@ namespace MagicKeys
                 {
                     if (!_cmdTabAlt)
                     {
+                        // Win придётся отпустить, а Windows считает нажатие одиночным,
+                        // если между нажатием и отпусканием ничего не было, и открывает
+                        // «Пуск» — который вдобавок заберёт фокус у переключателя окон.
+                        // Подсовываем незанятый код: тот же приём, что в MacSend.
+                        Input.Tap(VkNoop);
                         ReleaseInjected(ModKey.LWin);
                         ReleaseInjected(ModKey.RWin);
                         Input.Key(Vk.LMenu, true);
@@ -404,7 +462,14 @@ namespace MagicKeys
         /// <summary>-1 — не наше дело; 0 — пропустить; 1 — проглотить.</summary>
         private int HandleLayout(Settings s, Native.KBDLLHOOKSTRUCT k, bool down)
         {
-            if (CtrlDown || _winDown) return -1;
+            // Отпускание всё равно снимаем с учёта: иначе съеденный скан-код остаётся
+            // в списке до следующего сброса, и приложение однажды получит отпускание
+            // клавиши, нажатия которой не видело.
+            if (CtrlDown || _winDown)
+            {
+                if (!down && _swallowed.Remove(k.scanCode)) return 1;
+                return -1;
+            }
 
             AppleLayoutFile lay = CurrentLayout(s);
             if (lay == null) return -1;

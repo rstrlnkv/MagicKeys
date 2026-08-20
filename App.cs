@@ -178,8 +178,18 @@ namespace MagicKeys
 
             // Пользователь может переключить тему на ходу — значок должен перекраситься.
             Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
+            Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
 
             UpdateTrayText();
+        }
+
+        /// <summary>Мониторы переключили, подключили или отключили.</summary>
+        private void OnDisplaySettingsChanged(object sender, EventArgs e)
+        {
+            // Кэш мониторов держится 20 секунд, и всё это время после переподключения
+            // программа писала бы яркость в недействительный дескриптор, а монитор под
+            // указателем не находила вовсе — и говорила «яркость недоступна» на исправном.
+            try { Brightness.Invalidate(); } catch { }
         }
 
         private void OnUserPreferenceChanged(object sender, Microsoft.Win32.UserPreferenceChangedEventArgs e)
@@ -291,6 +301,7 @@ namespace MagicKeys
             try { Osd.Teardown(); } catch { }
             try { if (_engine != null) _engine.Stop(); } catch { }
             try { Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged; } catch { }
+            try { Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged; } catch { }
             try
             {
                 if (_tray != null)

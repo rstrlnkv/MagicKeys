@@ -283,7 +283,10 @@ namespace MagicKeys
         // ---------- сырой ввод: какие клавиши на устройстве вообще есть ----------
 
         public const int WM_INPUT = 0x00FF;
+        public const int WM_INPUT_DEVICE_CHANGE = 0x00FE;
+        public const int GIDC_ARRIVAL = 1, GIDC_REMOVAL = 2;
         public const uint RIDEV_INPUTSINK = 0x00000100;
+        public const uint RIDEV_DEVNOTIFY = 0x00002000;
         public const uint RID_INPUT = 0x10000003;
 
         [StructLayout(LayoutKind.Sequential)]
@@ -509,6 +512,65 @@ namespace MagicKeys
 
         [DllImport("user32.dll")]
         public static extern int GetMessageW(out MSG msg, IntPtr hwnd, uint min, uint max);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct LASTINPUTINFO
+        {
+            public uint cbSize;
+            public uint dwTime;
+        }
+
+        /// <summary>Когда в системе в последний раз что-то вводили — любым устройством.</summary>
+        [DllImport("user32.dll")]
+        public static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
+
+        [DllImport("kernel32.dll")]
+        public static extern uint GetTickCount();
+
+        /// <summary>Точки на дюйм у монитора. В отличие от WPF, работает и без окна.</summary>
+        [DllImport("shcore.dll")]
+        public static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
+        public const int MDT_EFFECTIVE_DPI = 0;
+
+        // ---- подпись Authenticode ----
+        public static readonly Guid WINTRUST_ACTION_GENERIC_VERIFY_V2 =
+            new Guid("00AAC56B-CD44-11d0-8CC2-00C04FC295EE");
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct WINTRUST_FILE_INFO
+        {
+            public uint cbStruct;
+            [MarshalAs(UnmanagedType.LPWStr)] public string pcwszFilePath;
+            public IntPtr hFile;
+            public IntPtr pgKnownSubject;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct WINTRUST_DATA
+        {
+            public uint cbStruct;
+            public IntPtr pPolicyCallbackData;
+            public IntPtr pSIPClientData;
+            public uint dwUIChoice;
+            public uint fdwRevocationChecks;
+            public uint dwUnionChoice;
+            public IntPtr pFile;
+            public uint dwStateAction;
+            public IntPtr hWVTStateData;
+            public IntPtr pwszURLReference;
+            public uint dwProvFlags;
+            public uint dwUIContext;
+        }
+
+        public const uint WTD_UI_NONE = 2;
+        public const uint WTD_REVOKE_NONE = 0;
+        public const uint WTD_CHOICE_FILE = 1;
+        public const uint WTD_STATEACTION_VERIFY = 1;
+        public const uint WTD_STATEACTION_CLOSE = 2;
+        public const uint WTD_SAFER_FLAG = 0x100;
+
+        [DllImport("wintrust.dll", CharSet = CharSet.Unicode)]
+        public static extern int WinVerifyTrust(IntPtr hwnd, ref Guid action, IntPtr data);
 
         [DllImport("user32.dll")]
         public static extern bool TranslateMessage(ref MSG msg);

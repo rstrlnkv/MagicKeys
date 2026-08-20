@@ -102,7 +102,21 @@ namespace MagicKeys
             {
                 // Монитор под указателем есть, но яркостью не управляется — например,
                 // телевизор. Молча менять соседний было бы хуже, чем не делать ничего.
-                Diag.Log("яркость: монитор под указателем (" + ScreenName(cursorScreen) + ") не отвечает на DDC/CI");
+                // Сначала пробуем средства Windows: так управляется встроенная панель
+                // ноутбука, и она как раз по DDC/CI не отвечает. Без этой попытки
+                // достаточно было подключить внешний монитор, чтобы яркость экрана
+                // ноутбука пропала: до общей ветки WMI ниже дело просто не доходило.
+                int wmi = ApplyWmi(delta);
+                if (wmi >= 0)
+                {
+                    Diag.Log("яркость: итог " + wmi + "% на встроенной панели");
+                    Action<IntPtr, string, int> hw = ChangedOn;
+                    if (hw != null) hw(cursorScreen, null, wmi);
+                    return;
+                }
+
+                Diag.Log("яркость: монитор под указателем (" + ScreenName(cursorScreen) +
+                         ") не отвечает ни на DDC/CI, ни средствами Windows");
                 Action<IntPtr, string, int> hu = ChangedOn;
                 if (hu != null) hu(cursorScreen, null, -1);
                 return;

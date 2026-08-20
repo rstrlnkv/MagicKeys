@@ -259,12 +259,26 @@ namespace MagicKeys
                 info.cbSize = System.Runtime.InteropServices.Marshal.SizeOf(typeof(Native.MONITORINFO));
                 if (screen != IntPtr.Zero && Native.GetMonitorInfoW(screen, ref info))
                 {
+                    // Масштаб спрашиваем у монитора, а не у окна. При первом показе Place
+                    // вызывается до base.Show(), окна ещё нет, PresentationSource отдаёт
+                    // null — и на 150 % плашка при первом нажатии уезжала за край экрана,
+                    // а вставала на место только со второго.
                     double sx = 1, sy = 1;
-                    PresentationSource src = PresentationSource.FromVisual(this);
-                    if (src != null && src.CompositionTarget != null)
+                    uint dpiX, dpiY;
+                    if (Native.GetDpiForMonitor(screen, Native.MDT_EFFECTIVE_DPI, out dpiX, out dpiY) == 0
+                        && dpiX > 0 && dpiY > 0)
                     {
-                        sx = src.CompositionTarget.TransformFromDevice.M11;
-                        sy = src.CompositionTarget.TransformFromDevice.M22;
+                        sx = 96.0 / dpiX;
+                        sy = 96.0 / dpiY;
+                    }
+                    else
+                    {
+                        PresentationSource src = PresentationSource.FromVisual(this);
+                        if (src != null && src.CompositionTarget != null)
+                        {
+                            sx = src.CompositionTarget.TransformFromDevice.M11;
+                            sy = src.CompositionTarget.TransformFromDevice.M22;
+                        }
                     }
 
                     double left = info.rcWork.Left * sx;

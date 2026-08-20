@@ -8,6 +8,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Text;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using System.Threading;
 using Microsoft.Win32;
@@ -58,6 +59,17 @@ namespace MagicKeys
         //  7-Zip
         // ------------------------------------------------------------------
 
+        /// <summary>Одноразовые файлы: сюда pnputil пишет свой вывод. Не %TEMP% — см. Pnputil.</summary>
+        private static string RunFolder
+        {
+            get
+            {
+                return Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "MagicKeys\\run");
+            }
+        }
+
         /// <summary>Куда кладётся своя копия 7-Zip, если в системе его нет.</summary>
         public static string ToolsFolder
         {
@@ -85,10 +97,25 @@ namespace MagicKeys
                 if (have != null) return have;
 
                 Directory.CreateDirectory(ToolsFolder);
-                // msiexec не любит длинные и необычные пути, поэтому скачиваем во временную папку.
-                string msi = Path.Combine(Path.GetTempPath(), "magickeys-7zip.msi");
+                Directory.CreateDirectory(CacheFolder);
+                // В своей папке, а не в %TEMP%: там имя общеизвестно и подложить туда
+                // чужой установщик может любая программа этого же пользователя.
+                string msi = Path.Combine(CacheFolder, "7zip.msi");
                 report(0, "скачиваю 7-Zip…");
                 if (!Download(SevenZipMsi, msi, report, null, out error)) return null;
+
+                // Перед msiexec проверяем подпись: административная установка исполняет
+                // последовательность действий из самого пакета, то есть чужой MSI здесь
+                // не данные, а программа.
+                string signer;
+                if (!SignatureValid(msi, out signer))
+                {
+                    error = "установщик 7-Zip не прошёл проверку подписи — запускать его нельзя";
+                    try { File.Delete(msi); } catch { }
+                    try { File.Delete(msi + ".state"); } catch { }
+                    return null;
+                }
+                report(0.85, "подпись установщика в порядке" + (signer == null ? "" : ": " + signer));
 
                 string target = Path.Combine(ToolsFolder, "7zip");
                 report(0.9, "разворачиваю 7-Zip…");
@@ -108,6 +135,110 @@ namespace MagicKeys
                 return found;
             }
             catch (Exception e) { error = e.Message; return null; }
+        }
+
+        /// <summary>
+        /// Подписан ли файл действительной подписью Authenticode. Проверяется именно то,
+        /// что нужно: не «лежит ли внутри сертификат», а сходится ли подпись с содержимым
+        /// файла и доверяет ли Windows цепочке.
+        ///
+        /// Это единственная настоящая проверка того, что скачанное — то самое. Сумма
+        /// SHA-256 рядом с файлом ловит порчу и чужие остатки, но не злой умысел: кто
+        /// может подменить файл, тот перепишет и запись о нём.
+        ///
+        /// Оговорка: проверяется подпись внутри файла. У многих файлов самой Windows её
+        /// нет — они подписаны каталогом, — и для них ответ будет «нет». Нам это подходит:
+        /// мы проверяем скачанное, а такие файлы подписывают именно внутри.
+        /// </summary>
+        public static bool SignatureValid(string path, out string signer)
+        {
+            signer = null;
+            IntPtr pFile = IntPtr.Zero, pData = IntPtr.Zero;
+            try
+            {
+                var fi = new Native.WINTRUST_FILE_INFO();
+                fi.cbStruct = (uint)Marshal.SizeOf(typeof(Native.WINTRUST_FILE_INFO));
+                fi.pcwszFilePath = path;
+                pFile = Marshal.AllocHGlobal((int)fi.cbStruct);
+                Marshal.StructureToPtr(fi, pFile, false);
+
+                var wd = new Native.WINTRUST_DATA();
+                wd.cbStruct = (uint)Marshal.SizeOf(typeof(Native.WINTRUST_DATA));
+                wd.dwUIChoice = Native.WTD_UI_NONE;
+                wd.fdwRevocationChecks = Native.WTD_REVOKE_NONE;
+                wd.dwUnionChoice = Native.WTD_CHOICE_FILE;
+                wd.pFile = pFile;
+                wd.dwStateAction = Native.WTD_STATEACTION_VERIFY;
+                wd.dwProvFlags = Native.WTD_SAFER_FLAG;
+                pData = Marshal.AllocHGlobal((int)wd.cbStruct);
+                Marshal.StructureToPtr(wd, pData, false);
+
+                Guid action = Native.WINTRUST_ACTION_GENERIC_VERIFY_V2;
+                int rc = Native.WinVerifyTrust(IntPtr.Zero, ref action, pData);
+
+                // Закрыть состояние обязательно, иначе wintrust держит его до выхода.
+                var close = (Native.WINTRUST_DATA)Marshal.PtrToStructure(pData, typeof(Native.WINTRUST_DATA));
+                close.dwStateAction = Native.WTD_STATEACTION_CLOSE;
+                Marshal.StructureToPtr(close, pData, false);
+                Native.WinVerifyTrust(IntPtr.Zero, ref action, pData);
+
+                if (rc != 0) return false;
+
+                try
+                {
+                    var cert = new System.Security.Cryptography.X509Certificates.X509Certificate2(
+                        System.Security.Cryptography.X509Certificates.X509Certificate.CreateFromSignedFile(path));
+                    signer = cert.GetNameInfo(
+                        System.Security.Cryptography.X509Certificates.X509NameType.SimpleName, false);
+                }
+                catch { }
+                return true;
+            }
+            catch (Exception e) { Diag.Log("проверка подписи: сбой", e); return false; }
+            finally
+            {
+                if (pData != IntPtr.Zero) Marshal.FreeHGlobal(pData);
+                if (pFile != IntPtr.Zero) Marshal.FreeHGlobal(pFile);
+            }
+        }
+
+        /// <summary>Сколько места занято скачанным и распакованным.</summary>
+        public static long CacheSize()
+        {
+            long total = 0;
+            foreach (string dir in new string[] { CacheFolder, ToolsFolder })
+                total += FolderSize(dir);
+            return total;
+        }
+
+        private static long FolderSize(string dir)
+        {
+            long total = 0;
+            try
+            {
+                if (!Directory.Exists(dir)) return 0;
+                foreach (string f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories))
+                    try { total += new FileInfo(f).Length; } catch { }
+            }
+            catch { }
+            return total;
+        }
+
+        /// <summary>
+        /// Убрать скачанное и распакованное. Пакет весит около 700 МБ, а распакованное —
+        /// ещё несколько гигабайт слоями; раньше всё это оставалось на диске навсегда.
+        /// Удаляются только свои папки, на уже установленный драйвер это не влияет.
+        /// </summary>
+        public static bool ClearCache(out string error)
+        {
+            error = null;
+            bool ok = true;
+            foreach (string dir in new string[] { CacheFolder, ToolsFolder, RunFolder })
+            {
+                try { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+                catch (Exception e) { ok = false; error = e.Message; }
+            }
+            return ok;
         }
 
         /// <summary>Путь к 7z.exe или null. Ищется в системе и в своей папке.</summary>
@@ -145,13 +276,23 @@ namespace MagicKeys
         //  Каталог Apple
         // ------------------------------------------------------------------
 
+        /// <summary>
+        /// Включает TLS 1.2, ничего не выключая. Раньше протокол присваивался, а это
+        /// настройка всего процесса: заодно отключался и более новый TLS 1.3.
+        /// </summary>
+        private static void EnsureTls()
+        {
+            try { ServicePointManager.SecurityProtocol |= (SecurityProtocolType)3072; }
+            catch { }
+        }
+
         /// <summary>Самый свежий пакет Boot Camp: ссылка и дата выпуска.</summary>
         public static bool FindNewestPackage(out string url, out string posted, out string error)
         {
             url = null; posted = null; error = null;
             try
             {
-                ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072; // TLS 1.2
+                EnsureTls();
                 string xml;
                 using (var wc = new WebClient()) xml = wc.DownloadString(Catalog);
 
@@ -191,7 +332,7 @@ namespace MagicKeys
         {
             try
             {
-                ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
+                EnsureTls();
                 var req = (HttpWebRequest)WebRequest.Create(url);
                 req.Method = "HEAD";
                 req.Timeout = 30000;
@@ -204,6 +345,70 @@ namespace MagicKeys
         //  Скачивание с продолжением
         // ------------------------------------------------------------------
 
+        // ------------------------------------------------------------------
+        //  Чему верить в уже скачанном
+        // ------------------------------------------------------------------
+        //
+        // Совпадения длины мало. Файл лежит там, куда пишет любая программа, запущенная
+        // от этого же пользователя, а дальше уходит в msiexec и в установку драйвера
+        // с правами администратора. Подпись драйвера Windows проверит сама — это
+        // последний заслон, но единственным ему быть не следует. Поэтому рядом с файлом
+        // лежит запись: откуда качали, сколько вышло и какова сумма SHA-256. Кэшу верим,
+        // только если сумма сходится заново.
+
+        private static string StatePath(string target) { return target + ".state"; }
+
+        private static void WriteState(string target, string url, long length, string sha)
+        {
+            try
+            {
+                File.WriteAllText(StatePath(target),
+                    url + "\n" + length + "\n" + (sha == null ? "" : sha), Encoding.UTF8);
+            }
+            catch { }
+        }
+
+        private static bool ReadState(string target, out string url, out long length, out string sha)
+        {
+            url = null; length = 0; sha = null;
+            try
+            {
+                string p = StatePath(target);
+                if (!File.Exists(p) || IsLink(p)) return false;
+                string[] lines = File.ReadAllText(p, Encoding.UTF8).Split(new char[] { '\n' });
+                if (lines.Length < 3) return false;
+                url = lines[0].Trim();
+                if (!Int64.TryParse(lines[1].Trim(), out length)) return false;
+                sha = lines[2].Trim();
+                return true;
+            }
+            catch { return false; }
+        }
+
+        private static string Sha256Of(string path, Action<double, string> report)
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            using (var f = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16))
+            {
+                byte[] buf = new byte[1 << 20];
+                long done = 0, total = f.Length;
+                int read, lastPercent = -1;
+                while ((read = f.Read(buf, 0, buf.Length)) > 0)
+                {
+                    sha.TransformBlock(buf, 0, read, null, 0);
+                    done += read;
+                    int percent = total > 0 ? (int)(done * 100 / total) : 0;
+                    if (report != null && percent != lastPercent)
+                    {
+                        lastPercent = percent;
+                        report(total > 0 ? (double)done / total : 0, "проверяю уже скачанное…");
+                    }
+                }
+                sha.TransformFinalBlock(buf, 0, 0);
+                return BitConverter.ToString(sha.Hash).Replace("-", "");
+            }
+        }
+
         /// <summary>Качает пакет, докачивая начатое. report(доля 0..1, поясняющая строка).</summary>
         public static bool Download(string url, string target, Action<double, string> report,
                                     ManualResetEvent cancel, out string error)
@@ -212,11 +417,35 @@ namespace MagicKeys
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(target));
-                long have = File.Exists(target) ? new FileInfo(target).Length : 0;
-                long total = SizeOf(url);
-                if (total > 0 && have == total) { report(1, "пакет уже скачан"); return true; }
 
-                ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;
+                string sUrl, sSha; long sLen;
+                bool state = ReadState(target, out sUrl, out sLen, out sSha);
+                long have = File.Exists(target) && !IsLink(target) ? new FileInfo(target).Length : 0;
+                long total = SizeOf(url);
+
+                // Целое, от того же адреса и с сошедшейся суммой — только тогда кэш.
+                if (have > 0 && state && sUrl == url && sLen == have
+                    && !String.IsNullOrEmpty(sSha) && (total <= 0 || total == have))
+                {
+                    string now = null;
+                    try { now = Sha256Of(target, report); } catch { }
+                    if (now == sSha) { report(1, "пакет уже скачан"); return true; }
+                    report(0, "скачанное не сходится с записью — качаю заново");
+                    try { File.Delete(target); } catch { }
+                    have = 0;
+                }
+
+                // Докачивать можно только начатое от того же адреса и той же длины. Иначе
+                // к обрывку старой версии допишется новая: выйдет испорченный архив,
+                // который не распакуется, а причину без ручной чистки кэша не найти.
+                if (have > 0 && !(state && sUrl == url && total > 0 && sLen == total))
+                {
+                    try { File.Delete(target); } catch { }
+                    have = 0;
+                }
+                if (total > 0) WriteState(target, url, total, null);
+
+                EnsureTls();
                 var req = (HttpWebRequest)WebRequest.Create(url);
                 req.Timeout = 60000;
                 req.ReadWriteTimeout = 120000;
@@ -246,6 +475,10 @@ namespace MagicKeys
                         }
                     }
                 }
+
+                // Сумму записываем только теперь, когда файл целиком наш.
+                try { WriteState(target, url, new FileInfo(target).Length, Sha256Of(target, report)); }
+                catch { }
                 return true;
             }
             catch (Exception e) { error = e.Message; return false; }
@@ -362,8 +595,23 @@ namespace MagicKeys
         private static bool Pnputil(string args, out string output)
         {
             output = null;
-            string log = Path.Combine(Path.GetTempPath(), "magickeys-pnputil.txt");
-            try { if (File.Exists(log)) File.Delete(log); } catch { }
+
+            // Вывод забираем через файл: перенаправить поток напрямую нельзя, потому что
+            // запрос прав требует UseShellExecute, а он запрещает RedirectStandardOutput.
+            //
+            // Имя файла — случайное и в своей папке, а не постоянное в %TEMP%. Постоянное
+            // и заранее известное позволяло подложить по этому пути ссылку на системный
+            // файл: перенаправление «>» пошло бы по ней, и cmd, работающий с правами
+            // администратора, перезаписал бы то, до чего пользователю хода нет. Это
+            // готовый переход из пользователя в администраторы. Угадать случайное имя
+            // заранее нельзя; а если ссылка там всё же оказалась, мы её не читаем.
+            string log;
+            try
+            {
+                Directory.CreateDirectory(RunFolder);
+                log = Path.Combine(RunFolder, "pnputil-" + Guid.NewGuid().ToString("N") + ".txt");
+            }
+            catch (Exception e) { output = e.Message; return false; }
 
             try
             {
@@ -376,7 +624,7 @@ namespace MagicKeys
                 using (Process p = Process.Start(psi))
                 {
                     p.WaitForExit(120000);
-                    try { if (File.Exists(log)) output = File.ReadAllText(log, Encoding.Default); } catch { }
+                    output = ReadPlainFile(log);
                     return p.ExitCode == 0;
                 }
             }
@@ -385,6 +633,28 @@ namespace MagicKeys
                 output = e.Message;   // отказ в правах приходит сюда же
                 return false;
             }
+            finally
+            {
+                try { if (File.Exists(log) && !IsLink(log)) File.Delete(log); } catch { }
+            }
+        }
+
+        /// <summary>Прочитать файл — но только настоящий файл, не ссылку на чужой.</summary>
+        private static string ReadPlainFile(string path)
+        {
+            try
+            {
+                if (!File.Exists(path) || IsLink(path)) return null;
+                return File.ReadAllText(path, Encoding.Default);
+            }
+            catch { return null; }
+        }
+
+        /// <summary>Точка повторного разбора: символьная или жёсткая ссылка, соединение.</summary>
+        private static bool IsLink(string path)
+        {
+            try { return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0; }
+            catch { return true; }   // не смогли выяснить — считаем подозрительным
         }
     }
 }

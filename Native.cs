@@ -590,6 +590,15 @@ namespace MagicKeys
         public const uint WTD_STATEACTION_CLOSE = 2;
         public const uint WTD_SAFER_FLAG = 0x100;
 
+        // Вердикты WinVerifyTrust, которые надо различать. Недоверенный корень и истёкший
+        // срок — не отказ: сертификат самодельный, а подпись ставится с меткой времени.
+        // А вот несовпадение содержимого с подписью — отказ, и говорить о нём надо прямо.
+        public const int CERT_E_UNTRUSTEDROOT = unchecked((int)0x800B0109);
+        public const int CERT_E_CHAINING = unchecked((int)0x800B010A);
+        public const int CERT_E_EXPIRED = unchecked((int)0x800B0101);
+        public const int TRUST_E_BAD_DIGEST = unchecked((int)0x80096010);
+        public const int TRUST_E_NOSIGNATURE = unchecked((int)0x800B0100);
+
         [DllImport("wintrust.dll", CharSet = CharSet.Unicode)]
         public static extern int WinVerifyTrust(IntPtr hwnd, ref Guid action, IntPtr data);
 

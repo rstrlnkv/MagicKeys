@@ -26,10 +26,54 @@ namespace MagicKeys
         private static int _flags = -1;
         private static DateTime _stamp = DateTime.MinValue;
 
-        /// <summary>Проценты заряда или −1, если узнать не удалось.</summary>
+        /// <summary>
+        /// Проценты заряда или −1, если пока неизвестно.
+        ///
+        /// Чтение НЕ здесь: оно открывает устройство HID и ждёт отчёта, а по Bluetooth
+        /// у спящей клавиатуры это заметная заминка — и приходилась она на поток окна,
+        /// прямо при построении страницы. Свойство теперь отдаёт то, что известно, и
+        /// заводит обновление в пуле потоков; когда ответ придёт, поднимется Updated,
+        /// и страница перестроится сама.
+        /// </summary>
         public static int Percent
         {
-            get { Refresh(false); lock (Sync) return _percent; }
+            get { Wake(); lock (Sync) return _percent; }
+        }
+
+        /// <summary>Заряд перечитан. Приходит с потока пула — маршалит подписчик.</summary>
+        public static event Action Updated;
+
+        private static int _asking;
+
+        /// <summary>Попросить обновление, если сведения устарели, и сразу вернуться.</summary>
+        private static void Wake()
+        {
+            lock (Sync)
+            {
+                if ((DateTime.UtcNow - _stamp) < TimeSpan.FromSeconds(60)) return;
+            }
+            // Один спрашивающий за раз: страница строится не по одному разу, а ответа
+            // ждать секунды. Interlocked, а не замок, — Wake зовут из геттера.
+            if (System.Threading.Interlocked.CompareExchange(ref _asking, 1, 0) != 0) return;
+
+            System.Threading.ThreadPool.QueueUserWorkItem(delegate
+            {
+                try
+                {
+                    int before;
+                    lock (Sync) before = _percent;
+                    Refresh(true);
+                    int after;
+                    lock (Sync) after = _percent;
+                    if (after != before)
+                    {
+                        Action h = Updated;
+                        if (h != null) h();
+                    }
+                }
+                catch (Exception e) { Diag.Log("заряд: не удалось обновить", e); }
+                finally { System.Threading.Interlocked.Exchange(ref _asking, 0); }
+            });
         }
 
         /// <summary>Второй байт отчёта — состояние. Показываем его только в журнале.</summary>

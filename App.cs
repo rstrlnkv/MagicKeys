@@ -61,6 +61,7 @@ namespace MagicKeys
             Resources.MergedDictionaries.Add(Theme.Initial());
 
             _settings = Settings.Load();
+            _settings.MakeCurrent();
             if (dev) _settings.DeveloperMode = true;
             if (_settings.StartMinimized) startHidden = true;
 
@@ -115,6 +116,12 @@ namespace MagicKeys
             // внутри Engine.Start. С уже подключённой клавиатурой заводские назначения
             // иначе не подставлялись бы никогда — а именно так программу и запускают.
             if (AdoptModelDefaults()) _engine.Apply(_settings);
+
+            // Заряд читается в пуле потоков; когда ответ придёт, обновляем страницу.
+            KeyboardBattery.Updated += delegate
+            {
+                Dispatcher.BeginInvoke((Action)delegate { if (_window != null) _window.RefreshDevices(); });
+            };
 
             KeyWatch.Start();
 

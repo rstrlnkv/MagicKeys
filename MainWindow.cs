@@ -264,6 +264,11 @@ namespace MagicKeys
             // а надписи, на которые они ссылаются, уже выброшены.
             DetachSelfTest();
 
+            // Со страницы «О программе» уходим — обновление больше некому показывать.
+            _updStatus = null;
+            _updAction = null;
+            _updFound = null;
+
             try
             {
                 switch (CurrentPage)
@@ -833,6 +838,8 @@ namespace MagicKeys
                 stack.Children.Add(Card(k.Model, k.IsApple ? "Правила MagicKeys рассчитаны на эту клавиатуру" : null, rows));
             }
 
+            // Значение может быть ещё неизвестно: чтение идёт в пуле потоков, а страница
+            // перестроится сама, когда ответ придёт.
             int battery = KeyboardBattery.Percent;
             if (battery >= 0)
             {
@@ -1468,6 +1475,7 @@ namespace MagicKeys
             column.Children.Add(AboutTagline());
             column.Children.Add(AboutNumbers());
             column.Children.Add(AboutAuthor());
+            column.Children.Add(AboutUpdate());
             column.Children.Add(AboutButtons());
             column.Children.Add(AboutFooter());
 
@@ -1648,11 +1656,203 @@ namespace MagicKeys
 
         private static UIElement AboutButtons()
         {
-            var b = new Button { Content = "Исходный код на GitHub", Height = 38 };
-            b.SetResourceReference(StyleProperty, "Btn");
-            b.Margin = new Thickness(0, 0, 0, 12);
-            b.Click += delegate { AboutOpen("https://github.com/rstrlnkv/MagicKey"); };
-            return b;
+            var grid = new Grid { Margin = new Thickness(0, 0, 0, 12) };
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            var news = new Button { Content = "Что нового", Height = 38, Margin = new Thickness(0, 0, 6, 0) };
+            news.SetResourceReference(StyleProperty, "Btn");
+            news.Click += delegate { Updater.OpenPage(Updater.ReleasesPage); };
+            grid.Children.Add(news);
+
+            var code = new Button { Content = "GitHub", Height = 38, Margin = new Thickness(6, 0, 0, 0) };
+            code.SetResourceReference(StyleProperty, "Btn");
+            code.Click += delegate { Updater.OpenPage(Updater.ProjectPage); };
+            Grid.SetColumn(code, 1);
+            grid.Children.Add(code);
+
+            return grid;
+        }
+
+        // ------------------------------------------------------------------
+        //  Обновление
+        // ------------------------------------------------------------------
+
+        private TextBlock _updStatus;
+        private Button _updAction;
+        private Button _updStable;
+        private Button _updDev;
+        private TextBlock _updHint;
+        private Updater.Release _updFound;
+        private bool _updBusy;
+
+        /// <summary>Проверка обновлений и выбор канала — одной карточкой, как у соседей.</summary>
+        private UIElement AboutUpdate()
+        {
+            var top = new Grid();
+            top.ColumnDefinitions.Add(new ColumnDefinition());
+            top.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            _updStatus = new TextBlock
+            {
+                VerticalAlignment = VerticalAlignment.Center,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 12, 0)
+            };
+            top.Children.Add(_updStatus);
+
+            _updAction = new Button { MinWidth = 108, Height = 32 };
+            _updAction.SetResourceReference(StyleProperty, "Btn");
+            _updAction.Click += delegate { UpdateAct(); };
+            Grid.SetColumn(_updAction, 1);
+            top.Children.Add(_updAction);
+
+            var line = new Border { Height = 1, Margin = new Thickness(0, 14, 0, 14) };
+            line.SetResourceReference(Border.BackgroundProperty, "Stroke");
+
+            var bottom = new Grid();
+            bottom.ColumnDefinitions.Add(new ColumnDefinition());
+            bottom.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            bottom.Children.Add(new TextBlock
+            {
+                Text = "Канал обновлений",
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 12, 0)
+            });
+
+            var switcher = new StackPanel { Orientation = Orientation.Horizontal };
+            Grid.SetColumn(switcher, 1);
+
+            _updStable = new Button { Content = "Stable", Height = 30, MinWidth = 96 };
+            _updStable.Click += delegate { SetChannel(Settings.ChannelStable); };
+            switcher.Children.Add(_updStable);
+
+            _updDev = new Button { Content = "Dev", Height = 30, MinWidth = 76, Margin = new Thickness(6, 0, 0, 0) };
+            _updDev.Click += delegate { SetChannel(Settings.ChannelDev); };
+            switcher.Children.Add(_updDev);
+
+            bottom.Children.Add(switcher);
+
+            _updHint = new TextBlock { TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 0) };
+            _updHint.SetResourceReference(StyleProperty, "Caption");
+
+            var stack = new StackPanel();
+            stack.Children.Add(top);
+            stack.Children.Add(line);
+            stack.Children.Add(bottom);
+            stack.Children.Add(_updHint);
+
+            ShowChannel();
+            ShowIdle();
+
+            return new Border
+            {
+                Style = (Style)Application.Current.Resources["Card"],
+                Padding = new Thickness(18, 16, 18, 16),
+                Margin = new Thickness(0, 0, 0, 12),
+                Child = stack
+            };
+        }
+
+        private void SetChannel(string channel)
+        {
+            if (Settings.Channel == channel) return;
+            Settings.Channel = channel;
+            _updFound = null;
+            ShowChannel();
+            ShowIdle();
+        }
+
+        private void ShowChannel()
+        {
+            bool dev = Settings.Channel == Settings.ChannelDev;
+            _updStable.SetResourceReference(StyleProperty, dev ? "Btn" : "BtnAccent");
+            _updDev.SetResourceReference(StyleProperty, dev ? "BtnAccent" : "Btn");
+            // Подпись называет разницу, а не намекает на неё.
+            _updHint.Text = dev
+                ? "Сборки Dev приходят раньше общего выпуска. Взамен в них чаще что-то не работает."
+                : "Приходят только готовые выпуски.";
+        }
+
+        /// <summary>Обычный вид: когда проверяли и кнопка «Проверить».</summary>
+        private void ShowIdle()
+        {
+            _updBusy = false;
+            _updStatus.Text = Updater.Ago(Settings.LastUpdateCheck);
+            _updStatus.SetResourceReference(TextBlock.ForegroundProperty, "TextSec");
+            _updAction.Content = "Проверить";
+            _updAction.IsEnabled = true;
+        }
+
+        private void UpdateAct()
+        {
+            if (_updBusy) return;
+            if (_updFound != null) { UpdateInstall(); return; }
+            UpdateCheck();
+        }
+
+        private void UpdateCheck()
+        {
+            _updBusy = true;
+            _updAction.IsEnabled = false;
+            _updStatus.Text = "Проверяю…";
+
+            string channel = Settings.Channel;
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string error;
+                Updater.Release found = Updater.Check(channel, out error);
+                Dispatcher.BeginInvoke((Action)delegate
+                {
+                    if (_updStatus == null) return;   // ушли со страницы
+                    _updBusy = false;
+                    _updAction.IsEnabled = true;
+                    _updFound = found;
+                    if (found != null)
+                    {
+                        _updStatus.Text = "Есть новый выпуск " + found.Tag;
+                        _updAction.Content = "Обновить";
+                    }
+                    else if (error != null) _updStatus.Text = error;
+                    else
+                    {
+                        _updStatus.Text = "Установлена последняя версия";
+                        _updAction.Content = "Проверить";
+                    }
+                });
+            });
+        }
+
+        private void UpdateInstall()
+        {
+            Updater.Release release = _updFound;
+            if (release == null) return;
+
+            _updBusy = true;
+            _updAction.IsEnabled = false;
+            _updStatus.Text = "Скачиваю…";
+
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                string error;
+                string path = Updater.Download(release, out error);
+                if (path != null) Updater.Install(path, out error);
+
+                Dispatcher.BeginInvoke((Action)delegate
+                {
+                    if (_updStatus == null) return;
+                    _updBusy = false;
+                    _updAction.IsEnabled = true;
+                    if (path == null)
+                    {
+                        _updStatus.Text = error;
+                        _updAction.Content = "Повторить";
+                    }
+                    else if (error != null) _updStatus.Text = error;
+                    else _updStatus.Text = "Установщик запущен";
+                });
+            });
         }
 
         private static UIElement AboutFooter()

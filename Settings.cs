@@ -4,7 +4,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
+using System.Reflection;
 using System.Xml.Serialization;
 using Microsoft.Win32;
 
@@ -62,6 +64,15 @@ namespace MagicKeys
         /// заводские назначения самой — но только пока человек их не трогал.
         /// </summary>
         public AppleGen FKeysGen = AppleGen.Unknown;
+
+        public const string ChannelStable = "stable";
+        public const string ChannelDev = "dev";
+
+        /// <summary>Какие выпуски предлагать: только готовые или ранние тоже.</summary>
+        public string UpdateChannel = ChannelStable;
+
+        /// <summary>Когда в последний раз спрашивали GitHub. Пусто — ни разу.</summary>
+        public string UpdateChecked = "";
 
         /// <summary>Клавиша ⌧ на цифровом блоке: у Apple это «clear», Windows видит Num Lock.</summary>
         public string NumpadClear = "key.delete";
@@ -258,34 +269,93 @@ namespace MagicKeys
         {
             Settings s = (Settings)MemberwiseClone();
 
-            // Массивы копируем: без этого снимок делил бы их с живым объектом, и вся
-            // затея теряла бы смысл ровно там, где составные значения и опасны.
-            s.FKeys = CopyOf(FKeys);
-            s.JisKeys = CopyOf(JisKeys);
-            s.MacShortcutsOff = CopyOf(MacShortcutsOff);
-
-            if (LayoutBindings == null) s.LayoutBindings = null;
-            else
+            // Массивы копируем перебором полей, а не поимённо. Поимённый список — ловушка
+            // ровно того рода, ради которой снимок и заводился: следующее добавленное поле
+            // разделилось бы между окном и потоком перехвата молча, компилятор бы смолчал,
+            // а разошлось бы редко и на живой машине.
+            foreach (FieldInfo f in Fields())
             {
-                var b = new LayoutBinding[LayoutBindings.Length];
-                for (int i = 0; i < b.Length; i++)
-                {
-                    LayoutBinding src = LayoutBindings[i];
-                    if (src == null) continue;
-                    b[i] = new LayoutBinding { Lang = src.Lang, Layout = src.Layout };
-                }
-                s.LayoutBindings = b;
+                var array = f.GetValue(this) as Array;
+                if (array == null) continue;
+
+                var copy = (Array)array.Clone();
+                // Массив ссылок копируем вглубь: иначе поделили бы сами элементы.
+                if (!f.FieldType.GetElementType().IsValueType && f.FieldType.GetElementType() != typeof(string))
+                    for (int i = 0; i < copy.Length; i++)
+                    {
+                        var b = copy.GetValue(i) as LayoutBinding;
+                        if (b != null) copy.SetValue(new LayoutBinding { Lang = b.Lang, Layout = b.Layout }, i);
+                    }
+                f.SetValue(s, copy);
             }
             return s;
         }
 
-        private static string[] CopyOf(string[] a)
+        private static FieldInfo[] _fields;
+
+        /// <summary>
+        /// Поля настроек — один раз и навсегда. Заодно проверка: ссылочное поле, которое
+        /// не строка, не массив и не перечисление, снимок не умеет копировать, и о таком
+        /// надо узнать сразу, а не через месяц по странному поведению.
+        /// </summary>
+        private static FieldInfo[] Fields()
         {
-            if (a == null) return null;
-            var b = new string[a.Length];
-            Array.Copy(a, b, a.Length);
-            return b;
+            if (_fields != null) return _fields;
+            FieldInfo[] all = typeof(Settings).GetFields(BindingFlags.Public | BindingFlags.Instance);
+            foreach (FieldInfo f in all)
+            {
+                Type t = f.FieldType;
+                if (t.IsValueType || t == typeof(string) || t.IsArray) continue;
+                Diag.Log("снимок настроек не умеет копировать поле " + f.Name + " типа " + t.Name +
+                         " — оно будет общим с окном");
+            }
+            _fields = all;
+            return all;
         }
+
+        // ---------- обновления ----------
+        //
+        // Канал и отметка живут в тех же настройках, но правит их окно «О программе»
+        // напрямую, а не через снимок: к перехвату они отношения не имеют, и читает
+        // их только тот же поток окна.
+
+        public static string Channel
+        {
+            get { Settings s = Current; return s == null ? ChannelStable : s.UpdateChannel; }
+            set
+            {
+                Settings s = Current;
+                if (s == null) return;
+                s.UpdateChannel = value;
+                s.Save();
+            }
+        }
+
+        public static DateTime? LastUpdateCheck
+        {
+            get
+            {
+                Settings s = Current;
+                if (s == null || String.IsNullOrEmpty(s.UpdateChecked)) return null;
+                DateTime t;
+                return DateTime.TryParse(s.UpdateChecked, CultureInfo.InvariantCulture,
+                                         DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out t)
+                    ? (DateTime?)t : null;
+            }
+            set
+            {
+                Settings s = Current;
+                if (s == null) return;
+                s.UpdateChecked = value == null ? "" : value.Value.ToString("o", CultureInfo.InvariantCulture);
+                s.Save();
+            }
+        }
+
+        /// <summary>
+        /// Живой объект настроек. Заводится при загрузке; нужен обновлению, которое
+        /// работает на потоке окна и правит свои два поля напрямую.
+        /// </summary>
+        public static Settings Current;
 
         // ---------- хранение ----------
 
@@ -317,6 +387,9 @@ namespace MagicKeys
             catch { }
             return new Settings();
         }
+
+        /// <summary>Запомнить объект как живой — его правит окно.</summary>
+        public void MakeCurrent() { Current = this; }
 
         public void Save()
         {

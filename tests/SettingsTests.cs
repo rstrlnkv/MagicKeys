@@ -546,8 +546,7 @@ namespace MagicKeys
         {
             Head("⌘Space и ⌃Space");
             Settings s = Fresh();
-            s.CmdSpace = "search";
-            s.CtrlSpace = "none";
+            s.SpaceSearch = Settings.SpaceCmd;
             Use(s);
 
             Down(Vk.LWin); Clear();
@@ -555,23 +554,37 @@ namespace MagicKeys
             Seq("⌘Space → поиск", sw, N(Vk.LWin) + "v", "Sv", "S^", N(Vk.LWin) + "^");
             Up(Vk.Space); Up(Vk.LWin); Clear();
 
+            // Второй клавише достаётся язык — так обещает карточка.
             Down(Vk.LControl); Clear();
-            sw = Down(Vk.Space); Up(Vk.Space);
-            Untouched("⌃Space не занят — уходит как есть", sw);
-            Up(Vk.LControl); Clear();
+            sw = Down(Vk.Space);
+            Seq("⌃Space → смена языка", sw, N(Vk.LWin) + "v", N(Vk.Space) + "v");
+            Up(Vk.Space); Up(Vk.LControl); Clear();
 
-            s = Fresh(); s.CmdSpace = "none"; s.CtrlSpace = "language";
+            // Поменяли местами — поменялись и роли.
+            s = Fresh(); s.SpaceSearch = Settings.SpaceCtrl;
             Use(s);
             Down(Vk.LControl); Clear();
             sw = Down(Vk.Space);
-            Check("⌃Space → смена языка", sw && Sent() != "", Sent());
-            Clear();
+            Seq("поиск переехал на ⌃Space", sw, N(Vk.LWin) + "v", "Sv", "S^", N(Vk.LWin) + "^");
             Up(Vk.Space); Up(Vk.LControl); Clear();
 
             Down(Vk.LWin); Clear();
+            sw = Down(Vk.Space);
+            Seq("а язык — на ⌘Space", sw, N(Vk.LWin) + "v", N(Vk.Space) + "v");
+            Up(Vk.Space); Up(Vk.LWin); Clear();
+
+            // «Не трогать пробел» — и ни на одной клавише ничего не появляется.
+            s = Fresh(); s.SpaceSearch = Settings.SpaceNone;
+            Use(s);
+            Down(Vk.LWin); Clear();
             sw = Down(Vk.Space); Up(Vk.Space);
-            Shielded("⌘Space отключён — и «Пуск» не открывается", sw);
+            Shielded("не трогать: ⌘Space ничего не делает и «Пуск» не открывает", sw);
             Up(Vk.LWin); Clear();
+
+            Down(Vk.LControl); Clear();
+            sw = Down(Vk.Space); Up(Vk.Space);
+            Untouched("не трогать: ⌃Space уходит программе как есть", sw);
+            Up(Vk.LControl); Clear();
         }
 
         /// <summary>
@@ -731,7 +744,8 @@ namespace MagicKeys
             Check("раскладки Apple по умолчанию выключены", !d.AppleLayoutEnabled, "включены");
             Check("третий уровень по умолчанию никакой", d.OptLevel == OptLevel.Off, "" + d.OptLevel);
             Check("поиск по умолчанию на ⌘, язык на control",
-                  d.CmdSpace == "search" && d.CtrlSpace == "language",
+                  d.SpaceSearch == Settings.SpaceCmd
+                  && d.CmdSpace == "search" && d.CtrlSpace == "language",
                   d.CmdSpace + " / " + d.CtrlSpace);
 
             Settings s = Fresh();

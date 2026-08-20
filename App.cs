@@ -147,8 +147,22 @@ namespace MagicKeys
 
             if (!startHidden) ShowWindow();
 
+            // Гасим, но не молча. Раньше любая ошибка в обработчике кнопки или в раскладке
+            // окна исчезала бесследно — при том что журнал заведён ровно ради вопроса
+            // «почему не сработало».
+            // Windows выключается, человек выходит из системы или установщик просит уйти.
+            // Единственный путь, на котором нас закрывают снаружи: окно на обычное
+            // закрытие отвечает отказом и прячется в трей. Уходим сами и убираем значок —
+            // иначе он остаётся висеть мёртвым, пока по нему не проведут мышью.
+            SessionEnding += delegate(object s, SessionEndingCancelEventArgs e)
+            {
+                Diag.Log("сеанс завершается — выходим");
+                Quit();
+            };
+
             DispatcherUnhandledException += delegate(object s, DispatcherUnhandledExceptionEventArgs e)
             {
+                Diag.Log("сбой на потоке окна", e.Exception);
                 e.Handled = true;
             };
 

@@ -77,24 +77,16 @@ namespace MagicKeys
         /// <summary>Клавиша ⌧ на цифровом блоке: у Apple это «clear», Windows видит Num Lock.</summary>
         public string NumpadClear = "key.delete";
 
-        /// <summary>Клавиша «=» на цифровом блоке: Windows её не понимает и по умолчанию молчит.</summary>
-
-
         /// <summary>Клавиша ⏏ — приходит не как клавиша, а отчётом медиастраницы.</summary>
         public string EjectKey = "none";
 
-        /// <summary>Сколько функциональных клавиш замечено у клавиатуры Apple на самом деле.</summary>
-
-
+        /// <summary>Во что превращается каждая клавиша-модификатор.</summary>
         public ModKey MapLCtrl = ModKey.LCtrl;
         public ModKey MapLWin = ModKey.LWin;
         public ModKey MapLAlt = ModKey.LAlt;
         public ModKey MapRAlt = ModKey.RAlt;
         public ModKey MapRWin = ModKey.RWin;
         public ModKey MapCapsLock = ModKey.CapsLock;
-
-        /// <summary>Поменять местами клавишу слева от «1» и клавишу слева от «Z».</summary>
-
 
         /// <summary>Исполнение клавиатуры. «Auto» — определять по нажатиям.</summary>
         public PhysLayout Physical = PhysLayout.Auto;
@@ -112,9 +104,6 @@ namespace MagicKeys
         /// Вдобавок он всё равно ничего не набирал: раскладки Apple с завода выключены.
         /// </summary>
         public OptLevel OptLevel = OptLevel.Off;
-
-        /// <summary>Подменять все клавиши раскладки, а не только отличающиеся от раскладки Microsoft.</summary>
-
 
         /// <summary>Какая раскладка Apple применяется к какому языку ввода Windows.</summary>
         public LayoutBinding[] LayoutBindings = new LayoutBinding[0];
@@ -136,17 +125,33 @@ namespace MagicKeys
         /// <summary>Какие сочетания выключены по отдельности — список их ключей.</summary>
         public string[] MacShortcutsOff = new string[0];
 
+        public const string SpaceCmd = "cmd";
+        public const string SpaceCtrl = "ctrl";
+        public const string SpaceNone = "none";
+
         /// <summary>
-        /// Что делает пробел с модификатором. На маке привычки разные: у одних
-        /// ⌘Space открывает поиск, у других переключает язык, а поиск висит на
-        /// ⌃Space. Поэтому обе клавиши настраиваются по отдельности.
-        /// Значения: search, language, none.
+        /// На какой клавише с пробелом живёт поиск. Второй достаётся переключение языка —
+        /// так это устроено на маке, и так написано в карточке.
+        ///
+        /// Одно поле, а не два. Двумя выражались девять состояний на вопрос с тремя
+        /// ответами: шесть из них из окна недостижимы, а что делать при «поиск на обеих»,
+        /// не было решено нигде. Хуже того, умолчание не совпадало ни с одним пунктом
+        /// списка — до первого касания ⌃Space не делал ничего, а после касания, даже
+        /// если выбрали то же самое, начинал переключать язык.
         /// </summary>
-        public string CmdSpace = "search";
-        // Второй клавише достаётся язык — так написано в карточке, и так было на маке.
-        // С «none» выходило, что до первого касания списка ⌃Space не делал ничего,
-        // а после касания — даже если выбрали то же самое — начинал переключать язык.
-        public string CtrlSpace = "language";
+        public string SpaceSearch = SpaceCmd;
+
+        /// <summary>Роль ⌘+пробела: search, language или none.</summary>
+        public string CmdSpace
+        {
+            get { return SpaceSearch == SpaceCmd ? "search" : (SpaceSearch == SpaceCtrl ? "language" : "none"); }
+        }
+
+        /// <summary>Роль ⌃+пробела — зеркало предыдущей.</summary>
+        public string CtrlSpace
+        {
+            get { return SpaceSearch == SpaceCtrl ? "search" : (SpaceSearch == SpaceCmd ? "language" : "none"); }
+        }
 
         /// <summary>
         /// Режим разработчика: показывает страницы и настройки, которые обычному
@@ -174,27 +179,16 @@ namespace MagicKeys
             MacShortcutsOff = list.ToArray();
         }
 
-        /// <summary>
-        /// Ловить коды яркости с медиастраницы и применять их к внешним мониторам.
-        /// Нужно, когда функциональным рядом занимается драйвер: он шлёт коды яркости,
-        /// но Windows применяет их только к встроенной панели ноутбука, и на обычном ПК
-        /// они пропадают зря.
-        /// </summary>
-
-
-
-
-
-
+        /// <summary>Запускаться сразу свёрнутой в значок, без окна.</summary>
         public bool StartMinimized = false;
 
-        /// <summary>F1…F24 — больше в Windows не бывает.</summary>
         /// <summary>
         /// Шаг яркости. Постоянная, а не настройка: три значения одного вкуса, и кому
         /// десять процентов много — нажмёт один раз вместо двух.
         /// </summary>
         public const int BrightnessStep = 10;
 
+        /// <summary>F1…F24 — больше в Windows не бывает.</summary>
         public const int MaxFKeys = 24;
 
         public static string[] DefaultFKeys()
@@ -360,7 +354,18 @@ namespace MagicKeys
             foreach (FieldInfo f in all)
             {
                 Type t = f.FieldType;
-                if (t.IsValueType || t == typeof(string) || t.IsArray) continue;
+                if (t.IsValueType || t == typeof(string)) continue;
+                if (t.IsArray)
+                {
+                    // Массив копируется вглубь только там, где известен вид элемента.
+                    // Массив каких-нибудь других объектов Clone() скопирует по ссылкам,
+                    // и окно с перехватом снова поделят одни и те же элементы — молча.
+                    Type e = t.GetElementType();
+                    if (e.IsValueType || e == typeof(string) || e == typeof(LayoutBinding)) continue;
+                    Diag.Log("снимок настроек копирует массив " + f.Name + " только по ссылкам: " +
+                             "вид элемента " + e.Name + " ему неизвестен, допишите его в Snapshot");
+                    continue;
+                }
                 Diag.Log("снимок настроек не умеет копировать поле " + f.Name + " типа " + t.Name +
                          " — оно будет общим с окном");
             }

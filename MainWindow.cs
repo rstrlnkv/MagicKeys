@@ -353,7 +353,8 @@ namespace MagicKeys
 
             stack.Children.Add(Card("Заменитель Fn", null,
                 Row("Клавиша", "С ней режим временно переворачивается", fnBox),
-                Toggle("Навигация как в macOS: Fn+↑↓ — PgUp и PgDn, Fn+Enter — Insert",
+                Toggle("Навигация как в macOS: Fn+↑↓ — PgUp и PgDn, Fn+←→ — начало и конец строки, " +
+                       "Fn+Backspace — Delete, Fn+Enter — Insert",
                     _s.FnNavigation, delegate(bool v) { _s.FnNavigation = v; Save(); }),
                 _s.FnNavigation && _s.MacShortcuts && (_s.FnSubstitute == ModKey.RAlt || _s.FnSubstitute == ModKey.LAlt)
                     ? (UIElement)Note("Fn+←/→ и Fn+Backspace достаются сочетаниям macOS: там " +
@@ -363,8 +364,10 @@ namespace MagicKeys
                     ? "С драйвером Apple настоящая Fn работает, и заменитель не нужен."
                     : "Magic Keyboard не отправляет Fn в Windows — её обрабатывает сама " +
                       "клавиатура. Поэтому нужна замена. Выбранная клавиша сохраняет своё " +
-                      "обычное значение; если она нужна только как Fn, выключите её ниже, " +
-                      "в карточке «Отдельные клавиши».")));
+                      "обычное значение; если она нужна только как Fn, отключите его — " +
+                      (_s.FnSubstitute == ModKey.RAlt
+                          ? "в карточке «Правый ⌥» ниже."
+                          : "в карточке «Отдельные клавиши» ниже."))));
 
             string[] legends = Models.Legend(Generation);
             int fcount = Models.FunctionKeyCount();
@@ -431,9 +434,8 @@ namespace MagicKeys
             string howMany = "Показано клавиш: " + fcount + ". ";
             if (fm != null && fm.FunctionKeys > 12)
                 howMany += "У этой модели есть ряд F13–F" + fm.FunctionKeys + " над цифровым блоком. ";
-            howMany += "Если нажать клавишу, которой в списке нет, она добавится сама — " +
-                       "программа видит, с какой клавиатуры пришло нажатие, " +
-                       "знает устройство.";
+            howMany += "Если нажать клавишу, которой в списке нет, она появится здесь " +
+                       "при следующем открытии страницы.";
 
             stack.Children.Add(Card("Действия",
                 "Слева — то, что напечатано на клавише Apple (" + Models.GenName(Generation) + ").",
@@ -570,6 +572,7 @@ namespace MagicKeys
             bool asFn = _s.FnSubstitute == ModKey.RAlt;
             bool asSym = _s.OptLevel != OptLevel.Off;
             string now = asFn ? "fn" : (asSym ? "symbols" : "plain");
+            string comes = ModNames.Of(_s.MapRAlt);
 
             string what =
                 now == "fn"
@@ -578,14 +581,23 @@ namespace MagicKeys
                 : now == "symbols"
                     ? "Набирает символы, напечатанные на клавише третьими. Работает, только когда " +
                       "включены раскладки Apple."
-                    : "Ничего не забирает: обычный Alt, и AltGr системной раскладки работает как всегда.";
+                : _s.MapRAlt == ModKey.RAlt
+                    ? "Ничего не забирает: обычный Alt, и AltGr системной раскладки работает как всегда."
+                    : "Ничего не забирает и приходит в Windows как " + comes + ".";
 
             var rows = new StackPanel();
             rows.Children.Add(Row("Делает", null, Combo(roles, now, delegate(object v)
             {
                 string pick = (string)v;
-                _s.FnSubstitute = pick == "fn" ? ModKey.RAlt : ModKey.None;
+                // Снимаем замену Fn только со своей клавиши. Раньше снимали любую:
+                // человек назначал Fn на Caps Lock, потом менял роль правого ⌥ —
+                // и терял Fn+стрелки, ни разу не сказав об этом.
+                if (pick == "fn") _s.FnSubstitute = ModKey.RAlt;
+                else if (_s.FnSubstitute == ModKey.RAlt) _s.FnSubstitute = ModKey.None;
                 _s.OptLevel = pick == "symbols" ? OptLevel.RightOption : OptLevel.Off;
+                // Ролям Fn и «символы» клавиша нужна как Alt: иначе третьего уровня
+                // не набрать, а заменителю нечего временно снимать.
+                if (pick != "plain") _s.MapRAlt = ModKey.RAlt;
                 Save(); BuildPage();
             })));
             rows.Children.Add(Note(what));
@@ -595,6 +607,19 @@ namespace MagicKeys
                     _s.OptLevel == OptLevel.AnyOption,
                     delegate(bool v) { _s.OptLevel = v ? OptLevel.AnyOption : OptLevel.RightOption; Save(); }));
 
+            // Пока клавиша ничего не забирает, ею можно распорядиться как любым
+            // модификатором. Прежде это поле правили только готовые схемы, и карточка
+            // уверяла «обычный Alt», когда клавиша давно приходила клавишей Windows.
+            if (now == "plain")
+            {
+                var comesGrid = new Grid();
+                comesGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                comesGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(280) });
+                AddModRow(comesGrid, 0, "Приходит в Windows как", null, _s.MapRAlt,
+                    delegate(ModKey m) { _s.MapRAlt = m; Save(); BuildPage(); });
+                rows.Children.Add(comesGrid);
+            }
+
             return Card("Правый ⌥ (option)", null, rows);
         }
 
@@ -603,15 +628,6 @@ namespace MagicKeys
             var stack = new StackPanel();
             PhysLayout phys = _engine == null ? PhysLayout.Ansi : _engine.Physical(_s);
             PhysLayout detected = KeyWatch.DetectedPhysical;
-
-            // ---- исполнение ----
-            var physBox = Combo(new[]
-            {
-                new Choice { Value = PhysLayout.Auto, Text = "Определять самой" },
-                new Choice { Value = PhysLayout.Ansi, Text = "ANSI (американское)" },
-                new Choice { Value = PhysLayout.Iso,  Text = "ISO (европейское)" },
-                new Choice { Value = PhysLayout.Jis,  Text = "JIS (японское)" }
-            }, _s.Physical, delegate(object v) { _s.Physical = (PhysLayout)v; Save(); BuildPage(); });
 
             AppleModel model = Devices.AppleModel;
             string physNote = "Сейчас программа считает клавиатуру: " + Models.PhysName(phys) +
@@ -625,32 +641,37 @@ namespace MagicKeys
                             "Пока распознано: " + Models.PhysName(detected) + ".";
 
             // Исполнение определяется само по нажатиям — обычному человеку крутить его незачем.
+            // Список создаём только здесь: раньше он собирался всегда, а в этой ветке
+            // гасился — то есть гасили объект, которого в дереве окна нет.
             if (_s.DeveloperMode)
+            {
+                var physBox = Combo(new[]
+                {
+                    new Choice { Value = PhysLayout.Auto, Text = "Определять самой" },
+                    new Choice { Value = PhysLayout.Ansi, Text = "ANSI (американское)" },
+                    new Choice { Value = PhysLayout.Iso,  Text = "ISO (европейское)" },
+                    new Choice { Value = PhysLayout.Jis,  Text = "JIS (японское)" }
+                }, _s.Physical, delegate(object v) { _s.Physical = (PhysLayout)v; Save(); BuildPage(); });
+
                 stack.Children.Add(Card("Исполнение клавиатуры", null,
                     Row("Тип", "От него зависит набор клавиш, а не язык", physBox),
                     Note(physNote)));
-            else
-                physBox.Visibility = Visibility.Collapsed;
+            }
 
             // Перестановки двух клавиш ISO здесь больше нет: это не вкус, а исправление
             // аппаратной особенности, и программа делает его сама, когда клавиатура ISO.
 
 
             // ---- раскладки Apple ----
-            // Третий уровень раньше был спрятан за режим разработчика. Для пришедшего
-            // с мака это не тонкость: от него зависит, набираются ли ⌥-символы и
-            // открывает ли левый Alt строку меню. Самое человеческое решение на странице.
-            var levelBox = Combo(new[]
-            {
-                new Choice { Value = OptLevel.RightOption, Text = "Правый ⌥ (как AltGr)" },
-                new Choice { Value = OptLevel.AnyOption,   Text = "Любой ⌥ (как в macOS)" },
-                new Choice { Value = OptLevel.Off,         Text = "Не набирать: ⌥ остаётся Alt" }
-            }, _s.OptLevel, delegate(object v) { _s.OptLevel = (OptLevel)v; Save(); });
-
+            // Третьего уровня здесь больше нет, хотя вопрос о нём напрашивается сам.
+            // О нём спрашивает карточка «Правый ⌥» на странице «Клавиши», и спрашивать
+            // дважды нельзя: там вопрос стоит целиком — Fn, символы или обычный Alt, —
+            // потому что одна клавиша не может делать два дела разом. Отсюда же можно
+            // было выбрать «символы», не сняв замену Fn, и получить обе роли на одной
+            // клавише; карточка при этом показывала «Клавиша Fn» и молчала о второй.
             stack.Children.Add(Card("Раскладки Apple", null,
                 Toggle("Воспроизводить раскладки macOS", _s.AppleLayoutEnabled,
                     delegate(bool v) { _s.AppleLayoutEnabled = v; Save(); BuildPage(); }),
-                Row("Третий уровень", "Символы, напечатанные на клавише третьими", levelBox),
                 Note("Apple раскладывает буквы и знаки иначе, чем Microsoft, — и именно поэтому " +
                      "Boot Camp когда-то доставлял в Windows отдельные языки ввода «(Apple)». " +
                      "Здесь то же самое делается без установки раскладок в систему: программа " +
@@ -658,8 +679,8 @@ namespace MagicKeys
                      "не то, что напечатано на клавише Apple. Остальные нажатия идут как обычно.\n\n" +
                      "Таблицы — те же данные, по которым раскладку рисует сама macOS; мёртвые " +
                      "клавиши (´ ` ¨ ˆ ~) работают.\n\n" +
-                     "«Любой ⌥» точнее повторяет Mac, но тогда Alt перестаёт открывать меню программ; " +
-                     "«правый ⌥» — привычный для Windows размен.")));
+                     "Символы, напечатанные на клавишах третьими, набирает ⌥ — какой именно, " +
+                     "решает карточка «Правый ⌥» на странице «Клавиши».")));
 
             // Языки ввода «(Apple)», которые ставит драйвер Boot Camp, здесь намеренно
             // не показываются и не предлагаются. Windows 10 и 11 работают с ними плохо
@@ -909,22 +930,21 @@ namespace MagicKeys
                 new Choice { Value = "ctrl", Text = "control + пробел" },
                 new Choice { Value = "none", Text = "Не трогать пробел" }
             };
-            string spaceNow = _s.CmdSpace == "search" ? "cmd"
-                            : _s.CtrlSpace == "search" ? "ctrl" : "none";
+            string spaceNow = _s.SpaceSearch;
 
             stack.Children.Add(Card("Поиск и язык", null,
                 Row("Поиск открывается по", null, Combo(spaceChoices, spaceNow,
                     delegate(object v)
                     {
-                        string pick = (string)v;
-                        _s.CmdSpace = pick == "cmd" ? "search" : (pick == "ctrl" ? "language" : "none");
-                        _s.CtrlSpace = pick == "ctrl" ? "search" : (pick == "cmd" ? "language" : "none");
+                        _s.SpaceSearch = (string)v;
                         Save();
                     })),
                 Toggle("⌘+Tab переключает окна, как Alt+Tab", _s.CmdTabSwitchesWindows,
                     delegate(bool v) { _s.CmdTabSwitchesWindows = v; Save(); }),
-                Note("Второй клавише достаётся переключение языка — через собственный " +
-                     "переключатель Windows.")));
+                Note(_s.SpaceSearch == Settings.SpaceNone
+                        ? "Пробел с модификатором остаётся программам как есть."
+                        : "Второй клавише достаётся переключение языка — через собственный " +
+                          "переключатель Windows.")));
 
             // Три группы вместо сорока семи строк. Человек либо хочет всё — а хочет он
             // всё почти всегда, — либо ему мешает ровно одно сочетание; ради второго
@@ -1200,10 +1220,11 @@ namespace MagicKeys
                 status.Children.Add(KeyValue("Состояние", AppleDriver.Active ? "включена" : "отключена"));
                 int fb = AppleDriver.FnBehavior;
                 if (fb >= 0)
-                    status.Children.Add(KeyValue("OSXFnBehavior",
-                        fb + (fb == 1 ? " — как на маке: медиа сразу" : " — наоборот: F-клавиши сразу")));
-                if (!String.IsNullOrEmpty(AppleDriver.FnBehaviorPath))
-                    status.Children.Add(KeyValue("Где это лежит", AppleDriver.FnBehaviorPath));
+                    status.Children.Add(KeyValue("Верхний ряд у драйвера",
+                        fb == 1 ? "медиа сразу, как на маке" : "F-клавиши сразу"));
+                // Имя значения и его ветка реестра — для того, кто полезет чинить руками.
+                if (_s.DeveloperMode && !String.IsNullOrEmpty(AppleDriver.FnBehaviorPath))
+                    status.Children.Add(KeyValue("OSXFnBehavior", AppleDriver.FnBehaviorPath));
 
                 // Самое важное здесь — не что записано в реестре, а что происходит на деле.
                 int seen = KeyWatch.AllUsages().Length;
@@ -1251,8 +1272,7 @@ namespace MagicKeys
                              "Пока это так, программа ряд себе не отдаёт молча: она берёт F1–F12 " +
                              "на себя, чтобы они не оказались мёртвыми. Как только придёт первый " +
                              "медиакод, она снова уступит драйверу.\n\n" +
-                             "Проверить, что именно приходит, можно на странице «Проверка клавиш» — " +
-                             "одного нажатия достаточно."),
+                             "Что именно приходит, видно на «Диагностике» — одного нажатия достаточно."),
                         _pages.Contains("diag")
                             ? (UIElement)LinkButton("Открыть диагностику", delegate { GoTo("diag"); })
                             : (UIElement)Note("Что приходит с клавиатуры, видно на странице «Диагностика» — " +
@@ -1423,10 +1443,9 @@ namespace MagicKeys
                        "Устанавливается правым щелчком по Keymagic2.inf → «Установить»."),
                 Bullet("После установки клавиатуру стоит переподключить. Служба появится в реестре " +
                        "под именем KeyMagic2, и программа это заметит сама."),
-                Bullet("Поведение Fn у драйвера переворачивается значением OSXFnBehavior в его ветке " +
-                       "реестра: 1 — медиа сразу, 0 — наоборот. Настройка чужая, поэтому программа " +
-                       "меняет её только по нажатию кнопки выше и только с правами администратора: " +
-                       "их спросит Windows.")));
+                Bullet("Что делает верхний ряд, решает сам драйвер. Настройка чужая, поэтому " +
+                       "программа меняет её только по нажатию кнопки выше и только с правами " +
+                       "администратора: их спросит Windows.")));
 
             return stack;
         }
@@ -1885,9 +1904,13 @@ namespace MagicKeys
             ThreadPool.QueueUserWorkItem(delegate
             {
                 string error;
+                Updater.Checked = false;
                 Updater.Release found = Updater.Check(channel, out error);
                 Dispatcher.BeginInvoke((Action)delegate
                 {
+                    // Отметку о проверке ставим здесь, на потоке окна: настройки правит
+                    // только он, и Save() отсюда ни с чем не столкнётся.
+                    if (Updater.Checked) Settings.LastUpdateCheck = DateTime.UtcNow;
                     if (_updStatus == null) return;   // ушли со страницы
                     _updBusy = false;
                     _updAction.IsEnabled = true;
@@ -2194,8 +2217,9 @@ namespace MagicKeys
             }
             else
             {
-                _fnNotice = "Не вышло: " + error + ". Значение лежит в HKLM, поэтому нужны права "
-                          + "администратора; если запрос был отклонён — ничего не изменилось.";
+                _fnNotice = "Не вышло: " + error + ". Настройка принадлежит драйверу, а не программе, "
+                          + "поэтому нужны права администратора; если запрос был отклонён — "
+                          + "ничего не изменилось.";
             }
             BuildPage();
         }
@@ -2240,7 +2264,7 @@ namespace MagicKeys
             {
                 _tuneNotice = "Изменено:\n" + String.Join("\n", done.ToArray())
                             + "\n\nОстальное программа продолжает делать сама: модификаторы, "
-                            + "цифровой блок Apple, яркость внешних мониторов по DDC/CI и ⌘+Tab.";
+                            + "цифровой блок Apple, яркость внешних мониторов и ⌘+Tab.";
                 Save();
             }
             BuildPage();

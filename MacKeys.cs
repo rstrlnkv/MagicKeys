@@ -28,6 +28,7 @@ namespace MagicKeys
         public string Win;       // во что превращается
         public MacMod Mods;      // что должно быть зажато
         public int Vk;           // какая клавиша нажата
+        public int Vk2;          // и её же второй код, если клавиша приходит по-разному
         public int[] SendMods;   // что послать зажатым
         public int SendVk;       // и какую клавишу
         public int[] Then;       // второе нажатие, если одного мало
@@ -142,10 +143,11 @@ namespace MagicKeys
             // и Alt+Esc листает окна всех подряд. Называем тем, что получается, а не тем,
             // что было на маке. Клавиша заведена дважды: на ANSI обратный апостроф слева
             // от «1», на ISO — слева от «Z», и приходит другим кодом.
+            // Одна строка, два кода. Двумя строками список показывал две неразличимые
+            // на вид записи с одной подписью, и выключив «Следующее окно», человек
+            // оставлял второе включённым — не понимая, почему сочетание всё ещё работает.
             Add("windownext", GroupSystem, "Следующее окно", "⌘`", "Alt+Esc",
-                MacMod.Cmd, Vk.Oem3, new int[] { Vk.LMenu }, Vk.Escape);
-            Add("windownext.iso", GroupSystem, "Следующее окно (ISO)", "⌘`", "Alt+Esc",
-                MacMod.Cmd, Vk.Oem102, new int[] { Vk.LMenu }, Vk.Escape);
+                MacMod.Cmd, Vk.Oem3, new int[] { Vk.LMenu }, Vk.Escape).Vk2 = Vk.Oem102;
 
             // Листание вкладок. На маке это ⌘⌥←/→, в Windows — Ctrl+PgUp/PgDn.
             // ⌘W и ⌘T уже были, а перехода между вкладками не хватало заметнее всего:
@@ -292,7 +294,7 @@ namespace MagicKeys
             for (int i = 0; i < _all.Count; i++)
             {
                 MacShortcut s = _all[i];
-                if (s.Vk == vk && s.Mods == mods) return s;
+                if ((s.Vk == vk || (s.Vk2 != 0 && s.Vk2 == vk)) && s.Mods == mods) return s;
             }
             return null;
         }

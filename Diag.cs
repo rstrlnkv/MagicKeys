@@ -24,6 +24,20 @@ namespace MagicKeys
             {
                 Directory.CreateDirectory(Settings.Folder);
                 _path = Path.Combine(Settings.Folder, "log.txt");
+                // Журнал живёт между запусками и до сих пор только рос. Мегабайта хватает
+                // на любой разбор, а прошлый оставляем рядом: поломка, ради которой журнал
+                // включили, случается один раз и часто в предыдущем запуске.
+                try
+                {
+                    var fi = new FileInfo(_path);
+                    if (fi.Exists && fi.Length > 1024 * 1024)
+                    {
+                        string old = _path + ".old";
+                        if (File.Exists(old)) File.Delete(old);
+                        File.Move(_path, old);
+                    }
+                }
+                catch { }
                 lock (Sync)
                     File.AppendAllText(_path, Environment.NewLine + "=== запуск " +
                         DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture) + " ===" + Environment.NewLine);

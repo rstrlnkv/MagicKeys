@@ -59,7 +59,7 @@ rem Раскладок тридцать три, и перечислять их �
 rem новую при первом же добавлении. Список собирает heat.exe из самой папки.
 echo === Список раскладок ===
 "%WIX%\heat.exe" dir "%ROOT%\layouts" -nologo -cg LayoutFiles -dr INSTALLFOLDER ^
-  -var var.SourceDir -gg -g1 -srd -sfrag -sreg -out "%HERE%obj\layouts.wxs" || exit /b 1
+  -var var.SourceDir -ag -g1 -srd -sfrag -sreg -out "%HERE%obj\layouts.wxs" || exit /b 1
 rem heat пишет пути от корня дерева, а нам нужна подпапка layouts.
 powershell -NoProfile -Command "(Get-Content -Raw -Encoding UTF8 '%HERE%obj\layouts.wxs').Replace('$(var.SourceDir)\', '$(var.SourceDir)\layouts\') | Set-Content -NoNewline -Encoding UTF8 '%HERE%obj\layouts.wxs'" || exit /b 1
 
@@ -86,5 +86,17 @@ rem     для него верный — статические проверки
 echo === Подпись пакета ===
 call "%HERE%sign.cmd" "%ROOT%\MagicKeys-%VERSION%-x64.msi" || exit /b 1
 
+rem Подпись — не украшение: обновление сверяет отпечаток и неподписанный пакет
+rem не поставит. Такой годится только для проверки на своей машине, и сказать
+rem об этом надо здесь, а не оставлять человека с бодрым «Готово».
 echo.
-echo Готово: %ROOT%\MagicKeys-%VERSION%-x64.msi
+rem Корень у сертификата самодельный, поэтому «доверенной» подпись здесь не будет
+rem никогда — и не должна: Updater сверяет отпечаток, а не цепочку. Проверяем то,
+rem что важно: подпись есть и совпадает с содержимым файла.
+powershell -NoProfile -Command "$s = Get-AuthenticodeSignature '%ROOT%\MagicKeys-%VERSION%-x64.msi'; exit [int](($s.SignerCertificate -eq $null) -or ($s.Status -eq 'HashMismatch'))"
+if errorlevel 1 (
+  echo Готово, НО ПАКЕТ НЕ ПОДПИСАН: %ROOT%\MagicKeys-%VERSION%-x64.msi
+  echo Выкладывать такой нельзя — обновление его отвергнет.
+) else (
+  echo Готово: %ROOT%\MagicKeys-%VERSION%-x64.msi
+)

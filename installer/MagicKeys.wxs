@@ -41,9 +41,17 @@
       Программа живёт в трее и держит низкоуровневый перехват клавиатуры. Если её
       не закрыть, файл окажется занятым и установка потребует перезагрузки.
     -->
+    <!--
+      EndSessionMessage, а не только CloseMessage. На WM_CLOSE окно программы отвечает
+      «нет»: закрытие окна прячет его в трей и программу не выключает — так задумано.
+      Значит мягкий путь не срабатывал никогда, и дело всегда доходило до убийства
+      процесса: значок в трее оставался висеть до движения мышью, а рядом появлялся
+      значок перезапущенной копии. На сообщение о завершении сеанса программа уходит сама.
+    -->
     <util:CloseApplication Id="CloseMagicKeys"
                            Target="MagicKeys.exe"
                            CloseMessage="yes"
+                           EndSessionMessage="yes"
                            TerminateProcess="1"
                            RebootPrompt="no" />
 
@@ -69,10 +77,10 @@
     -->
     <Property Id="PREVSHORTCUT">
       <RegistrySearch Id="PrevShortcut" Root="HKLM" Key="Software\MagicKeys"
-                      Name="StartMenuShortcut" Type="raw" Win64="yes" />
+                      Name="ShortcutChoice" Type="raw" Win64="yes" />
     </Property>
     <SetProperty Id="INSTALLSHORTCUT" Value="0" After="AppSearch" Sequence="both">
-      PREVSHORTCUT AND PREVSHORTCUT = "#0"
+      PREVSHORTCUT = "0"
     </SetProperty>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -95,10 +103,18 @@
         <File Id="README.md" Source="$(var.SourceDir)\README.md" KeyPath="yes" />
       </Component>
 
-      <!-- Куда поставили. Читается при следующем обновлении, см. RegistrySearch выше. -->
+      <!-- Куда поставили и хотели ли ярлык. Читается при следующем обновлении. -->
       <Component Id="InstallState" Guid="*" Win64="yes">
         <RegistryValue Root="HKLM" Key="Software\MagicKeys" Name="InstallFolder"
                        Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+        <!--
+          Ответ про ярлык пишется здесь, а не рядом с самим ярлыком: там он был
+          ключом компонента и существовал ровно тогда, когда ярлык поставлен. То есть
+          «нет» записать было негде, условие отказа не выполнялось никогда, и ярлык
+          возвращался при каждом обновлении — ровно то, чего обещали не делать.
+        -->
+        <RegistryValue Root="HKLM" Key="Software\MagicKeys" Name="ShortcutChoice"
+                       Type="string" Value="[INSTALLSHORTCUT]" />
       </Component>
     </DirectoryRef>
 
@@ -131,6 +147,7 @@
                   Icon="MagicKeys.ico" />
         <RegistryValue Root="HKLM" Key="Software\MagicKeys" Name="StartMenuShortcut"
                        Type="integer" Value="1" KeyPath="yes" />
+        <!-- Значение осталось ключом компонента: без него ярлыку не на чём держаться. -->
       </Component>
     </DirectoryRef>
 

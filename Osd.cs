@@ -79,6 +79,7 @@ namespace MagicKeys
             if (_instance == null) return;
             Osd o = _instance;
             _instance = null;
+            try { Theme.Changed -= o._onTheme; } catch { }
             try { o.Hide(); ((Window)o).Close(); } catch { }
         }
 
@@ -190,12 +191,20 @@ namespace MagicKeys
 
             // Тема сменилась — пересобираем и подложку: её цвет задаётся не кистью,
             // а числом в вызове DWM, и сам он не обновится.
-            Theme.Changed += delegate
+            _onTheme = delegate
             {
                 if (!IsLoaded) return;
                 try { ApplyBackdrop(); } catch { }
             };
+            Theme.Changed += _onTheme;
         }
+
+        // Подписку держим по имени, чтобы снять её при закрытии: событие статическое,
+        // и без этого закрытое окно остаётся живым и продолжает откликаться.
+        private readonly Action _onTheme;
+
+        private bool _vanishing;
+        private int _fadeMark;
 
         private void Display(int percent, IntPtr screen)
         {
@@ -359,8 +368,16 @@ namespace MagicKeys
             // быстрее, окно прячется раньше, чем плашка доедет, и уход обрывается —
             // на записи он выходил 100 мс вместо 165.
             var fade = new DoubleAnimation(target, TimeSpan.FromMilliseconds(showing ? 200 : VanishMs));
+            _vanishing = !showing;
             if (!showing)
-                fade.Completed += delegate { if (_panel.Opacity <= 0.01) Hide(); };
+            {
+                // Прятать окно только если за это время не решили показать заново.
+                // WPF зовёт Completed и тогда, когда анимацию подменили новой: нажатие
+                // яркости на последних миллисекундах ухода пряталось прямо во время
+                // появления, и клавиша выглядела несработавшей.
+                int mark = ++_fadeMark;
+                fade.Completed += delegate { if (_vanishing && mark == _fadeMark) Hide(); };
+            }
             _panel.BeginAnimation(OpacityProperty, fade);
 
             var slide = new DoubleAnimation(

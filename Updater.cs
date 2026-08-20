@@ -43,6 +43,13 @@ namespace MagicKeys
         /// </summary>
         private const string SignerThumbprint = "103850469089DEECC19D0DD6CE1D4DD3307601FA";
 
+        /// <summary>
+        /// Ответ от GitHub получен — неважно, нашёлся выпуск или нет. Окно, увидев это,
+        /// поставит отметку о времени проверки в настройки. Флаг, а не запись напрямую:
+        /// у настроек один хозяин, и это поток окна.
+        /// </summary>
+        public static bool Checked;
+
         public static string ReleasesPage
         {
             get { return "https://github.com/" + Owner + "/" + Repo + "/releases"; }
@@ -101,9 +108,11 @@ namespace MagicKeys
                     if (best == null || r.Version > best.Version) best = r;
                 }
 
-                // Отметку ставим и тогда, когда подходящего выпуска не нашлось: связь была,
-                // ответ получен — проверка состоялась.
-                Settings.LastUpdateCheck = DateTime.UtcNow;
+                // Отметку здесь не ставим: Check работает в стороннем потоке, а настройки
+                // правит только окно — оно же их и пишет. Раньше отметка ставилась отсюда
+                // и тут же звала Save(): два потока писали один и тот же временный файл,
+                // и настройки, тронутые в этот миг, молча пропадали.
+                Checked = true;
                 if (best == null) { error = "выпусков пока нет"; return null; }
                 return best.Version > Current ? best : null;
             }
@@ -493,7 +502,14 @@ namespace MagicKeys
             catch { }
         }
 
-        /// <summary>«v1.0.1», «1.0.1», «1.0.1-beta.2» — берём числа, остальное отбрасываем.</summary>
+        /// <summary>
+        /// «v1.0.1», «1.0.1», «1.0.1-beta.2» — берём числа, остальное отбрасываем.
+        ///
+        /// Ровно три числа, хотя Version умеет четыре. Установщик Windows сравнивает
+        /// только первые три: пакет 1.0.0.1 для него та же версия, что 1.0.0. Считай мы
+        /// четвёртое, метка v1.0.0.1 объявлялась бы новым выпуском, человек соглашался бы
+        /// обновиться — и получал бы тот же самый пакет, снова и снова.
+        /// </summary>
         public static Version ParseVersion(string text)
         {
             if (String.IsNullOrEmpty(text)) return null;
@@ -508,11 +524,11 @@ namespace MagicKeys
                 int n;
                 if (!Int32.TryParse(piece, out n)) break;
                 parts.Add(n);
-                if (parts.Count == 4) break;
+                if (parts.Count == 3) break;
             }
             if (parts.Count == 0) return null;
-            while (parts.Count < 4) parts.Add(0);
-            return new Version(parts[0], parts[1], parts[2], parts[3]);
+            while (parts.Count < 3) parts.Add(0);
+            return new Version(parts[0], parts[1], parts[2]);
         }
 
         private static string Text(Dictionary<string, object> map, string key)

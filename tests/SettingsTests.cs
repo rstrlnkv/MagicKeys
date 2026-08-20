@@ -80,6 +80,14 @@ namespace MagicKeys
             }
         }
 
+        /// <summary>Что перехват считает зажатым прямо сейчас.</summary>
+        static HashSet<ModKey> ModsDown()
+        {
+            return (HashSet<ModKey>)typeof(Engine)
+                .GetField("_modsDown", BindingFlags.NonPublic | BindingFlags.Instance)
+                .GetValue(_eng);
+        }
+
         /// <summary>Наш счёт регистра — тот, по которому раскладка Apple выбирает букву.</summary>
         static bool CapsOn()
         {
@@ -836,6 +844,59 @@ namespace MagicKeys
             Clear();
             Up(Vk.LWin); Clear();
 
+            // Промах мимо таблицы ⌘ глотает нажатие в самом конце, а верхний ряд стоит
+            // выше и успевает защёлкнуть ветку. Снять защёлку после этого некому:
+            // отпускание уходит к слою аккордов. Следующее нажатие пошло бы по вчерашней
+            // ветке — и ⌥+F4 дало бы Alt+F4.
+            s = Fresh();
+            s.MediaFirst = false;               // «сначала F-клавиши»
+            s.FnSubstitute = ModKey.RAlt;
+            s.FKeys[3] = "media.prev";
+            Use(s);
+            Down(Vk.LWin);
+            Down(Vk.F1 + 3); Up(Vk.F1 + 3);     // ⌘+F4 — такой строки в таблице нет
+            Up(Vk.LWin); Clear();
+            DownE(Vk.RMenu);                    // теперь держим заменитель Fn
+            bool fnDown = Down(Vk.F1 + 3);
+            bool fnUp = Up(Vk.F1 + 3);
+            Check("после ⌘+F4 ветка F4 выбирается заново",
+                  fnDown && fnUp && Sent().IndexOf(N(Vk.MediaPrev)) >= 0,
+                  "нажатие=" + fnDown + ", отпускание=" + fnUp + ", пришло «" + Sent() + "»");
+            Clear();
+            UpE(Vk.RMenu); Clear();
+
+            // Перестановка ISO обязана держать клавишу и на автоповторе: иначе повтор
+            // уходит в приложение настоящим скан-кодом, а отпускание снимает подставленный,
+            // и настоящий остаётся зажатым.
+            s = Fresh();
+            s.Physical = PhysLayout.Iso;
+            Use(s);
+            bool iso0 = Send(Vk.Oem102, 0x56, true, false);
+            bool iso1 = Send(Vk.Oem102, 0x56, true, false);   // автоповтор
+            bool iso2 = Send(Vk.Oem102, 0x56, false, false);
+            Check("перестановка ISO держит клавишу и на автоповторе", iso0 && iso1 && iso2,
+                  "нажатие=" + iso0 + ", повтор=" + iso1 + ", отпускание=" + iso2 +
+                  ", пришло «" + Sent() + "»");
+            Clear();
+
+            // Призрачный Ctrl от AltGr Windows держит по-настоящему, и общий сброс
+            // перечитывает зажатое у неё. Записанный в множество, он оставался там
+            // навсегда: снять его некому, а с ним раскладка Apple молча переставала
+            // работать и ни одно сочетание ⌘ больше не узнавалось.
+            s = Fresh();
+            Use(s);
+            Send(Vk.LControl, 0x21D, true, false);   // AltGr привёл призрака
+            // Windows на время сброса отвечает так, как отвечает при зажатом AltGr:
+            // призрачный control она держит по-настоящему.
+            Engine.HeldProbe = delegate(int probe) { return probe == Vk.LControl; };
+            try { _release.Invoke(_eng, null); }
+            finally { Engine.HeldProbe = null; }
+            Check("призрачный Ctrl не попадает в перечёт зажатого",
+                  !ModsDown().Contains(ModKey.LCtrl),
+                  "остался в множестве — снять его оттуда некому");
+            Send(Vk.LControl, 0x21D, false, false);  // призрак ушёл вместе с AltGr
+            Clear();
+
             // Вторая клавиша на Caps Lock жмёт уже нажатый Caps Lock: для Windows это
             // повтор, переключателем он не считается. Наш счёт регистра не должен
             // расходиться с лампочкой.
@@ -1037,7 +1098,8 @@ namespace MagicKeys
                     Encoding.UTF8);
                 AppleLayoutFile f = Load(p);
                 Check("переход без «to» не превращает нажатие в пустоту",
-                      f == null || f.Compose("^", "a") != "", "получили пустую строку");
+                      f != null && f.Compose("^", "a") == null, "получили «" +
+                      (f == null ? "разбор не удался" : f.Compose("^", "a")) + "»");
             }
             catch (Exception e) { Check("битый файл раскладки", false, e.Message); }
             finally
@@ -1089,6 +1151,23 @@ namespace MagicKeys
                   alt >= 0 && sign > alt, Sent());
             Clear();
             Up(Vk.LMenu); Clear();
+
+            // Клавишу, взятую раскладкой, нельзя отдавать посреди удержания: автоповтор
+            // ушёл бы в приложение настоящим нажатием, а отпускание съела бы запись
+            // о съеденном — и в приложении клавиша осталась бы зажатой.
+            Settings hold = Fresh();
+            hold.AppleLayoutEnabled = true;
+            hold.OptLevel = OptLevel.Off;
+            hold.SetLayoutFor(lang, "es");
+            Use(hold);
+            bool hd = Send(0xBA, 0x28, true, false);    // «;» — испанская её подменяет
+            Down(Vk.LControl);                          // control нажали, не отпуская
+            bool hr = Send(0xBA, 0x28, true, false);    // автоповтор
+            bool hu = Send(0xBA, 0x28, false, false);
+            Check("раскладка не отдаёт клавишу посреди удержания", hd && hr == hu,
+                  "нажатие=" + hd + ", повтор=" + hr + ", отпускание=" + hu);
+            Clear();
+            Up(Vk.LControl); Clear();
         }
 
         static void SnapshotIndependence()

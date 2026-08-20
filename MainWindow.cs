@@ -607,17 +607,24 @@ namespace MagicKeys
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(280) });
 
+            // Каждая строка пересобирает страницу. Эти пять полей решают, до какого
+            // модификатора вообще можно дотянуться, — а от этого зависят и правила
+            // Normalize (третий уровень, «любой ⌥»), и половина сносок на странице.
+            // Без пересборки выбор человека молча отменялся: переключатель «Любой ⌥»
+            // оставался включённым при уже сброшенной настройке, а сноска про Fn
+            // продолжала обещать сочетания, которые перешли к таблице macOS.
+            //
             // Caps Lock первой строкой: с мака его меняют чаще, чем все остальные вместе.
             AddModRow(grid, 0, "Caps Lock", "Часто удобнее как control или Escape", _s.MapCapsLock,
-                delegate(ModKey m) { _s.MapCapsLock = m; Save(); });
+                delegate(ModKey m) { _s.MapCapsLock = m; Save(); BuildPage(); });
             AddModRow(grid, 1, "control (левый)", "Крайняя левая клавиша", _s.MapLCtrl,
-                delegate(ModKey m) { _s.MapLCtrl = m; Save(); });
+                delegate(ModKey m) { _s.MapLCtrl = m; Save(); BuildPage(); });
             AddModRow(grid, 2, "⌥ option (левый)", "Между control и ⌘", _s.MapLAlt,
-                delegate(ModKey m) { _s.MapLAlt = m; Save(); });
+                delegate(ModKey m) { _s.MapLAlt = m; Save(); BuildPage(); });
             AddModRow(grid, 3, "⌘ command (левая)", "Слева от пробела", _s.MapLWin,
-                delegate(ModKey m) { _s.MapLWin = m; Save(); });
+                delegate(ModKey m) { _s.MapLWin = m; Save(); BuildPage(); });
             AddModRow(grid, 4, "⌘ command (правая)", "Справа от пробела", _s.MapRWin,
-                delegate(ModKey m) { _s.MapRWin = m; Save(); });
+                delegate(ModKey m) { _s.MapRWin = m; Save(); BuildPage(); });
             // Правого ⌥ здесь нет: у него своя карточка выше, где он спрашивается один раз.
 
             stack.Children.Add(Card("Отдельные клавиши", "Слева — что напечатано на клавише, справа — чем она станет.", grid));
@@ -847,7 +854,10 @@ namespace MagicKeys
 
             var reload = new Button { Content = "Перечитать файлы раскладок", HorizontalAlignment = HorizontalAlignment.Left };
             reload.SetResourceReference(StyleProperty, "Btn");
-            reload.Click += delegate { Layouts.Reload(); BuildPage(); };
+            // И Save: перехват держит разобранный файл, пока не сменится раскладка окна
+            // или снимок настроек. Без нового снимка список в окне обновлялся, а печатались
+            // прежние символы — до следующей смены языка или любой другой настройки.
+            reload.Click += delegate { Layouts.Reload(); Save(); BuildPage(); };
 
             stack.Children.Add(Card("Языки ввода Windows",
                 "Раскладка Apple применяется к тому языку, который выбран в этот момент.",
@@ -1493,11 +1503,12 @@ namespace MagicKeys
                     "F1–F12 приходят обычными F-клавишами, и переназначает их MagicKeys — " +
                     "яркостью внешних мониторов занимается программа.",
                     delegate { ApplyFnBehavior(0); }));
-                if (!String.IsNullOrEmpty(_fnNotice))
+                string driverSay = _driverBusy ? _driverText : _fnNotice;
+                if (!String.IsNullOrEmpty(driverSay))
                 {
                     var outcome = new TextBlock
                     {
-                        Text = _fnNotice,
+                        Text = driverSay,
                         TextWrapping = TextWrapping.Wrap,
                         Margin = new Thickness(0, 10, 0, 0)
                     };
@@ -1600,12 +1611,24 @@ namespace MagicKeys
 
             var buttons = new WrapPanel { Margin = new Thickness(0, 0, -8, -8) };
 
-            var find = new Button { Content = "Найти пакет у Apple", Margin = new Thickness(0, 0, 8, 8) };
+            // Пока идёт работа с драйвером — гасим: удаление и распаковка ходят
+            // в один каталог, а запрос прав администратора уже висит наверху.
+            var find = new Button
+            {
+                Content = "Найти пакет у Apple",
+                Margin = new Thickness(0, 0, 8, 8),
+                IsEnabled = !SetupBusy
+            };
             find.SetResourceReference(StyleProperty, "Btn");
             find.Click += delegate { StartSetup(false, null); };
             buttons.Children.Add(find);
 
-            var get = new Button { Content = "Скачать и установить", Margin = new Thickness(0, 0, 8, 8) };
+            var get = new Button
+            {
+                Content = "Скачать и установить",
+                Margin = new Thickness(0, 0, 8, 8),
+                IsEnabled = !SetupBusy
+            };
             get.SetResourceReference(StyleProperty, "BtnAccent");
             get.Click += delegate { StartSetup(true, null); };
             buttons.Children.Add(get);
@@ -1700,7 +1723,7 @@ namespace MagicKeys
                     // означало бы «программа не отвечает» ровно тогда, когда человек
                     // на неё смотрит.
                     _driverBusy = true;
-                    _fnNotice = "Удаляю драйвер…";
+                    _driverText = "Удаляю драйвер…";
                     BuildPage();
 
                     ThreadPool.QueueUserWorkItem(delegate
@@ -1716,6 +1739,7 @@ namespace MagicKeys
                         ToWindow(delegate
                         {
                             _driverBusy = false;
+                            _driverText = null;
                             if (CurrentPage != "driver") return;
                             _fnNotice = say;
                             BuildPage();
@@ -1769,6 +1793,15 @@ namespace MagicKeys
 
         /// <summary>Идёт долгая работа с драйвером: удаление или запись его настройки.</summary>
         private bool _driverBusy;
+
+        /// <summary>
+        /// Что сейчас происходит с драйвером. Отдельно от _fnNotice: тот живёт ровно одну
+        /// пересборку — так и надо отчёту о законченном деле, — а ход работы обязан
+        /// пережить любое их число. Страница пересобирается сама: пришёл ответ о заряде,
+        /// впервые нажали клавишу, опросились устройства. Надпись «Удаляю драйвер…»
+        /// исчезала, кнопки оставались серыми, и объяснить это было нечем.
+        /// </summary>
+        private volatile string _driverText;
 
         private bool SetupBusy
         {
@@ -2642,7 +2675,7 @@ namespace MagicKeys
             // Отчёт кладём в свой слот и перестраиваем страницу — в чужую карточку
             // про скачивание пакета Apple ему не место: там он вдобавок оставался
             // навсегда, затирая полезный текст про 7-Zip.
-            _fnNotice = "Записываю настройку драйвера…";
+            _driverText = "Записываю настройку драйвера…";
             _driverBusy = true;
             BuildPage();
 
@@ -2656,6 +2689,7 @@ namespace MagicKeys
                 ToWindow(delegate
                 {
                     _driverBusy = false;
+                    _driverText = null;
                     if (CurrentPage != "driver") return;   // ушли со страницы — некому показывать
                     _fnNotice = ok
                         ? "Записано. Драйвер перечитает значение при следующем подключении "

@@ -108,9 +108,17 @@ namespace MagicKeys
         public static PhysLayout DetectedPhysical { get { return (PhysLayout)_detectedPhys; } }
 
         /// <summary>
-        /// Забыть угаданное исполнение — например, когда сменился набор клавиатур.
-        /// Отдельно от Forget(): та забывает и медиакоды, а с ними меняется и то,
-        /// кто обрабатывает функциональный ряд.
+        /// Забыть всё, что рассказала о себе прежняя клавиатура: исполнение, счёт
+        /// F-клавиш, виденные клавиши, медиакоды и ⏏. Зовут при смене набора клавиатур.
+        ///
+        /// Медиакоды забыть обязательно, хоть это и стоит одного лишнего нажатия.
+        /// Ими доказывается, что драйвер добрался ДО ЭТОЙ клавиатуры, — а вторая
+        /// половина условия, OSXFnBehavior, общая на всю машину. Пережив подмену,
+        /// свидетельство лгало: драйвер до новой клавиатуры не добрался, а программа
+        /// ряд ему уже уступила, и F1–F12 не делали ничего вовсе. Ровно та дыра,
+        /// ради которой условие «видели медиакод» и заведено.
+        ///
+        /// Отдельно от Forget(): та вдобавок чистит кэши по дескрипторам устройств.
         /// </summary>
         public static void ForgetPhysical()
         {
@@ -123,8 +131,10 @@ namespace MagicKeys
             // только на свежих, а Bluetooth переподключается на каждом пробуждении.
             // Обнулив одно и оставив другое, мы теряли счёт навсегда — после первого
             // же выхода из сна строки F13-F19 пропадали до перезапуска программы.
-            lock (Sync) SeenKeys.Clear();
+            lock (Sync) { SeenKeys.Clear(); SeenUsages.Clear(); }
             _maxFunctionKey = 0;
+            _mediaSeen = false;
+            _ejectSeen = false;
         }
 
         private static void NoteScan(int scan)
@@ -178,6 +188,9 @@ namespace MagicKeys
 
         public static void Start()
         {
+            // Прошлый отказ забываем: иначе страница «Диагностика» показывала бы
+            // «перепись клавиш прекратилась сама» при работающей переписи.
+            _failure = null;
             if (_thread != null) return;
             _thread = new Thread(Run);
             _thread.IsBackground = true;
@@ -189,7 +202,11 @@ namespace MagicKeys
         {
             try
             {
-                _proc = WindowProc;
+                // Делегат держим на всё время жизни программы: оконная процедура зовётся
+                // из ядра, и собранный сборщиком мусора делегат — это падение на первом
+                // же нажатии. Присваиваем один раз: при повторном запуске старый указатель
+                // остался бы в уже зарегистрированном классе.
+                if (_proc == null) _proc = WindowProc;
                 var wc = new Native.WNDCLASSEX();
                 wc.cbSize = (uint)Marshal.SizeOf(typeof(Native.WNDCLASSEX));
                 wc.lpfnWndProc = _proc;
@@ -522,9 +539,6 @@ namespace MagicKeys
                 foreach (IntPtr p in Preparsedes.Values) if (p != IntPtr.Zero) Marshal.FreeHGlobal(p);
                 Preparsedes.Clear();
             }
-            _mediaSeen = false;
-            _maxFunctionKey = 0;
-            _ejectSeen = false;
             ForgetPhysical();
         }
     }

@@ -567,11 +567,21 @@ namespace MagicKeys
             if (UpdateChannel != ChannelStable && UpdateChannel != ChannelDev)
                 UpdateChannel = ChannelStable;
 
-            // Правый ⌥ делает одно дело. Прежняя версия сохраняла заменитель Fn вместе
+            // Заменитель Fn делает одно дело. Прежняя версия сохраняла заменитель вместе
             // с третьим уровнем на той же клавише — и окно показывало «Клавиша Fn»,
             // молча набирая при этом символы третьего уровня. Побеждает Fn: без драйвера
             // до функционального ряда иначе не добраться вовсе.
-            if (FnSubstitute == ModKey.RAlt && OptLevel != OptLevel.Off) OptLevel = OptLevel.Off;
+            //
+            // Спрашиваем назначение, а не надпись. Третий уровень даёт всякая клавиша,
+            // которая приходит в Windows как ⌥, — и «заменитель Fn на Caps Lock, а Caps
+            // Lock приходит правым Alt» воспроизводит тот же конфликт, просто не на той
+            // клавише, на которую смотрело прежнее правило.
+            if (FnSubstitute != ModKey.None && OptLevel != OptLevel.Off)
+            {
+                ModKey t = TargetOf(FnSubstitute);
+                if (t == ModKey.RAlt || (OptLevel == OptLevel.AnyOption && t == ModKey.LAlt))
+                    OptLevel = OptLevel.Off;
+            }
 
             // Третьему уровню нужен Alt — но не обязательно та клавиша, на которой он
             // напечатан. Перехват перебирает зажатые клавиши и спрашивает, во что каждая

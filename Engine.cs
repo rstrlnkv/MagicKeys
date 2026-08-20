@@ -129,7 +129,11 @@ namespace MagicKeys
             return false;
         }
 
-        /// <summary>А это — что Windows держит прямо сейчас. Нужно щиту, а не опознанию.</summary>
+        /// <summary>
+        /// А это — что Windows держит прямо сейчас. Спрашивают об этом там, где важно
+        /// не намерение человека, а состояние системы: щит перед синтетическим вводом
+        /// и отступление раскладки Apple под зажатым control или Win.
+        /// </summary>
         private bool HoldsAny(int vk1, int vk2)
         {
             foreach (ModKey phys in _modsDown)
@@ -599,7 +603,11 @@ namespace MagicKeys
                 if (!down) { _chordTaken.Remove(vk); return true; }
                 // Повторяем только то, что объявило о себе, что умеет повторяться:
                 // ⌘Q, зажатая на полсекунды, не должна закрывать окно за окном.
-                if (taken == CmdTab) Input.Tap(Vk.Tab);        // ⌘+Tab листает дальше
+                // ⌘+Tab листает дальше — но только пока переключатель открыт. Закрыть
+                // его мог кто угодно из тех, кому пришлось снять наш Alt (аккорд macOS,
+                // символ раскладки), и повторы Tab после этого сыпались обычными
+                // табуляциями в окно, которое только что получило фокус.
+                if (taken == CmdTab) { if (_cmdTabAlt) Input.Tap(Vk.Tab); }
                 else if (taken != null && taken.Repeats) MacSend(taken);
                 return true;
             }
@@ -734,6 +742,15 @@ namespace MagicKeys
                 Input.Scan((ushort)(k.scanCode == 0x29 ? 0x56 : 0x29), false, false);
                 return true;
             }
+            // И повтор туда же. Без этого автоповтор уходил в приложение настоящим,
+            // непереставленным скан-кодом — то есть подмена бросала работу на середине
+            // удержания, — а отпускание снимало подставленный, и настоящий оставался
+            // зажатым.
+            if (down && _isoSwapped.Contains(k.scanCode))
+            {
+                Input.Scan((ushort)(k.scanCode == 0x29 ? 0x56 : 0x29), false, true);
+                return true;
+            }
             // Без настройки: это не вкус, а исправление аппаратной особенности —
             // две клавиши на ISO-клавиатурах Apple подключены наоборот, и то же самое
             // безусловно правит квирк APPLE_ISO_TILDE_QUIRK в Linux. Желания оставить
@@ -767,6 +784,16 @@ namespace MagicKeys
                 if (!down) return false;   // нажатия не брали — и отпускание не наше
                 if (WindowsHoldsMenuKey()) Input.Tap(VkNoop);
                 _chordTaken[vk] = null;
+                // Верхний ряд стоит выше и успел защёлкнуть ветку, прежде чем отказаться
+                // от нажатия. Отпускание после этого уходит сюда, а не к нему, — значит
+                // защёлку снимаем мы. Иначе она стоит до перезапуска, и следующее нажатие
+                // той же клавиши идёт по вчерашней ветке: ⌥+F4 давало Alt+F4, а одна и та
+                // же клавиша при зажатой ⌘ срабатывала через раз.
+                if (vk >= Vk.F1 && vk <= Vk.F24)
+                {
+                    _fkeyLatched[vk - Vk.F1] = false;
+                    _fkeyTake[vk - Vk.F1] = false;
+                }
                 return true;
             }
 
@@ -853,6 +880,20 @@ namespace MagicKeys
             // оставалась зажатой в приложении.
             if (!down && _swallowed.Remove(k.scanCode)) return 1;
 
+            // Клавишу, которую мы уже держим, обратно не отдаём. Пять отступлений
+            // ниже — зажатый control или Win, пропавшая раскладка, Alt не третьим
+            // уровнем, пустой уровень, «не отличается от Microsoft» — на автоповторе
+            // возвращали нажатие в систему настоящим, а отпускание съедала строка выше:
+            // в приложении клавиша оставалась зажатой навсегда. Повтор при этом глотаем
+            // молча: потерять несколько знаков автоповтора в редком случае дешевле.
+            bool ours = down && _swallowed.Contains(k.scanCode);
+            int verdict = LayoutDecide(s, k, down);
+            return verdict < 0 && ours ? 1 : verdict;
+        }
+
+        /// <summary>-1 — не наше дело; 0 — пропустить; 1 — проглотить.</summary>
+        private int LayoutDecide(Settings s, Native.KBDLLHOOKSTRUCT k, bool down)
+        {
             if (CtrlHeld || WinDown)
             {
                 if (down) DropDead(s);
@@ -982,13 +1023,14 @@ namespace MagicKeys
                 if (IsMenuKeyAlt(WindowsHolds(phys))) Release(phys, released);
             // И Alt переключателя окон: за физической клавишей он не стоит, а символ
             // под ним уходит как WM_SYSCHAR — пропадает сам и открывает строку меню.
-            // Возвращаем его в конце вместе с остальными: переключатель должен остаться
-            // открытым, человек ещё держит ⌘.
+            // Снимаем без возврата, как и MacSend: отпустить этот Alt — и значит закрыть
+            // переключатель, а повторное нажатие его не откроет. Переключатель закроется
+            // и переключит окно; вернуть Alt нажатым — только оставить его висеть.
             if (_cmdTabAlt)
             {
                 Input.Tap(VkNoop);
                 Input.Key(Vk.LMenu, false);
-                released.Add(Vk.LMenu);
+                _cmdTabAlt = false;
             }
             // Призрачный Ctrl от AltGr в _modsDown не попадает: его отсекают раньше.
             if (_phantomCtrl) { Input.Key(Vk.LControl, false); released.Add(Vk.LControl); }
@@ -1489,8 +1531,21 @@ namespace MagicKeys
                     Input.Key(p.Value, true);
         }
 
+        /// <summary>
+        /// Кто отвечает за Windows на вопрос «держит ли она этот код». Пусто — сама
+        /// Windows. Шов ровно один и заведён ровно для стенда: перечёт зажатого после
+        /// общего сброса иначе не проверить ничем, а он уже дважды оказывался неверным.
+        /// Тот же приём, что и Input.Sink.
+        /// </summary>
+        internal static Func<int, bool> HeldProbe { get; set; }
+
         /// <summary>Держит ли Windows этот код прямо сейчас.</summary>
-        private static bool Held(int vk) { return (Native.GetKeyState(vk) & 0x8000) != 0; }
+        private static bool Held(int vk)
+        {
+            Func<int, bool> probe = HeldProbe;
+            if (probe != null) return probe(vk);
+            return (Native.GetKeyState(vk) & 0x8000) != 0;
+        }
 
         /// <summary>
         /// Отпустить всё, что мы могли зажать: иначе после смены настроек, паузы или
@@ -1507,7 +1562,7 @@ namespace MagicKeys
                 // сам: пробуждение клавиатуры, движение галочки в окне, возврат с чужого
                 // рабочего стола. Windows видела Win нажатой и отпущенной без ничего
                 // между ними, то есть одиночное нажатие, и выкидывала «Пуск» поверх работы.
-                bool menu = false;
+                bool menu = _cmdTabAlt;
                 foreach (KeyValuePair<ModKey, int> pair in _injected)
                     if (IsMenuKey(pair.Value)) menu = true;
                 if (menu) Input.Tap(VkNoop);
@@ -1519,7 +1574,6 @@ namespace MagicKeys
                 _fnHeld = false;
                 _fnPhys = ModKey.None;
                 _subReleased = 0;
-                _phantomCtrl = false;
                 _chordTaken.Clear();
                 // Настройки могли смениться — запомненную раскладку окна забываем.
                 _layHkl = IntPtr.Zero; _layFor = null; _layFile = null;
@@ -1592,6 +1646,12 @@ namespace MagicKeys
                 {
                     int own = ModNames.VirtualKey(phys);
                     if (own == 0 || !Held(own)) continue;
+                    // Призрачный Ctrl от AltGr Windows держит по-настоящему, и Held
+                    // отвечает про него правдой. Но нажатия его мы не берём и отпускания
+                    // не увидим: оно отсекается раньше. Записанный сюда, он оставался
+                    // навсегда — а с ним раскладка Apple молча переставала работать
+                    // целиком, и ни одно сочетание ⌘ больше не узнавалось.
+                    if (_phantomCtrl && phys == ModKey.LCtrl) continue;
                     _modsDown.Add(phys);
                     // Caps Lock тоже: без этого следующий его автоповтор переворачивал
                     // наш счёт регистра второй раз, а Windows не переворачивала ничего.
@@ -1601,6 +1661,18 @@ namespace MagicKeys
                     // переставал переворачиваться вовсе.
                     if (own == Vk.Capital && cur != null && cur.TargetOf(phys) == ModKey.CapsLock)
                         _capsSources.Add(phys);
+                }
+
+                // И заменитель Fn: он такое же состояние, как множество зажатого, и его
+                // забвение видно сразу. Держа правый ⌥, щёлкнуть галочку в окне — и до
+                // отпускания клавиши F2 давала бы яркость вместо настоящей F2, а Fn+↑
+                // обычную стрелку вместо Page Up.
+                if (cur != null && cur.FnSubstitute != ModKey.None
+                    && _modsDown.Contains(cur.FnSubstitute))
+                {
+                    _fnHeld = true;
+                    int mod = ModNames.VirtualKey(cur.TargetOf(cur.FnSubstitute));
+                    _fnPhys = IsModifierKey(mod) ? cur.FnSubstitute : ModKey.None;
                 }
             }
             catch { }

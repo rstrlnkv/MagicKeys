@@ -78,10 +78,10 @@ namespace MagicKeys
             Settings saved = _s.Snapshot();
 
             _s.FnSubstitute = ModKey.None;
-            _s.OptLevel = OptLevel.RightOption;
+            _s.OptLevel = OptLevel.AnyOption;
             _s.MapRAlt = ModKey.RAlt;
-            _s.MapCapsLock = ModKey.LAlt;   // левый Alt живёт на Caps Lock,
-            _s.MapLAlt = ModKey.LCtrl;      // а сама клавиша ⌥ уведена
+            _s.MapLAlt = ModKey.LAlt;
+            _s.MapCapsLock = ModKey.CapsLock;
             _eng.Apply(_s);
 
             MethodInfo m = typeof(MainWindow).GetMethod("PageKeys",
@@ -101,6 +101,12 @@ namespace MagicKeys
             }
             Check("переключатель «Любой ⌥» есть, когда правый ⌥ набирает символы",
                   found, "его нет на странице");
+
+            // И списки той же страницы: под ролью «символы» их не касался никто,
+            // а среди них — те пять строк, что решают, до какого модификатора вообще
+            // можно дотянуться. Именно они молча отменяли «любой ⌥».
+            foreach (ComboBox b in combos) Turn(b);
+
             Restore(saved);
         }
 
@@ -181,7 +187,7 @@ namespace MagicKeys
                 string diff = Diff(before, Snap());
                 Check("кнопка «" + title + "»: изменённое дошло до перехвата",
                       diff == "" || _applied > applied, "изменила " + diff + ", а перехвату не отдала");
-                string undone = Undone();
+                string undone = Undone(diff);
                 Check("кнопка «" + title + "»: выбранное переживает Normalize", undone == "",
                       "Normalize вернул " + undone);
                 string wrong = Wrong();
@@ -218,12 +224,6 @@ namespace MagicKeys
         }
 
         /// <summary>
-        /// То, что не должно разойтись ни от какого щелчка. Каждое правило здесь уже
-        /// однажды нарушалось: одна клавиша делала два дела, третий уровень оставался
-        /// на клавише, которой его не набрать, «любой ⌥» обещал левую клавишу, увёденную
-        /// на другую роль.
-        /// </summary>
-        /// <summary>
         /// Что разошлось в настройках — или пусто, если всё сошлось. Отвечает строкой,
         /// а не отчётом: спрашивают это на каждый пункт каждого списка, и по строке
         /// на каждый ответ прогон распухал до тысяч строк, в которых ничего не видно.
@@ -234,8 +234,15 @@ namespace MagicKeys
         /// </summary>
         static string Wrong()
         {
-            if (_s.FnSubstitute == ModKey.RAlt && _s.OptLevel != OptLevel.Off)
-                return "правый ⌥ разом заменяет Fn и набирает символы (OptLevel=" + _s.OptLevel + ")";
+            if (_s.FnSubstitute != ModKey.None && _s.OptLevel != OptLevel.Off)
+            {
+                // По назначению, а не по надписи: третий уровень даёт всякая клавиша,
+                // приходящая в Windows как ⌥.
+                ModKey t = _s.TargetOf(_s.FnSubstitute);
+                if (t == ModKey.RAlt || (_s.OptLevel == OptLevel.AnyOption && t == ModKey.LAlt))
+                    return "заменитель Fn (" + ModNames.Of(_s.FnSubstitute) +
+                           ") сам даёт ⌥ третьего уровня: одна клавиша делает два дела";
+            }
             if (_s.OptLevel != OptLevel.Off && !_s.Reaches(ModKey.RAlt))
                 return "третьего уровня не набрать: правого Alt не даёт ни одна клавиша";
             if (_s.OptLevel == OptLevel.AnyOption && !_s.Reaches(ModKey.LAlt))
@@ -249,11 +256,14 @@ namespace MagicKeys
         /// показывает одно, а держит другое: галочка стоит, настройка сброшена,
         /// и ни одна надпись об этом не сказала.
         /// </summary>
-        static string Undone()
+        static string Undone(string own)
         {
             Dictionary<string, string> before = Snap();
             _s.Normalize();
-            return Diff(before, Snap());
+            // Поправить соседнее поле правило вправе — на то оно и правило, и страница
+            // после правки пересобирается, так что человек это увидит. Нельзя другое:
+            // отменить ровно то, что человек только что выбрал.
+            return Only(Diff(before, Snap()), Names(own));
         }
 
         static void Walk(object node, List<CheckBox> boxes, List<ComboBox> combos)
@@ -367,7 +377,7 @@ namespace MagicKeys
             bool ok = diff != "" && _applied > applied;
             Check("«" + Short(name) + "» → " + (diff == "" ? "ничего не изменил" : diff),
                   ok, diff == "" ? "ни одно поле настроек не изменилось" : "настройки не применились");
-            string undone = Undone();
+            string undone = Undone(diff);
             Check("«" + Short(name) + "»: выбранное переживает Normalize", undone == "",
                   "Normalize вернул " + undone);
             string wrong = Wrong();
@@ -408,7 +418,7 @@ namespace MagicKeys
                 if (diff == "") { dead.Add(Text(box, i)); continue; }
                 if (_applied == applied) { ok = false; why = "пункт «" + Text(box, i) + "» не применился"; break; }
                 seen.Add(diff);
-                string undone = Undone();
+                string undone = Undone(diff);
                 if (undone != "" && badItem == "")
                     badItem = "пункт «" + Text(box, i) + "»: Normalize вернул " + undone;
                 string wrong = Wrong();
@@ -439,7 +449,13 @@ namespace MagicKeys
                     box.SelectedIndex = was;                // и вернуться
                 }
                 catch { }
-                string moved = Diff(Snap(saved), Snap());
+                // Про своё поле, а не про все: чтобы вернуться к показанному пункту,
+                // мы проходим через соседний, а у соседнего бывают законные последствия
+                // (выбрав правый ⌥ заменителем Fn, третий уровень выключают — одна
+                // клавиша делает одно дело). Список отвечает за то, что показывает.
+                var mine = new List<string>();
+                mine.Add(field);
+                string moved = Only(Diff(Snap(saved), Snap()), mine);
                 Check("список «" + field + "»: показанный пункт совпадает с настройками",
                       moved == "", "возврат к «" + Text(box, was) + "» меняет " + moved);
             }
@@ -453,6 +469,28 @@ namespace MagicKeys
         {
             int colon = diff.IndexOf(':');
             return colon > 0 ? diff.Substring(0, colon) : diff;
+        }
+
+        static readonly string[] Semi = { "; " };
+
+        /// <summary>Имена полей, перечисленных в разнице.</summary>
+        static List<string> Names(string diff)
+        {
+            var names = new List<string>();
+            if (String.IsNullOrEmpty(diff)) return names;
+            foreach (string part in diff.Split(Semi, StringSplitOptions.None))
+                if (Field(part) != part) names.Add(Field(part));
+            return names;
+        }
+
+        /// <summary>Из разницы — только то, что касается перечисленных полей.</summary>
+        static string Only(string diff, List<string> fields)
+        {
+            if (String.IsNullOrEmpty(diff)) return "";
+            var keep = new List<string>();
+            foreach (string part in diff.Split(Semi, StringSplitOptions.None))
+                if (fields.Contains(Field(part))) keep.Add(part);
+            return String.Join("; ", keep.ToArray());
         }
 
         static string Short(string s)

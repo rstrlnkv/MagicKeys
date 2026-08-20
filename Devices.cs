@@ -220,10 +220,6 @@ namespace MagicKeys
                 statusPath = DeviceName(list[i].hDevice);
                 break;
             }
-            // Под тем же замком, что и остальное: раньше это поле писалось отдельным
-            // захватом, и два одновременных опроса могли оставить путь от одного прохода,
-            // а список устройств от другого.
-
             for (int i = 0; i < count; i++)
             {
                 if (list[i].dwType != Native.RIM_TYPEKEYBOARD) continue;

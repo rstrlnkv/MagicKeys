@@ -93,9 +93,12 @@ namespace MagicKeys
         /// показывается как заряд новой — «промах не стирает известного» относится
         /// к промаху той же клавиатуры, а не к смене устройства.
         /// </summary>
+        /// <summary>Сколько раз забывали. По нему видно, не устарел ли идущий запрос.</summary>
+        private static int _age;
+
         public static void Invalidate()
         {
-            lock (Sync) { _stamp = DateTime.MinValue; _percent = Unknown; }
+            lock (Sync) { _stamp = DateTime.MinValue; _percent = Unknown; _age++; }
         }
 
         /// <summary>
@@ -109,6 +112,8 @@ namespace MagicKeys
             // Bluetooth это секунды. Спросив раньше него, мы записывали «клавиатура
             // не ответила» и держали этот ответ минуту — при исправной клавиатуре.
             string path = Devices.AppleStatusPath;
+            int age;
+            lock (Sync) age = _age;
 
             // Срок тратим, только если было кого спрашивать. И только если за то время,
             // пока мы узнавали путь, набор клавиатур не сменился: иначе свежий Invalidate
@@ -128,6 +133,11 @@ namespace MagicKeys
             // клавиатуры больше нет.
             lock (Sync)
             {
+                // Пока мы спрашивали, набор клавиатур сменился — ответ уже не о том
+                // устройстве. По Bluetooth вопрос идёт секундами, и за это время
+                // «ещё спрашиваю» успевало превратиться в «клавиатура не ответила».
+                if (age != _age) return;
+
                 // Клавиатуры нет — не «не ответила», а «спрашивать некого».
                 if (String.IsNullOrEmpty(path)) _percent = NoSource;
                 else if (percent >= 0) _percent = percent;

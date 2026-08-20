@@ -545,12 +545,14 @@ namespace MagicKeys
             catch { return false; }
         }
 
-        public static long SizeOf(string url)
+        public static long SizeOf(string url) { return SizeOf(url, true); }
+
+        private static long SizeOf(string url, bool sameSite)
         {
             try
             {
                 string error;
-                using (HttpWebResponse resp = OpenHttps(url, "HEAD", 0, true, out error))
+                using (HttpWebResponse resp = OpenHttps(url, "HEAD", 0, sameSite, out error))
                     return resp == null ? -1 : resp.ContentLength;
             }
             catch { return -1; }
@@ -707,7 +709,9 @@ namespace MagicKeys
                 string sUrl, sSha; long sLen;
                 bool state = ReadState(target, out sUrl, out sLen, out sSha);
                 long have = File.Exists(target) && !IsLink(target) ? new FileInfo(target).Length : 0;
-                long total = SizeOf(url);
+                // Тем же правилом, что и сама закачка: иначе для 7-Zip длина не узнавалась
+                // бы вовсе, а без неё молча отключаются и докачка, и проверка целостности.
+                long total = SizeOf(url, sameSite);
 
                 // Целое, от того же адреса и с сошедшейся суммой — только тогда кэш.
                 if (have > 0 && state && sUrl == url && sLen == have
@@ -1229,7 +1233,10 @@ namespace MagicKeys
                     // Успех, а не отказ. Считая его отказом, программа говорила
                     // «установить не удалось» и тут же, на том же экране, показывала
                     // драйвер установленным.
-                    output = "Драйвер установлен. Чтобы он заработал, перезагрузите компьютер.";
+                    // Про установку здесь не говорим: об этом уже сказал тот, кто нас
+                    // позвал, — а он же советует переподключить клавиатуру. Два совета
+                    // подряд, да ещё противоположных, хуже одного.
+                    output = "Windows просит перезагрузить компьютер — до этого драйвер не заработает.";
                     return true;
                 case 5:
                     output = "Windows не дала прав на установку драйвера.";

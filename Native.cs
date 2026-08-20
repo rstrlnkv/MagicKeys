@@ -427,7 +427,9 @@ namespace MagicKeys
         [DllImport("user32.dll", CharSet = CharSet.Unicode)]
         public static extern ushort RegisterClassExW(ref WNDCLASSEX c);
 
-        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        // SetLastError обязателен: код этого вызова уходит в журнал, а без пометки
+        // туда попадал остаток от какого-то другого вызова — то есть журнал врал числом.
+        [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         public static extern IntPtr CreateWindowExW(uint exStyle, string cls, string name, uint style,
             int x, int y, int w, int h, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr param);
 

@@ -375,47 +375,25 @@ namespace MagicKeys
 
         // ---------- обновления ----------
         //
-        // Канал и отметка живут в тех же настройках, но правит их окно «О программе»
-        // напрямую, а не через снимок: к перехвату они отношения не имеют, и читает
-        // их только тот же поток окна.
+        // Когда проверяли — обычное поле настроек; здесь только перевод в дату и обратно.
+        // Статического «живого объекта настроек» больше нет: он позволял писать настройки
+        // и сохранять их мимо того, кто ими владеет, — и этим путём, в частности, режим
+        // разработчика, включённый ключом на один запуск, утекал в файл. А ещё «Current»
+        // значил в двух местах ровно противоположное: у настроек — живой объект, который
+        // правят, у перехвата — снимок, который не правят никогда.
 
-        public static string Channel
-        {
-            get { Settings s = Current; return s == null ? ChannelStable : s.UpdateChannel; }
-            set
-            {
-                Settings s = Current;
-                if (s == null) return;
-                s.UpdateChannel = value;
-                s.Save();
-            }
-        }
-
-        public static DateTime? LastUpdateCheck
+        public DateTime? Checked
         {
             get
             {
-                Settings s = Current;
-                if (s == null || String.IsNullOrEmpty(s.UpdateChecked)) return null;
+                if (String.IsNullOrEmpty(UpdateChecked)) return null;
                 DateTime t;
-                return DateTime.TryParse(s.UpdateChecked, CultureInfo.InvariantCulture,
+                return DateTime.TryParse(UpdateChecked, CultureInfo.InvariantCulture,
                                          DateTimeStyles.AdjustToUniversal | DateTimeStyles.AssumeUniversal, out t)
                     ? (DateTime?)t : null;
             }
-            set
-            {
-                Settings s = Current;
-                if (s == null) return;
-                s.UpdateChecked = value == null ? "" : value.Value.ToString("o", CultureInfo.InvariantCulture);
-                s.Save();
-            }
+            set { UpdateChecked = value == null ? "" : value.Value.ToString("o", CultureInfo.InvariantCulture); }
         }
-
-        /// <summary>
-        /// Живой объект настроек. Заводится при загрузке; нужен обновлению, которое
-        /// работает на потоке окна и правит свои два поля напрямую.
-        /// </summary>
-        public static Settings Current;
 
         // ---------- хранение ----------
 
@@ -460,9 +438,6 @@ namespace MagicKeys
             }
             return new Settings();
         }
-
-        /// <summary>Запомнить объект как живой — его правит окно.</summary>
-        public void MakeCurrent() { Current = this; }
 
         public void Save()
         {
@@ -530,6 +505,16 @@ namespace MagicKeys
             if (SpaceSearch != SpaceCmd && SpaceSearch != SpaceCtrl && SpaceSearch != SpaceNone)
                 SpaceSearch = SpaceCmd;
 
+            // Действия сводим к существующим. Без этого согласие держалось на совпадении:
+            // список в окне, не найдя своего значения, показывает первый пункт, а первый
+            // пункт — «оставить как есть» лишь потому, что записан первым. Переставили бы
+            // две строки в Actions — и список стал бы показывать «яркость меньше» там,
+            // где клавиша не делает ничего.
+            for (int i = 0; i < FKeys.Length; i++)
+                if (Actions.Get(FKeys[i]) == null) FKeys[i] = "none";
+            if (Actions.Get(NumpadClear) == null) NumpadClear = "none";
+            if (Actions.Get(EjectKey) == null) EjectKey = "none";
+
             if (UpdateChannel != ChannelStable && UpdateChannel != ChannelDev)
                 UpdateChannel = ChannelStable;
 
@@ -539,13 +524,16 @@ namespace MagicKeys
             // до функционального ряда иначе не добраться вовсе.
             if (FnSubstitute == ModKey.RAlt && OptLevel != OptLevel.Off) OptLevel = OptLevel.Off;
 
-            // А если правый ⌥ уведён в другую клавишу, особых ролей у него быть не может:
-            // заменителю нечего временно снимать, третьему уровню нечем набирать.
-            if (MapRAlt != ModKey.RAlt)
-            {
-                if (FnSubstitute == ModKey.RAlt) FnSubstitute = ModKey.None;
-                OptLevel = OptLevel.Off;
-            }
+            // Третьему уровню нужен именно Alt: без него ⌥-символов не набрать.
+            if (MapRAlt != ModKey.RAlt) OptLevel = OptLevel.Off;
+
+            // А заменителем Fn клавиша перестаёт быть, только если её увели в ДРУГОЙ
+            // модификатор. Выключенная — по-прежнему заменитель, и это не мелочь:
+            // карточка «Заменитель Fn» прямо советует выключить обычное значение клавиши,
+            // если она нужна только как Fn. Прежнее правило забирало сделанное по его же
+            // совету — молча и при следующем запуске.
+            if (MapRAlt != ModKey.RAlt && MapRAlt != ModKey.None && FnSubstitute == ModKey.RAlt)
+                FnSubstitute = ModKey.None;
         }
     }
 
@@ -568,7 +556,7 @@ namespace MagicKeys
             }
         }
 
-        public static void Set(bool on)
+        public static void Set(bool on, bool hidden)
         {
             try
             {
@@ -582,8 +570,6 @@ namespace MagicKeys
                         // всегда, и переключатель «запускаться свёрнутой» при включённом
                         // автозапуске не делал ничего: обещание, которого программа
                         // не исполняла.
-                        Settings s = Settings.Current;
-                        bool hidden = s == null || s.StartMinimized;
                         k.SetValue(Name, "\"" + exe + "\"" + (hidden ? " --tray" : ""));
                     }
                     else if (k.GetValue(Name) != null)

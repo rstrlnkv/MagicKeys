@@ -780,6 +780,42 @@ namespace MagicKeys
             Clear();
             Up(Vk.Space); Up(Vk.LWin); Clear();
 
+            // Выключенное сочетание на удержании не должно слать ничего — и уж точно
+            // не Tab при зажатой клавише Windows: это «Представление задач».
+            s = Fresh();
+            s.MacShortcutsOff = new string[] { "copy" };
+            Use(s);
+            Down(Vk.LWin); Clear();
+            Down(0x43); Down(0x43); Down(0x43);
+            Check("выключенное ⌘C на удержании не шлёт Tab",
+                  Sent().IndexOf(N(Vk.Tab)) < 0, Sent());
+            Clear();
+            Up(0x43); Up(Vk.LWin); Clear();
+
+            // Отпускание клавиши, нажатия которой мы не брали, — не наше.
+            s = Fresh();
+            Use(s);
+            bool sw0 = Down(Vk.LMenu);          // назначения нет: нажатие ушло как есть
+            Clear();
+            Settings changed = Fresh();
+            changed.MapLAlt = ModKey.LCtrl;     // назначение сменили, пока клавишу держат
+            _eng.Apply(changed);
+            Clear();
+            bool sw1 = Up(Vk.LMenu);
+            Check("сменили назначение под зажатой клавишей — отпускание не глотаем",
+                  !sw0 && !sw1, "нажатие=" + sw0 + ", отпускание=" + sw1);
+            Clear();
+
+            // Control, подставленный вместо Caps Lock, виден сочетаниям.
+            s = Fresh();
+            s.MapCapsLock = ModKey.LCtrl;
+            Use(s);
+            Down(Vk.Capital); Clear();
+            bool swc = Down(Vk.Space);
+            Seq("⌃Space работает, когда control висит на Caps Lock", swc,
+                N(Vk.LWin) + "v", N(Vk.Space) + "v");
+            Up(Vk.Space); Up(Vk.Capital); Clear();
+
             // И общее правило ⌘ тоже не повторяется: про клавишу вне таблицы мы не знаем,
             // осмыслен ли для неё повтор.
             s = Fresh();

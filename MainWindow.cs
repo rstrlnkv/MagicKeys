@@ -829,14 +829,14 @@ namespace MagicKeys
         {
             return Card("Запуск", null,
                 Toggle("Запускать вместе с Windows", Autostart.Enabled,
-                    delegate(bool v) { Autostart.Set(v); }),
+                    delegate(bool v) { Autostart.Set(v, _s.StartMinimized); }),
                 Toggle("Запускаться свёрнутой в значок", _s.StartMinimized,
                     delegate(bool v)
                     {
                         _s.StartMinimized = v;
                         Save();
                         // Запись автозапуска несёт в себе этот ответ — переписываем её.
-                        if (Autostart.Enabled) Autostart.Set(true);
+                        if (Autostart.Enabled) Autostart.Set(true, v);
                     }));
         }
 
@@ -1908,8 +1908,9 @@ namespace MagicKeys
 
         private void SetChannel(string channel)
         {
-            if (Settings.Channel == channel) return;
-            Settings.Channel = channel;
+            if (_s.UpdateChannel == channel) return;
+            _s.UpdateChannel = channel;
+            Save();
             _updFound = null;
             ShowChannel();
             ShowIdle();
@@ -1917,7 +1918,7 @@ namespace MagicKeys
 
         private void ShowChannel()
         {
-            bool dev = Settings.Channel == Settings.ChannelDev;
+            bool dev = _s.UpdateChannel == Settings.ChannelDev;
             _updStable.SetResourceReference(StyleProperty, dev ? "Btn" : "BtnAccent");
             _updDev.SetResourceReference(StyleProperty, dev ? "BtnAccent" : "Btn");
             // Подпись называет разницу, а не намекает на неё.
@@ -1930,7 +1931,7 @@ namespace MagicKeys
         private void ShowIdle()
         {
             _updBusy = false;
-            _updStatus.Text = Updater.Ago(Settings.LastUpdateCheck);
+            _updStatus.Text = Updater.Ago(_s.Checked);
             _updStatus.SetResourceReference(TextBlock.ForegroundProperty, "TextSec");
             _updAction.Content = "Проверить";
             _updAction.IsEnabled = true;
@@ -1949,7 +1950,7 @@ namespace MagicKeys
             _updAction.IsEnabled = false;
             _updStatus.Text = "Проверяю…";
 
-            string channel = Settings.Channel;
+            string channel = _s.UpdateChannel;
             ThreadPool.QueueUserWorkItem(delegate
             {
                 string error;
@@ -1959,7 +1960,7 @@ namespace MagicKeys
                 {
                     // Отметку о проверке ставим здесь, на потоке окна: настройки правит
                     // только он, и Save() отсюда ни с чем не столкнётся.
-                    if (Updater.Checked) Settings.LastUpdateCheck = DateTime.UtcNow;
+                    if (Updater.Checked) { _s.Checked = DateTime.UtcNow; Save(); }
                     if (_updStatus == null) return;   // ушли со страницы
                     _updBusy = false;
                     _updAction.IsEnabled = true;

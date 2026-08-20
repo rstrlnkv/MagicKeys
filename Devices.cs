@@ -63,8 +63,6 @@ namespace MagicKeys
         }
         private static AppleModel _appleModel;
         private static string _appleStatusPath;
-        /// <summary>Путь, найденный текущим опросом, — кладётся вместе со всем прочим.</summary>
-        private static string _pendingStatusPath;
         private static List<KeyboardInfo> _cache = new List<KeyboardInfo>();
 
         public static bool AppleConnected { get { return _appleConnected; } }
@@ -108,7 +106,8 @@ namespace MagicKeys
         /// <summary>Перечитать список клавиатур. Возвращает true, если наличие Apple-клавиатуры изменилось.</summary>
         public static bool Rescan()
         {
-            List<KeyboardInfo> found = Enumerate();
+            string statusPath;
+            List<KeyboardInfo> found = Enumerate(out statusPath);
             bool apple = false;
             AppleModel model = null;
             foreach (KeyboardInfo k in found)
@@ -134,15 +133,23 @@ namespace MagicKeys
                 _cache = found;
                 _appleModel = model;
                 _appleConnected = apple;
-                _appleStatusPath = _pendingStatusPath;
+                _appleStatusPath = statusPath;
                 _mark = mark;
             }
             return changed;
         }
 
-        private static List<KeyboardInfo> Enumerate()
+        /// <summary>
+        /// Перечислить клавиатуры. Путь для запроса заряда возвращается вместе
+        /// со списком, а не оседает в статике: опрос идут два потока сразу — сторож
+        /// перехвата и кнопка «Обновить», — и статикой один проход отдавал путь
+        /// другому. Заряд после этого спрашивался у только что отключённой клавиатуры
+        /// и объявлялся неизвестным при подключённой.
+        /// </summary>
+        private static List<KeyboardInfo> Enumerate(out string statusPath)
         {
             List<KeyboardInfo> result = new List<KeyboardInfo>();
+            statusPath = null;
             uint count = 0;
             uint stride = (uint)Marshal.SizeOf(typeof(Native.RAWINPUTDEVICELIST));
             if (Native.GetRawInputDeviceList(null, ref count, stride) == uint.MaxValue || count == 0) return result;
@@ -152,7 +159,6 @@ namespace MagicKeys
 
             // Заодно ищем вендорную коллекцию Apple «Device Management»: через неё
             // спрашивается заряд. Её путь — обычный путь интерфейса HID, его можно открыть.
-            string statusPath = null;
             for (int i = 0; i < count; i++)
             {
                 if (list[i].dwType != Native.RIM_TYPEHID) continue;
@@ -166,7 +172,6 @@ namespace MagicKeys
             // Под тем же замком, что и остальное: раньше это поле писалось отдельным
             // захватом, и два одновременных опроса могли оставить путь от одного прохода,
             // а список устройств от другого.
-            _pendingStatusPath = statusPath;
 
             for (int i = 0; i < count; i++)
             {

@@ -120,6 +120,9 @@ powershell -NoProfile -Command "$s = Get-AuthenticodeSignature '%ROOT%\MagicKeys
 if errorlevel 1 (
   echo Готово, НО ПАКЕТ НЕ ПОДПИСАН: %ROOT%\MagicKeys-%VERSION%-x64.msi
   echo Выкладывать такой нельзя — обновление его отвергнет.
+  rem И код возврата — тоже отказ: человеку сказали правду, а машина считала
+  rem сборку удачной.
+  exit /b 1
 ) else (
   echo Готово: %ROOT%\MagicKeys-%VERSION%-x64.msi
 )

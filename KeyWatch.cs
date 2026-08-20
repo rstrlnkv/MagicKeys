@@ -329,9 +329,17 @@ namespace MagicKeys
         /// </summary>
         private static void HandleHid(IntPtr device, IntPtr buf, int headerSize, int size)
         {
+            // Описание отчётов добываем ДО замка: запрос уходит в стек устройства,
+            // и при подключении по Bluetooth ответа можно ждать заметно. На этом же
+            // замке стоит поток окна — держать его на время чужого ответа значит
+            // замораживать окно на каждом пробуждении. Разбор — уже под замком: описание
+            // освобождается из другого потока, и без замка мы читали бы освобождённое.
+            IntPtr preparsed = Preparsed(device);
+            if (preparsed == IntPtr.Zero) return;
+
             var seen = new List<int>();
             var isNew = new List<bool>();
-            lock (Sync) CollectHid(device, buf, headerSize, size, seen, isNew);
+            lock (Sync) CollectHid(preparsed, buf, headerSize, size, seen, isNew);
 
             for (int i = 0; i < seen.Count; i++)
             {
@@ -346,12 +354,9 @@ namespace MagicKeys
             }
         }
 
-        private static void CollectHid(IntPtr device, IntPtr buf, int headerSize, int size,
+        private static void CollectHid(IntPtr preparsed, IntPtr buf, int headerSize, int size,
                                        List<int> seen, List<bool> isNew)
         {
-            IntPtr preparsed = Preparsed(device);
-            if (preparsed == IntPtr.Zero) return;
-
             int sizeHid = Marshal.ReadInt32(buf, headerSize);
             int count = Marshal.ReadInt32(buf, headerSize + 4);
             // Число отчётов и их размер приходят из ядра и должны быть согласованы

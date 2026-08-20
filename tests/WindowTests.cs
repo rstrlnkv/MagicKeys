@@ -35,7 +35,6 @@ namespace MagicKeys
             app.Resources.MergedDictionaries.Add(Theme.Initial());
 
             _s = new Settings();
-            _s.MakeCurrent();
             _eng = new Engine();
             _s.DeveloperMode = true;   // иначе половина страниц не собирается
             _win = new MainWindow(_s, _eng, delegate { _applied++; _eng.Apply(_s); });

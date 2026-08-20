@@ -120,11 +120,20 @@ namespace MagicKeys
                 Refresh(true);
                 return true;
             }
+            catch (System.ComponentModel.Win32Exception e)
+            {
+                // Отказ от повышения прав приходит сюда, и это 1223. Прежде человеку
+                // показывали текст исключения .NET — на чужом языке и не о том.
+                Diag.Log("драйвер Apple: не записать значение, код " + e.NativeErrorCode, e);
+                error = e.NativeErrorCode == 1223
+                    ? "Запрос прав администратора отклонён — ничего не изменилось."
+                    : "Windows не дала записать значение (код " + e.NativeErrorCode + ").";
+                return false;
+            }
             catch (Exception e)
             {
-                // Отказ от повышения прав приходит сюда же — это не поломка.
-                error = e.Message;
                 Diag.Log("драйвер Apple: не удалось записать OSXFnBehavior", e);
+                error = "Не удалось записать значение драйвера.";
                 return false;
             }
         }

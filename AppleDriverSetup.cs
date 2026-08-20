@@ -131,9 +131,14 @@ namespace MagicKeys
                 string signer;
                 if (!SignatureValid(msi, out signer) || !SignedBy7Zip(signer) || !RootedInMachineStore(msi))
                 {
+                    // Причин три, и называть надо ту, что случилась: раньше при несошедшейся
+                    // цепочке человек читал «подписан не тем, кем должен (Igor Pavlov)» —
+                    // прямую неправду, отправлявшую искать несуществующую подмену.
                     error = signer == null
                         ? "установщик 7-Zip не подписан — запускать его нельзя"
-                        : "установщик 7-Zip подписан не тем, кем должен (" + signer + ") — запускать его нельзя";
+                        : !SignedBy7Zip(signer)
+                            ? "установщик 7-Zip подписан не тем, кем должен (" + signer + ") — запускать его нельзя"
+                            : "подпись установщика 7-Zip не проверилась до конца — запускать его нельзя";
                     try { File.Delete(msi); } catch { }
                     try { File.Delete(StatePath(msi)); } catch { }
                     return null;
@@ -365,10 +370,12 @@ namespace MagicKeys
             tries.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"7-Zip\7z.exe"));
             tries.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"7-Zip\7z.exe"));
 
-            string path = Environment.GetEnvironmentVariable("PATH");
-            if (path != null)
-                foreach (string dir in path.Split(';'))
-                    if (dir.Length > 0) { try { tries.Add(Path.Combine(dir, "7z.exe")); } catch { } }
+            // PATH здесь не спрашиваем. У обычного пользователя в нём есть каталоги,
+            // доступные ему на запись, а именно 7z.exe решает, какое дерево окажется
+            // распаковано и какой .inf уйдёт в pnputil с правами администратора. Это
+            // единственный внешний исполняемый файл в цепочке, не проверяемый ничем,
+            // — а своя копия и запись в реестре стоят выше, так что отказ от PATH
+            // почти ничего не стоит.
 
             foreach (string t in tries)
                 try { if (File.Exists(t)) return t; } catch { }
@@ -592,9 +599,21 @@ namespace MagicKeys
                 }
                 }
 
+                // Оборванная закачка — не удача. Без этой проверки обрыв на середине
+                // объявлялся успехом, распаковка потом не находила драйвера, и человек
+                // читал «7-Zip не смог распаковать пакет» — то есть вину переложили
+                // на Apple. Хуже того, состоянию с чужой длиной верили, и докачка
+                // отключалась: следующий раз качал семьсот мегабайт заново.
+                long got = new FileInfo(target).Length;
+                if (total > 0 && got != total)
+                {
+                    error = "связь оборвалась: скачано " + Mb(got) + " из " + Mb(total);
+                    return false;
+                }
+
                 // Сумму записываем только теперь, когда файл целиком наш.
                 report(1, "проверяю скачанное…");
-                try { WriteState(target, url, new FileInfo(target).Length, Sha256Of(target, null)); }
+                try { WriteState(target, url, got, Sha256Of(target, null)); }
                 catch { }
                 return true;
             }
@@ -633,7 +652,7 @@ namespace MagicKeys
                         string outDir = Path.Combine(workFolder, "l" + level + "_" +
                             Path.GetFileNameWithoutExtension(archive));
                         report(0, "распаковка: " + Path.GetFileName(archive));
-                        if (!Run7z(sevenZip, "x -y -o\"" + outDir + "\" \"" + archive + "\"", out error)) continue;
+                        if (!Run7z(sevenZip, "x -y -o\"" + outDir + "\" -- \"" + archive + "\"", out error)) continue;
 
                         string inf = FindInf(outDir);
                         if (inf != null) return inf;
@@ -668,11 +687,29 @@ namespace MagicKeys
                 psi.RedirectStandardError = true;
                 using (Process p = Process.Start(psi))
                 {
+                    // Один поток читаем по событию, второй — целиком. Читать оба подряд
+                    // нельзя: пока мы стоим на выводе, 7-Zip заполняет буфер ошибок
+                    // (несколько килобайт) и встаёт — а он сыплет по строке на файл,
+                    // когда архив чужой или битый. Распаковка висла навсегда, страница
+                    // оставалась на «Распаковываю…», и повторить было нельзя до
+                    // перезапуска программы.
+                    var errText = new StringBuilder();
+                    p.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e)
+                    {
+                        if (e.Data != null) lock (errText) errText.AppendLine(e.Data);
+                    };
+                    p.BeginErrorReadLine();
                     string so = p.StandardOutput.ReadToEnd();
-                    string se = p.StandardError.ReadToEnd();
-                    p.WaitForExit();
+                    if (!p.WaitForExit(600000))
+                    {
+                        try { p.Kill(); } catch { }
+                        error = "распаковка не уложилась в срок";
+                        return false;
+                    }
                     if (p.ExitCode > 1)
                     {
+                        string se;
+                        lock (errText) se = errText.ToString();
                         Diag.Log("7-Zip вернул " + p.ExitCode + ": " + se + so);
                         error = "7-Zip не смог распаковать пакет";
                         return false;
@@ -717,7 +754,15 @@ namespace MagicKeys
         public static bool Install(string inf, out string output)
         {
             using (FileStream keep = Open(inf))
+            {
+                if (keep == null)
+                {
+                    // Без удержания заслон исчезал молча — а он здесь единственный наш.
+                    output = "Файл драйвера занят другой программой.";
+                    return false;
+                }
                 return Pnputil("/add-driver \"" + inf + "\" /install", out output);
+            }
         }
 
         /// <summary>
@@ -818,10 +863,21 @@ namespace MagicKeys
                     return Verdict(p.ExitCode, out output);
                 }
             }
+            catch (System.ComponentModel.Win32Exception e)
+            {
+                // Отказ от повышения прав — это 1223, и только он. Раньше сюда сводили
+                // всё подряд, и человек читал «запрос прав отклонён» при любой поломке,
+                // уверенный, что в системе ничего не изменилось.
+                Diag.Log("pnputil не запустился, код " + e.NativeErrorCode, e);
+                output = e.NativeErrorCode == 1223
+                    ? "Запрос прав администратора отклонён."
+                    : "Не удалось запустить установщик драйверов Windows (код " + e.NativeErrorCode + ").";
+                return false;
+            }
             catch (Exception e)
             {
                 Diag.Log("pnputil не запустился", e);
-                output = "Запрос прав администратора отклонён.";
+                output = "Не удалось запустить установщик драйверов Windows.";
                 return false;
             }
         }

@@ -61,7 +61,6 @@ namespace MagicKeys
             Resources.MergedDictionaries.Add(Theme.Initial());
 
             _settings = Settings.Load();
-            _settings.MakeCurrent();
             // Ключ включает режим на этот запуск, а первый же Save() от любой галочки
             // делал его постоянным. Человек просил на один раз — в файл он не идёт.
             if (dev && !_settings.DeveloperMode) { _settings.DeveloperMode = true; _devOnce = true; }
@@ -315,7 +314,9 @@ namespace MagicKeys
 
                 _settings.FKeys = Models.DefaultFKeys(m.Gen);
                 _settings.FKeysGen = m.Gen;
-                _settings.Save();
+                // Через общий путь, а не Save() напрямую: только он знает, чего не надо
+                // уносить в файл — например, режим разработчика, включённый ключом.
+                ApplyAndSave();
                 Diag.Log("подставлены заводские назначения: " + Models.GenName(m.Gen));
                 return true;
             }

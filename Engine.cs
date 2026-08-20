@@ -48,7 +48,15 @@ namespace MagicKeys
         // клавише этого не видно: у пришедших с мака control обычно висит на Caps Lock.
         private readonly HashSet<ModKey> _ctrlSources = new HashSet<ModKey>();
         private readonly HashSet<ModKey> _winSources = new HashSet<ModKey>();
-        private bool _capsHeld;
+        /// <summary>Чьи нажатия взял на себя разбор модификаторов.</summary>
+        private readonly HashSet<ModKey> _modTaken = new HashSet<ModKey>();
+
+        /// <summary>
+        /// Какие физические клавиши держат Caps Lock. Множество, а не флаг: назначить
+        /// Caps Lock можно сразу нескольким, и тогда флаг гас на отпускании первой —
+        /// а Windows индикатор уже переключила, и раскладка печатала не тем регистром.
+        /// </summary>
+        private readonly HashSet<ModKey> _capsSources = new HashSet<ModKey>();
 
         // Чьё нажатие взял на себя слой аккордов и что по нему сработало: сочетания
         // macOS, ⌘+Tab (значение null — у него своя посылка), ⌘+пробел и промах мимо
@@ -60,6 +68,14 @@ namespace MagicKeys
         // и проглатывалось. Стрелка оставалась зажатой навсегда — снять её нечем,
         // человек её уже отпустил. Тем же путём залипали буква после ⌘, Tab и пробел.
         private readonly Dictionary<int, MacShortcut> _chordTaken = new Dictionary<int, MacShortcut>();
+
+        /// <summary>
+        /// Метка «это ⌘+Tab»: у него посылка своя, не из таблицы. Раньше и он, и промах
+        /// мимо таблицы клали в отображение null — и автоповтор проглоченной ⌘-клавиши
+        /// отправлял Tab при зажатой клавише Windows, то есть открывал «Представление
+        /// задач» столько раз, сколько пришло повторов.
+        /// </summary>
+        private static readonly MacShortcut CmdTab = new MacShortcut();
 
         // Что мы держим за человека помимо модификаторов: действие на одиночной клавише
         // и подставленный скан-код перестановки ISO. Без учёта их некому отпустить.
@@ -446,8 +462,11 @@ namespace MagicKeys
                 // И только первое нажатие: автоповтор Windows переключателем не считает,
                 // а мы перевернули бы флаг столько раз, сколько пришло повторов.
                 bool toCaps = TargetFor(s, phys) == ModKey.CapsLock;
-                if (toCaps && down && !_capsHeld) _capsOn = !_capsOn;
-                if (toCaps) _capsHeld = down;
+                if (toCaps)
+                {
+                    if (down) { if (_capsSources.Add(phys)) _capsOn = !_capsOn; }
+                    else _capsSources.Remove(phys);
+                }
                 return HandleModifier(s, phys, down);
             }
 
@@ -476,8 +495,8 @@ namespace MagicKeys
                 if (!down) { _chordTaken.Remove(vk); return true; }
                 // Повторяем только то, что объявило о себе, что умеет повторяться:
                 // ⌘Q, зажатая на полсекунды, не должна закрывать окно за окном.
-                if (taken == null) Input.Tap(Vk.Tab);          // ⌘+Tab листает дальше
-                else if (taken.Repeats) MacSend(taken);
+                if (taken == CmdTab) Input.Tap(Vk.Tab);        // ⌘+Tab листает дальше
+                else if (taken != null && taken.Repeats) MacSend(taken);
                 return true;
             }
 
@@ -485,7 +504,7 @@ namespace MagicKeys
             if (s.CmdTabSwitchesWindows && vk == Vk.Tab && CmdHeld && !Busy(vk, k.scanCode))
             {
                 if (!down) return false;   // нажатия не брали — и отпускание не наше
-                _chordTaken[vk] = null;
+                _chordTaken[vk] = CmdTab;
                 {
                     if (!_cmdTabAlt)
                     {
@@ -510,10 +529,15 @@ namespace MagicKeys
             if (s.MacShortcuts)
             {
                 MacMod mm = MacMod.None;
+                // Control и ⇧ спрашиваем у множеств «что видит Windows», а не у флагов
+                // физических клавиш. У пришедших с мака control обычно висит на Caps Lock,
+                // и по флагам он не считался вовсе: ⌃Space не работал совсем, ⌃⌘Q не
+                // опознавалось, а ⌘← давало Ctrl+Home вместо Home — прыжок в начало
+                // документа вместо начала строки.
                 if (CmdHeld) mm |= MacMod.Cmd;
                 if (_altLeft || _altRight) mm |= MacMod.Opt;
                 if (ShiftDown) mm |= MacMod.Shift;
-                if (CtrlDown && !_phantomCtrl) mm |= MacMod.Ctrl;
+                if ((CtrlDown || _ctrlSources.Count > 0) && !_phantomCtrl) mm |= MacMod.Ctrl;
 
                 // Пробел разбирается отдельно: у ⌘Space и ⌃Space роль задаёт человек.
                 if (vk == Vk.Space && (mm == MacMod.Cmd || mm == MacMod.Ctrl))
@@ -698,6 +722,12 @@ namespace MagicKeys
         /// <summary>-1 — не наше дело; 0 — пропустить; 1 — проглотить.</summary>
         private int HandleLayout(Settings s, Native.KBDLLHOOKSTRUCT k, bool down)
         {
+            // Расширенные клавиши сюда не пускаем. Разбор идёт по голому скан-коду,
+            // а «/» цифрового блока приходит тем же 0x35, что и «/» основного: на
+            // французской раскладке нажатие на блоке печатало «=». Заодно два разных
+            // нажатия делили одну запись в _swallowed.
+            if ((k.flags & Native.LLKHF_EXTENDED) != 0) return -1;
+
             // Отпускание съеденного снимается всегда и раньше всего: куда ушло нажатие,
             // туда же обязано уйти отпускание. Раньше два выхода ниже — «раскладки для
             // языка нет» и «Alt не как третий уровень» — уходили мимо этой строки,
@@ -756,6 +786,12 @@ namespace MagicKeys
             }
 
             if (!down) return -1;
+
+            // Клавишу, которую уже держит другой слой, не берём. Прямое направление
+            // раньше не спрашивало ничего: перестановка ISO брала нажатие, а автоповтор
+            // при нажатом ⇧ отбирала раскладка — и подставленный скан-код оставался
+            // зажатым навсегда, потому что снять его было уже некому.
+            if (!_swallowed.Contains(k.scanCode) && Busy((int)k.vkCode, k.scanCode)) return -1;
 
             string text = key.Text(ShiftDown, optWanted);
             if (text == null) return -1;
@@ -904,6 +940,12 @@ namespace MagicKeys
             // Снять его после этого было нечем: физическую клавишу человек уже отпустил.
             if (!down)
             {
+                // Отпускание клавиши, нажатия которой мы не брали, — не наше дело.
+                // Раньше здесь глотали всегда: достаточно было сменить назначение,
+                // пока клавишу держат, — настоящее нажатие уже ушло в Windows, а её
+                // отпускание мы съедали, и клавиша оставалась зажатой навсегда.
+                if (!_modTaken.Remove(phys)) return false;
+
                 int had;
                 if (_injected.TryGetValue(phys, out had))
                 {
@@ -912,6 +954,8 @@ namespace MagicKeys
                 }
                 return true;
             }
+
+            _modTaken.Add(phys);
 
             if (target == ModKey.None) return true;
 
@@ -1272,7 +1316,8 @@ namespace MagicKeys
                 _swallowed.Clear();
                 _ctrlSources.Clear();
                 _winSources.Clear();
-                _capsHeld = false;
+                _capsSources.Clear();
+                _modTaken.Clear();
 
                 // Отпускаем то, что держим ЗА человека, а не только модификаторы.
                 // Синтетическая Home от Fn+← — такая же зажатая клавиша, и снять её

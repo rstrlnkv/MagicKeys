@@ -513,17 +513,6 @@ namespace MagicKeys
         [DllImport("user32.dll")]
         public static extern int GetMessageW(out MSG msg, IntPtr hwnd, uint min, uint max);
 
-        [StructLayout(LayoutKind.Sequential)]
-        public struct LASTINPUTINFO
-        {
-            public uint cbSize;
-            public uint dwTime;
-        }
-
-        /// <summary>Когда в системе в последний раз что-то вводили — любым устройством.</summary>
-        [DllImport("user32.dll")]
-        public static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
-
         [DllImport("kernel32.dll")]
         public static extern uint GetTickCount();
 

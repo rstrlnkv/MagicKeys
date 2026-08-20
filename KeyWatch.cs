@@ -78,6 +78,20 @@ namespace MagicKeys
         /// </summary>
         public static bool MediaSeen { get { return _mediaSeen; } }
 
+        private static volatile uint _lastKeyTick;
+
+        /// <summary>
+        /// Когда сырой ввод в последний раз видел нажатие на клавиатуре. Ноль — если
+        /// не видел ни разу или перепись не запустилась.
+        ///
+        /// Нужно перехвату, чтобы понять, жив ли он. Спросить об этом Windows нельзя,
+        /// а GetLastInputInfo считает и мышь — по нему выходило, что перехват «умер»,
+        /// стоит человеку пять секунд поводить мышью. Сырой ввод видит те же самые
+        /// клавиатуры и приходит ЗАВСЕГДА позже хука (замерено), поэтому «сырой ввод
+        /// был, а хук молчал» — признак настоящий, а не выдуманный.
+        /// </summary>
+        public static uint LastKeyTick { get { return _lastKeyTick; } }
+
         /// <summary>Приходил ли когда-нибудь такой код медиастраницы.</summary>
         public static bool SeenUsage(int usage)
         {
@@ -202,6 +216,12 @@ namespace MagicKeys
             {
                 if (Native.GetRawInputData(rawHandle, Native.RID_INPUT, buf, ref size, (uint)headerSize) != size) return;
                 var header = (Native.RAWINPUTHEADER)Marshal.PtrToStructure(buf, typeof(Native.RAWINPUTHEADER));
+
+                // Отметку ставим ДО отбора по устройству: перехват действует на весь
+                // ввод, значит и признак его живости должен считать весь ввод, а не
+                // только с клавиатур Apple.
+                if (header.dwType == Native.RIM_TYPEKEYBOARD) _lastKeyTick = Native.GetTickCount();
+
                 if (!FromApple(header.hDevice)) return;
 
                 if (header.dwType == Native.RIM_TYPEKEYBOARD)

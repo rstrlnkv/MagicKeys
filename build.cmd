@@ -15,7 +15,7 @@ set WPF=%NETDIR%\WPF
   /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Management.dll ^
   /r:"%NETDIR%\System.Xaml.dll" ^
   /r:"%WPF%\WindowsBase.dll" /r:"%WPF%\PresentationCore.dll" /r:"%WPF%\PresentationFramework.dll" ^
-  "%~dp0Diag.cs" "%~dp0Iconography.cs" "%~dp0Native.cs" "%~dp0Models.cs" "%~dp0AppleDriver.cs" "%~dp0AppleDriverSetup.cs" "%~dp0KeyWatch.cs" "%~dp0KeyboardBattery.cs" "%~dp0AppleLayout.cs" "%~dp0Input.cs" "%~dp0MacKeys.cs" "%~dp0Actions.cs" "%~dp0Brightness.cs" ^
+  "%~dp0BuildInfo.cs" "%~dp0Diag.cs" "%~dp0Iconography.cs" "%~dp0Native.cs" "%~dp0Models.cs" "%~dp0AppleDriver.cs" "%~dp0AppleDriverSetup.cs" "%~dp0KeyWatch.cs" "%~dp0KeyboardBattery.cs" "%~dp0AppleLayout.cs" "%~dp0Input.cs" "%~dp0MacKeys.cs" "%~dp0Actions.cs" "%~dp0Brightness.cs" ^
   "%~dp0Settings.cs" "%~dp0Devices.cs" "%~dp0Engine.cs" ^
   "%~dp0Theme.cs" "%~dp0Fluent.cs" "%~dp0Osd.cs" "%~dp0MainWindow.cs" "%~dp0App.cs"
 

@@ -336,22 +336,18 @@ namespace MagicKeys
 
             stack.Children.Add(Card("Заменитель Fn", null,
                 Row("Клавиша", "С ней режим временно переворачивается", fnBox),
-                Toggle("Навигация как в macOS: Fn+стрелки — Home, End, PgUp, PgDn; Fn+Backspace — Delete; Fn+Enter — Insert",
+                Toggle("Навигация как в macOS: Fn+↑↓ — PgUp и PgDn, Fn+Enter — Insert",
                     _s.FnNavigation, delegate(bool v) { _s.FnNavigation = v; Save(); }),
+                _s.FnNavigation && _s.MacShortcuts && (_s.FnSubstitute == ModKey.RAlt || _s.FnSubstitute == ModKey.LAlt)
+                    ? (UIElement)Note("Fn+←/→ и Fn+Backspace достаются сочетаниям macOS: там " +
+                                      "⌥ ходит по словам. Начало и конец строки — на ⌘←/→.")
+                    : new StackPanel { Visibility = Visibility.Collapsed },
                 Note(AppleDriver.TakesFunctionRow
-                    ? "С родным драйвером Apple настоящая клавиша Fn работает: замерено, что Fn+F1 " +
-                      "даёт настоящий F1. Заменитель при этом не нужен — его можно оставить " +
-                      "выключенным, а переключать режим ряда настоящей клавишей Fn.\n\n" +
-                      "Навигацию Fn+стрелки драйвер, по-видимому, берёт на себя тоже — проверьте " +
-                      "Fn+←, — так что и её здесь " +
-                      "включать не обязательно."
-                    : "Без драйвера Apple настоящая клавиша Fn до Windows не доходит: она " +
-                      "обрабатывается внутри клавиатуры и не отправляет ни одного события. " +
-                      "Проверено — нажатие Fn не даёт ничего, а Fn+F1 приходит как обычный F1. " +
-                      "Поэтому нужен заменитель.\n\n" +
-                      "Заменитель сохраняет своё обычное значение. Если он нужен только как Fn, " +
-                      "отключите эту клавишу на вкладке «Модификаторы» — переключение режима " +
-                      "продолжит работать.")));
+                    ? "С драйвером Apple настоящая Fn работает, и заменитель не нужен."
+                    : "Magic Keyboard не отправляет Fn в Windows — её обрабатывает сама " +
+                      "клавиатура. Поэтому нужна замена. Выбранная клавиша сохраняет своё " +
+                      "обычное значение; если она нужна только как Fn, выключите её " +
+                      "на странице «Модификаторы».")));
 
             string[] legends = Models.Legend(Generation);
             int fcount = Models.FunctionKeyCount();
@@ -419,7 +415,7 @@ namespace MagicKeys
             if (fm != null && fm.FunctionKeys > 12)
                 howMany += "У этой модели есть ряд F13–F" + fm.FunctionKeys + " над цифровым блоком. ";
             howMany += "Если нажать клавишу, которой в списке нет, она добавится сама — " +
-                       "программа следит за этим сама, " +
+                       "программа считает нажатия по сырому вводу и знает, с какой они клавиатуры, " +
                        "знает устройство.";
 
             stack.Children.Add(Card("Действия",
@@ -489,18 +485,12 @@ namespace MagicKeys
                 Toggle("Подхватывать коды яркости от чужого драйвера",
                     _s.BrightnessFromMediaKeys,
                     delegate(bool v) { _s.BrightnessFromMediaKeys = v; Save(); }),
-                Note("Яркостью внешнего монитора программа управляет по служебному каналу самого кабеля, " +
-                     "встроенной панелью ноутбука — средствами Windows. Если монитор такого " +
-                     "управления не поддерживает, эти клавиши ничего не сделают — тогда назначьте " +
-                     "на F1 и F2 что-нибудь другое.\n\n" +
-                     "Вторая настройка нужна, когда функциональным рядом занимается чужой драйвер. " +
-                     "Тогда F1 и F2 до программы не доходят: они переводятся сразу в коды яркости " +
-                     "медиастраницы. Windows применяет такие коды только к встроенной панели " +
-                     "ноутбука, и на обычном ПК они пропадают зря — а программа ловит их и " +
-                     "применяет к внешним мониторам.\n\n" +
-                     "С драйвером Apple это не выручит: замерено, что F1 и F2 он съедает и не " +
-                     "присылает ничего. Яркость внешних мониторов с ним доступна только в режиме " +
-                     "«F-клавиши сразу» на странице «Драйвер Apple».")));
+                Note("Меняется яркость того монитора, на котором стоит указатель. Если монитор " +
+                     "не поддерживает управление яркостью, эти клавиши ничего не сделают — " +
+                     "назначьте на F1 и F2 что-нибудь другое.\n\n" +
+                     "Вторая настройка нужна, только если функциональным рядом занят чужой " +
+                     "драйвер: тогда программа ловит его коды яркости и применяет их к внешним " +
+                     "мониторам.")));
 
             return stack;
         }
@@ -588,7 +578,9 @@ namespace MagicKeys
             }, _s.Physical, delegate(object v) { _s.Physical = (PhysLayout)v; Save(); BuildPage(); });
 
             AppleModel model = Devices.AppleModel;
-            string physNote = "Сейчас программа считает клавиатуру: " + Models.PhysName(phys) + ".\n";
+            string physNote = "Сейчас программа считает клавиатуру: " + Models.PhysName(phys) +
+                              (KeyWatch.MaxFunctionKey == 0 && Devices.AppleModel == null
+                                  ? " (по умолчанию — нажатий ещё не было)" : "") + ".\n";
             if (model != null && model.Phys != PhysLayout.Auto)
                 physNote += "Исполнение закодировано в идентификаторе модели — " + Models.PhysName(model.Phys) + ".";
             else
@@ -914,10 +906,8 @@ namespace MagicKeys
                     delegate(object v) { _s.CmdSpace = (string)v; Save(); })),
                 Row("control + пробел", null, Combo(spaceChoices, _s.CtrlSpace,
                     delegate(object v) { _s.CtrlSpace = (string)v; Save(); })),
-                Note("У одних ⌘Space открывает поиск, у других переключает язык, а поиск " +
-                     "висит на ⌃Space. Навязывать один вариант неправильно.\n\n" +
-                     "Учтите: Win+Space — это переключатель языка самой Windows, он листает " +
-                     "раскладки по кругу.")));
+                Note("Привычки расходятся: у одних ⌘Space открывает поиск, у других переключает " +
+                     "язык. Переключение языка отдаётся Win+Space — своему переключателю Windows.")));
 
             string[] groups = { MacKeys.GroupEdit, MacKeys.GroupText, MacKeys.GroupSystem };
             string[] hints =
@@ -1175,19 +1165,10 @@ namespace MagicKeys
                 }
 
                 stack.Children.Add(Card("Кто занимается функциональным рядом", null,
-                    Note("Замерено на этой машине с работающим драйвером. При OSXFnBehavior = 1 " +
-                         "нажатие F8 приходит уже готовым медиакодом «пуск/пауза», F12 — «громче», " +
-                         "и оба помечены как подставленные: до перехвата MagicKeys они не доходят " +
-                         "вовсе. Fn при этом наконец работает — Fn+F1 даёт настоящий F1, чего без " +
-                         "драйвера добиться было нельзя.\n\n" +
-                         "А вот F1 и F2 не дают ничего — и теряет их не Windows, а сам драйвер: " +
-                         "коллекция, через которую он выдаёт медиакоды, при нажатии F1 молчит, " +
-                         "хотя коды яркости в ней предусмотрены. Похоже, драйвер рассчитан " +
-                         "на экран мака и на обычном ПК просто не находит, чему их адресовать.\n\n" +
-                         "Отсюда и выбор. Нужна яркость внешних мониторов — берите второй режим: " +
-                         "MagicKeys умеет её по DDC/CI, а драйвер нет. Хватает медиаклавиш — первый " +
-                         "честнее, потому что драйвер привязан к самой клавиатуре, а перехват " +
-                         "действует на весь ввод сразу."),
+                    Note("Выбор между двумя вещами, которые вместе не получаются. Драйвер даёт " +
+                         "медиаклавиши и настоящую Fn, но забирает F1 и F2 себе и никому их " +
+                         "не отдаёт — яркости внешних мониторов с ним не будет. MagicKeys яркость " +
+                         "умеет, но действует на весь ввод, а не только на клавиатуру Apple."),
                     modes));
             }
 
@@ -1352,10 +1333,7 @@ namespace MagicKeys
                 Bullet("Поведение Fn у драйвера переворачивается значением OSXFnBehavior в его ветке " +
                        "реестра: 1 — медиа сразу, 0 — наоборот. Настройка чужая, поэтому программа " +
                        "меняет её только по нажатию кнопки выше и только с правами администратора: " +
-                       "их спросит Windows."),
-                Note("Проверено на этой машине: сейчас службы KeyMagic2 нет. Из следов Apple найдены " +
-                     "только AppleLowerFilter и AppleSSD — они от другого программного обеспечения " +
-                     "и к клавиатуре отношения не имеют.")));
+                       "их спросит Windows.")));
 
             return stack;
         }
@@ -1466,18 +1444,87 @@ namespace MagicKeys
             _setupThread.Start();
         }
 
+        /// <summary>
+        /// О программе. Склад тот же, что у соседних программ: крупный значок, название,
+        /// одна строка о том, что это, три числа, автор, ссылка на исходники и подвал.
+        ///
+        /// Здесь нарочно нет ни перечня возможностей, ни объяснения лицензии. Человек
+        /// заходит сюда за версией и за тем, куда написать, — а не читать про программу,
+        /// которая у него уже установлена.
+        /// </summary>
         private UIElement PageAbout()
         {
-            var stack = new StackPanel();
+            var column = new StackPanel
+            {
+                // Ширина, а не MaxWidth: иначе колонка сжимается по содержимому и карточки
+                // перестают быть карточками — их края совпадают с краями текста.
+                Width = 420,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 8, 0, 24)
+            };
 
-            Border about = Card("MagicKeys", "Версия 1.0",
-                Note("Свободная программа: её можно использовать, изучать, изменять и передавать " +
-                     "дальше на условиях GNU General Public License версии 3 или любой более поздней. " +
-                     "Программа распространяется без всяких гарантий. Текст лицензии — в файле LICENSE " +
-                     "рядом с программой."));
-            // Пять щелчков по этой карточке включают режим разработчика — приём старый
-            // и намеренно неочевидный: обычному человеку эти настройки только мешают.
-            about.MouseLeftButtonUp += delegate
+            column.Children.Add(AboutMark());
+            column.Children.Add(AboutName());
+            column.Children.Add(AboutTagline());
+            column.Children.Add(AboutNumbers());
+            column.Children.Add(AboutAuthor());
+            column.Children.Add(AboutButtons());
+            column.Children.Add(AboutFooter());
+
+            if (_s.DeveloperMode)
+                column.Children.Add(Card("Режим разработчика", "Включён",
+                    Toggle("Показывать служебные страницы и настройки", _s.DeveloperMode,
+                        delegate(bool v) { _s.DeveloperMode = v; Save(); FillNav(); BuildPage(); }),
+                    Note("Открывает «Устройства» и «Проверку клавиш», а на остальных страницах — " +
+                         "исполнение клавиатуры, японские клавиши и номера языков ввода.")));
+
+            return column;
+        }
+
+        /// <summary>Значок берётся из самой программы: там он многоразмерный и потому чёткий.</summary>
+        private static UIElement AboutMark()
+        {
+            var image = new System.Windows.Controls.Image
+            {
+                Width = 96,
+                Height = 96,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 0, 0, 16)
+            };
+            try
+            {
+                IntPtr icon = Native.LoadImageW(Native.GetModuleHandleW(null), "#32512",
+                                                Native.IMAGE_ICON, 256, 256, 0);
+                if (icon != IntPtr.Zero)
+                {
+                    try
+                    {
+                        image.Source = System.Windows.Interop.Imaging.CreateBitmapSourceFromHIcon(
+                            icon, Int32Rect.Empty,
+                            System.Windows.Media.Imaging.BitmapSizeOptions.FromEmptyOptions());
+                    }
+                    finally { Native.DestroyIcon(icon); }
+                }
+            }
+            catch { /* без значка страница всё равно читается */ }
+            return image;
+        }
+
+        /// <summary>Название. Пять щелчков по нему включают режим разработчика.</summary>
+        private UIElement AboutName()
+        {
+            var name = new TextBlock
+            {
+                Text = "MagicKeys",
+                FontSize = 34,
+                FontWeight = FontWeights.SemiBold,
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            name.SetResourceReference(TextBlock.FontFamilyProperty, "UiFontDisplay");
+
+            // Приём старый и намеренно неочевидный: обычному человеку служебные
+            // страницы только мешают, а тому, кто их ищет, подсказка не нужна.
+            name.MouseLeftButtonUp += delegate
             {
                 if (++_aboutClicks < 5) return;
                 _aboutClicks = 0;
@@ -1486,40 +1533,139 @@ namespace MagicKeys
                 FillNav();
                 BuildPage();
             };
-            stack.Children.Add(about);
+            return name;
+        }
 
-            stack.Children.Add(Card("Что она делает", null,
-                Bullet("Возвращает F1–F12 те функции, что напечатаны на клавишах Apple: яркость, " +
-                       "громкость, управление воспроизведением."),
-                Bullet("Переставляет модификаторы, чтобы ⌘ работала как Ctrl (или наоборот — чтобы " +
-                       "Ctrl, Win и Alt встали на привычные для Windows места)."),
-                Bullet("Исправляет перестановку двух клавиш ISO-раскладки Apple."),
-                Bullet("Управляет яркостью внешних мониторов — сама Windows этого не умеет.")));
-
-            stack.Children.Add(Card("Чего она не делает", null,
-                Bullet("Не видит клавишу Fn сама: Magic Keyboard её в Windows не отправляет. " +
-                       "Fn работает только с установленным драйвером Apple."),
-                Bullet("Не различает клавиатуры: низкоуровневый перехват в Windows не сообщает " +
-                       "устройство, поэтому правила действуют на весь ввод."),
-                Bullet("Не видит клавишу Eject (извлечение, верхний правый угол): она обрабатывается " +
-                       "внутри клавиатуры и наружу не выходит ни по одному каналу — проверено."),
-                Bullet("Ничего не меняет в системе без спроса: только свой файл настроек и, " +
-                       "по желанию, запись автозапуска. Драйвер Apple ставится отдельной кнопкой.")));
-
-            if (_s.DeveloperMode)
+        private static UIElement AboutTagline()
+        {
+            var t = new TextBlock
             {
-                stack.Children.Add(Card("Режим разработчика", "Включён",
-                    Toggle("Показывать служебные страницы и настройки", _s.DeveloperMode,
-                        delegate(bool v) { _s.DeveloperMode = v; Save(); FillNav(); BuildPage(); }),
-                    Note("Открывает «Устройства» и «Проверку клавиш», а на остальных страницах — " +
-                         "исполнение клавиатуры, японские клавиши, третий уровень раскладки, " +
-                         "подмену всех клавиш и номера языков ввода.\n\n" +
-                         "Журнал сюда не относится: он пишется только при запуске с ключом --log.\n\n" +
-                         "Включается пятью щелчками по карточке с названием программы или ключом " +
-                         "--dev при запуске.")));
-            }
+                Text = "Клавиатуры Apple в Windows 11",
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 4, 0, 18)
+            };
+            t.SetResourceReference(StyleProperty, "Caption");
+            return t;
+        }
 
-            return stack;
+        /// <summary>Три числа в строку: версия, сборка, сколько раскладок.</summary>
+        private static UIElement AboutNumbers()
+        {
+            var grid = new Grid();
+            for (int i = 0; i < 3; i++)
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+            int layouts = 0;
+            try { layouts = Layouts.All.Count; } catch { }
+
+            AboutNumber(grid, 0, BuildInfo.Version, "ВЕРСИЯ");
+            AboutNumber(grid, 1, BuildInfo.Number, "СБОРКА");
+            AboutNumber(grid, 2, layouts.ToString(), "РАСКЛАДКИ");
+
+            return new Border
+            {
+                Style = (Style)Application.Current.Resources["Card"],
+                Padding = new Thickness(18, 16, 18, 16),
+                Margin = new Thickness(0, 0, 0, 12),
+                Child = grid
+            };
+        }
+
+        private static void AboutNumber(Grid grid, int column, string value, string caption)
+        {
+            var box = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center };
+
+            box.Children.Add(new TextBlock
+            {
+                Text = value,
+                FontSize = 22,
+                FontWeight = FontWeights.SemiBold,
+                HorizontalAlignment = HorizontalAlignment.Center
+            });
+
+            var small = new TextBlock
+            {
+                Text = caption,
+                FontSize = 10,
+                Margin = new Thickness(0, 3, 0, 0),
+                HorizontalAlignment = HorizontalAlignment.Center
+            };
+            small.SetResourceReference(TextBlock.ForegroundProperty, "TextTer");
+            box.Children.Add(small);
+
+            Grid.SetColumn(box, column);
+            grid.Children.Add(box);
+        }
+
+        private static UIElement AboutAuthor()
+        {
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition());
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+            grid.Children.Add(new TextBlock { Text = "Автор", VerticalAlignment = VerticalAlignment.Center });
+
+            var right = new StackPanel { Orientation = Orientation.Horizontal };
+            Grid.SetColumn(right, 1);
+
+            var who = new TextBlock
+            {
+                Text = "Ростислав Стрельников",
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            who.SetResourceReference(TextBlock.ForegroundProperty, "TextSec");
+            right.Children.Add(who);
+
+            UIElement link = AboutLink("@r_strlnkv", "https://t.me/r_strlnkv");
+            ((FrameworkElement)link).Margin = new Thickness(10, 0, 0, 0);
+            right.Children.Add(link);
+
+            grid.Children.Add(right);
+
+            return new Border
+            {
+                Style = (Style)Application.Current.Resources["Card"],
+                Padding = new Thickness(18, 14, 18, 14),
+                Margin = new Thickness(0, 0, 0, 12),
+                Child = grid
+            };
+        }
+
+        private static UIElement AboutLink(string text, string url)
+        {
+            var b = new Button { Content = text, Cursor = System.Windows.Input.Cursors.Hand };
+            b.SetResourceReference(StyleProperty, "Btn");
+            b.Padding = new Thickness(10, 2, 10, 3);
+            b.Click += delegate { AboutOpen(url); };
+            return b;
+        }
+
+        private static void AboutOpen(string url)
+        {
+            try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+            catch (Exception e) { Diag.Log("не удалось открыть ссылку", e); }
+        }
+
+        private static UIElement AboutButtons()
+        {
+            var b = new Button { Content = "Исходный код на GitHub", Height = 38 };
+            b.SetResourceReference(StyleProperty, "Btn");
+            b.Margin = new Thickness(0, 0, 0, 12);
+            b.Click += delegate { AboutOpen("https://github.com/rstrlnkv/MagicKey"); };
+            return b;
+        }
+
+        private static UIElement AboutFooter()
+        {
+            var t = new TextBlock
+            {
+                Text = "© 2026 MagicKeys · GPL-3.0",
+                HorizontalAlignment = HorizontalAlignment.Center,
+                Margin = new Thickness(0, 6, 0, 0),
+                FontSize = 11
+            };
+            t.SetResourceReference(TextBlock.ForegroundProperty, "TextTer");
+            return t;
         }
 
         // ------------------------------------------------------------------

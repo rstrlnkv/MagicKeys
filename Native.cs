@@ -494,6 +494,12 @@ namespace MagicKeys
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
         public static extern IntPtr GetModuleHandleW(string name);
 
+        /// <summary>Значок из ресурсов самой программы — отдельный файл для этого не нужен.</summary>
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern IntPtr LoadImageW(IntPtr instance, string name, uint type,
+                                               int cx, int cy, uint flags);
+        public const uint IMAGE_ICON = 1;
+
         [DllImport("kernel32.dll")]
         public static extern uint GetCurrentThreadId();
 

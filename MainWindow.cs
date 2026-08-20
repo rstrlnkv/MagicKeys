@@ -568,7 +568,7 @@ namespace MagicKeys
         {
             var stack = new StackPanel();
             PhysLayout phys = _engine == null ? PhysLayout.Ansi : _engine.Physical(_s);
-            PhysLayout detected = _engine == null ? PhysLayout.Ansi : _engine.DetectedPhysical;
+            PhysLayout detected = KeyWatch.DetectedPhysical;
 
             // ---- исполнение ----
             var physBox = Combo(new[]

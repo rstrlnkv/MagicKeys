@@ -24,7 +24,9 @@ namespace MagicKeys
     internal sealed class Engine
     {
         // Скан-коды, которых нет на клавиатуре ANSI.
-        private const uint ScanIsoExtra = 0x56;
+        // Японские клавиши перехват разбирает сам — им нужны скан-коды. А вот исполнение
+        // клавиатуры угадывает перепись клавиш: здесь неизвестно, с какого устройства
+        // пришло нажатие, и чужая клавиатура сбивала бы догадку. См. KeyWatch.
         private static readonly uint[] JisScans = { 0x70, 0x79, 0x7B, 0x73, 0x7D };
 
         private Thread _thread;
@@ -73,10 +75,7 @@ namespace MagicKeys
         private IntPtr _hkl;
         private int _hklStamp;
 
-        private volatile int _detectedPhys = (int)PhysLayout.Ansi;
 
-        /// <summary>Что удалось понять об исполнении клавиатуры по нажатиям.</summary>
-        public PhysLayout DetectedPhysical { get { return (PhysLayout)_detectedPhys; } }
 
         /// <summary>Что-то изменилось в наборе подключённых клавиатур.</summary>
         public event Action DevicesChanged;
@@ -144,11 +143,8 @@ namespace MagicKeys
 
                     if (Devices.Rescan())
                     {
-                        // Набор клавиатур изменился — забываем, что успели угадать про
-                        // исполнение. Признак копится по любому вводу, устройства он
-                        // не знает, и одна чужая ISO-клавиатура иначе оставляла бы
-                        // перестановку двух клавиш включённой навсегда.
-                        _detectedPhys = (int)PhysLayout.Ansi;
+                        // Набор клавиатур изменился — пусть исполнение угадывается заново.
+                        KeyWatch.ForgetPhysical();
                         PostRelease();
                         Action h = DevicesChanged;
                         if (h != null) h();
@@ -349,8 +345,6 @@ namespace MagicKeys
             bool ext = (k.flags & Native.LLKHF_EXTENDED) != 0;
             int vk = (int)k.vkCode;
 
-            NoteScan(k.scanCode);
-
             if (!s.Enabled) return false;
             if (s.PauseWhenAppleAbsent && !Devices.AppleConnected) return false;
 
@@ -528,23 +522,12 @@ namespace MagicKeys
         //  Исполнение клавиатуры
         // ------------------------------------------------------------------
 
-        private void NoteScan(uint scan)
-        {
-            if (scan == ScanIsoExtra && _detectedPhys == (int)PhysLayout.Ansi)
-                _detectedPhys = (int)PhysLayout.Iso;
-            else
-            {
-                for (int i = 0; i < JisScans.Length; i++)
-                    if (scan == JisScans[i]) { _detectedPhys = (int)PhysLayout.Jis; break; }
-            }
-        }
-
         public PhysLayout Physical(Settings s)
         {
             if (s != null && s.Physical != PhysLayout.Auto) return s.Physical;
             AppleModel m = Devices.AppleModel;
             if (m != null && m.Phys != PhysLayout.Auto) return m.Phys;
-            return DetectedPhysical;
+            return KeyWatch.DetectedPhysical;
         }
 
         // ------------------------------------------------------------------

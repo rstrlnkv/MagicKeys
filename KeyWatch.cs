@@ -89,6 +89,42 @@ namespace MagicKeys
         /// </summary>
         public static uint LastKeyTick { get { return _lastKeyTick; } }
 
+        // Скан-коды, по которым узнаётся исполнение клавиатуры: лишняя клавиша ISO
+        // стоит слева от «Z», японские — вокруг пробела.
+        private const int ScanIsoExtra = 0x56;
+        private static readonly int[] JisScans = { 0x70, 0x79, 0x7B, 0x73, 0x7D };
+
+        private static volatile int _detectedPhys = (int)PhysLayout.Ansi;
+
+        /// <summary>
+        /// Что удалось понять об исполнении клавиатуры по нажатиям.
+        ///
+        /// Живёт здесь, а не в перехвате, нарочно. Перехват не знает, с какого устройства
+        /// пришло нажатие, — и одна чужая ISO-клавиатура, хоть ноутбучная, навсегда
+        /// переводила программу в исполнение ISO: перестановка двух клавиш включалась
+        /// и на Apple, а обратно не возвращалась ничем. Сырой ввод устройство знает,
+        /// и сюда попадает только пришедшее с клавиатуры Apple.
+        /// </summary>
+        public static PhysLayout DetectedPhysical { get { return (PhysLayout)_detectedPhys; } }
+
+        /// <summary>
+        /// Забыть угаданное исполнение — например, когда сменился набор клавиатур.
+        /// Отдельно от Forget(): та забывает и медиакоды, а с ними меняется и то,
+        /// кто обрабатывает функциональный ряд.
+        /// </summary>
+        public static void ForgetPhysical() { _detectedPhys = (int)PhysLayout.Ansi; }
+
+        private static void NoteScan(int scan)
+        {
+            if (scan == ScanIsoExtra && _detectedPhys == (int)PhysLayout.Ansi)
+                _detectedPhys = (int)PhysLayout.Iso;
+            else
+            {
+                for (int i = 0; i < JisScans.Length; i++)
+                    if (scan == JisScans[i]) { _detectedPhys = (int)PhysLayout.Jis; break; }
+            }
+        }
+
         /// <summary>Приходил ли когда-нибудь такой код медиастраницы.</summary>
         public static bool SeenUsage(int usage)
         {
@@ -335,6 +371,7 @@ namespace MagicKeys
         private static void Remember(int vk, int scanCode)
         {
             if (vk == 0 || vk == 0xFF) return;
+            NoteScan(scanCode);
             bool fresh;
             lock (Sync) fresh = SeenKeys.Add(vk);
 
@@ -398,6 +435,7 @@ namespace MagicKeys
             _mediaSeen = false;
             _maxFunctionKey = 0;
             _ejectSeen = false;
+            ForgetPhysical();
         }
     }
 }

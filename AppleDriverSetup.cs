@@ -720,9 +720,55 @@ namespace MagicKeys
                 return Pnputil("/add-driver \"" + inf + "\" /install", out output);
         }
 
+        /// <summary>
+        /// Убирает драйвер из хранилища Windows.
+        ///
+        /// Имя приходится искать: pnputil ждёт то, под которым драйвер опубликован
+        /// (oem12.inf и подобные), а не исходное имя из пакета. С исходным он отвечает
+        /// «такого драйвера нет» — и человек читал это при установленном драйвере.
+        /// </summary>
         public static bool Uninstall(string infName, out string output)
         {
-            return Pnputil("/delete-driver \"" + infName + "\" /uninstall /force", out output);
+            string published = PublishedInf(infName);
+            if (published == null)
+            {
+                output = "Не нашлось, под каким именем драйвер лежит в хранилище Windows. "
+                       + "Его можно убрать через «Диспетчер устройств».";
+                return false;
+            }
+            return Pnputil("/delete-driver \"" + published + "\" /uninstall /force", out output);
+        }
+
+        /// <summary>
+        /// Под каким именем драйвер опубликован. Перебором по %WINDIR%\INF\oem*.inf:
+        /// в опубликованной копии остаётся имя из исходного файла, по нему и узнаём.
+        /// Читать эти файлы прав администратора не требует.
+        /// </summary>
+        public static string PublishedInf(string originalInfName)
+        {
+            string mark = Path.GetFileNameWithoutExtension(originalInfName);
+            if (String.IsNullOrEmpty(mark)) return null;
+            try
+            {
+                string dir = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.Windows), "INF");
+                foreach (string f in Directory.GetFiles(dir, "oem*.inf"))
+                {
+                    try
+                    {
+                        // Кодировка у этих файлов разная: часть в UTF-16 с меткой,
+                        // часть в однобайтовой. StreamReader распознаёт метку сам.
+                        string text;
+                        using (var sr = new StreamReader(f, Encoding.Default, true))
+                            text = sr.ReadToEnd();
+                        if (text.IndexOf(mark, StringComparison.OrdinalIgnoreCase) >= 0)
+                            return Path.GetFileName(f);
+                    }
+                    catch { }
+                }
+            }
+            catch (Exception e) { Diag.Log("не удалось найти опубликованное имя драйвера", e); }
+            return null;
         }
 
         /// <summary>

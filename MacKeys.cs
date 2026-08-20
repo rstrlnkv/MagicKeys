@@ -154,6 +154,21 @@ namespace MagicKeys
                 MacMod.Cmd | MacMod.Opt, Vk.Left, new int[] { Vk.LControl }, Vk.Prior);
             Add("tabnext", GroupEdit, "Следующая вкладка", "⌘⌥→", "Ctrl+PgDn",
                 MacMod.Cmd | MacMod.Opt, Vk.Right, new int[] { Vk.LControl }, Vk.Next);
+
+            // Вкладка по номеру: ⌘1…⌘9. На маке это одно из самых пальцевых движений,
+            // и в Windows оно есть ровно такое же — Ctrl с той же цифрой.
+            int[] digits = { Vk.D1, Vk.D2, Vk.D3, Vk.D4, Vk.D5, Vk.D6, Vk.D7, Vk.D8, Vk.D9 };
+            for (int i = 0; i < digits.Length; i++)
+                Add("tab" + (i + 1), GroupEdit, "Вкладка " + (i + 1), "⌘" + (i + 1), "Ctrl+" + (i + 1),
+                    MacMod.Cmd, digits[i], new int[] { Vk.LControl }, digits[i]);
+
+            // Масштаб. В браузере замечают за первый час.
+            Add("zoomin", GroupEdit, "Крупнее", "⌘+", "Ctrl+=",
+                MacMod.Cmd, Vk.OemPlus, new int[] { Vk.LControl }, Vk.OemPlus).Repeats = true;
+            Add("zoomout", GroupEdit, "Мельче", "⌘−", "Ctrl+−",
+                MacMod.Cmd, Vk.OemMinus, new int[] { Vk.LControl }, Vk.OemMinus).Repeats = true;
+            Add("zoomreset", GroupEdit, "Обычный размер", "⌘0", "Ctrl+0",
+                MacMod.Cmd, Vk.D0, new int[] { Vk.LControl }, Vk.D0);
         }
 
         private static MacShortcut Edit(string id, string title, string mac, int vk, int sendVk)

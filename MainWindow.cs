@@ -211,23 +211,22 @@ namespace MagicKeys
         private void FillNav()
         {
             string current = _nav.SelectedIndex >= 0 && _nav.SelectedIndex < _pages.Count
-                ? _pages[_nav.SelectedIndex] : "fkeys";
+                ? _pages[_nav.SelectedIndex] : "mac";
 
             _nav.Items.Clear();
             _pages.Clear();
 
-            AddPage("fkeys", "Функциональные клавиши");
-            AddPage("mods", "Модификаторы");
-            AddPage("mac", "Сочетания macOS");
+            // Порядок — по вопросам человека, а не по устройству программы. Первой идёт
+            // та, ради которой программу ставят: пришедший с мака в первые полчаса
+            // замечает не F5, а что ⌘C не копирует. И она единственная, которая не умеет
+            // быть пустой: страница функционального ряда при работающем драйвере честно
+            // сообщает, что ни на что не влияет, — такая первой быть не может.
+            AddPage("mac", "Как на маке");
+            AddPage("keys", "Клавиши");
             AddPage("layout", "Раскладка");
             AddPage("driver", "Драйвер Apple");
-            if (_s.DeveloperMode)
-            {
-                AddPage("devices", "Устройства");
-                AddPage("selftest", "Проверка клавиш");
-            }
-            AddPage("general", "Общие");
             AddPage("about", "О программе");
+            if (_s.DeveloperMode) AddPage("diag", "Диагностика");
 
             int idx = _pages.IndexOf(current);
             _nav.SelectedIndex = idx >= 0 ? idx : 0;
@@ -273,14 +272,11 @@ namespace MagicKeys
             {
                 switch (CurrentPage)
                 {
-                    case "fkeys": Head("Функциональные клавиши", "Что делают F1–F" + Models.FunctionKeyCount() + ". По умолчанию — то же, что напечатано на клавишах Apple."); _host.Content = PageFKeys(); break;
-                    case "mods": Head("Модификаторы", "Куда ведут ⌘, ⌥, control и Caps Lock."); _host.Content = PageModifiers(); break;
-                    case "mac": Head("Сочетания macOS", "⌘C, ⌘←, ⌘Q и остальные — чтобы пальцы не переучивались."); _host.Content = PageMacKeys(); break;
-                    case "layout": Head("Раскладка", "Раскладки macOS — то, что напечатано на клавишах Apple."); _host.Content = PageLayout(); break;
+                    case "mac": Head("Как на маке", "⌘C, ⌘←, ⌘Q и ещё полсотни привычек — чтобы пальцы не переучивались."); _host.Content = PageMacKeys(); break;
+                    case "keys": Head("Клавиши", "Что делает каждая клавиша, которая на маке иная."); _host.Content = PageKeys(); break;
+                    case "layout": Head("Раскладка", "Какие символы печатаются — те, что напечатаны на клавишах Apple."); _host.Content = PageLayout(); break;
                     case "driver": Head("Драйвер Apple", "Родной драйвер Boot Camp и как программа с ним уживается."); _host.Content = PageDriver(); break;
-                    case "devices": Head("Устройства", "Клавиатуры, которые сейчас видит система."); _host.Content = PageDevices(); break;
-                    case "selftest": Head("Проверка клавиш", "Нажимайте клавиши — программа покажет, что из этого дошло до Windows."); _host.Content = PageSelfTest(); break;
-                    case "general": Head("Общие", "Поведение самой программы."); _host.Content = PageGeneral(); break;
+                    case "diag": Head("Диагностика", "Что программа видит и что до неё доходит."); _host.Content = PageDiag(); break;
                     default: Head("О программе", "MagicKeys — свободная программа."); _host.Content = PageAbout(); break;
                 }
             }
@@ -293,7 +289,7 @@ namespace MagicKeys
             _pageHint.Text = hint;
         }
 
-        private UIElement PageFKeys()
+        private UIElement PageKeys()
         {
             var stack = new StackPanel();
 
@@ -324,7 +320,11 @@ namespace MagicKeys
 
             var fnChoices = new List<Choice>();
             fnChoices.Add(new Choice { Value = ModKey.None, Text = "Нет — переключать только в этом окне" });
-            foreach (ModKey m in new[] { ModKey.RAlt, ModKey.RWin, ModKey.LWin, ModKey.RCtrl, ModKey.CapsLock })
+            // Правого control в списке нет: на клавиатурах Apple его не бывает,
+            // а предлагать несуществующую клавишу — обещать то, чего не нажать.
+            // Правого ⌥ в списке нет: он решается карточкой «Правый ⌥» ниже. Спрашивать
+            // об одной клавише в двух местах — верный способ получить два разных ответа.
+            foreach (ModKey m in new[] { ModKey.RWin, ModKey.LWin, ModKey.CapsLock })
                 fnChoices.Add(new Choice { Value = m, Text = ModNames.Of(m) });
 
             var fnBox = Combo(fnChoices.ToArray(), _s.FnSubstitute,
@@ -435,10 +435,12 @@ namespace MagicKeys
 
                 AddSingleRow(padGrid, 0, "Clear", "Верхняя левая на цифровом блоке, у Apple помечена значком очистки",
                     _s.NumpadClear, delegate(string id) { _s.NumpadClear = id; Save(); });
-                AddSingleRow(padGrid, 1, "= на цифровом блоке", "Windows её не понимает",
-                    _s.NumpadEquals, delegate(string id) { _s.NumpadEquals = id; Save(); });
 
-                if (fm == null || fm.Eject)
+
+                // Только если клавиша правда есть: при неопознанной модели человеку
+                // показывали настройку клавиши, которой у него нет, вместе с четырьмя
+                // абзацами о том, почему она не работает.
+                if (KeyWatch.EjectSeen || (fm != null && fm.Eject))
                 {
                     var ejGrid = new Grid();
                     ejGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -476,36 +478,25 @@ namespace MagicKeys
                          "ни одна программа, поэтому по умолчанию она печатает знак «=» напрямую.")));
             }
 
-            var stepBox = Combo(new[]
-            {
-                new Choice { Value = 5,  Text = "5 %" },
-                new Choice { Value = 10, Text = "10 %" },
-                new Choice { Value = 20, Text = "20 %" }
-            }, _s.BrightnessStep, delegate(object v) { _s.BrightnessStep = (int)v; Save(); });
-
-            stack.Children.Add(Card("Яркость", null,
-                Row("Шаг изменения", null, stepBox),
-                Toggle("Показывать индикатор яркости на экране", _s.ShowBrightnessOsd,
-                    delegate(bool v) { _s.ShowBrightnessOsd = v; Save(); }),
-                Toggle("Подхватывать коды яркости от чужого драйвера",
-                    _s.BrightnessFromMediaKeys,
-                    delegate(bool v) { _s.BrightnessFromMediaKeys = v; Save(); }),
-                Note("Меняется яркость того монитора, на котором стоит указатель. Если монитор " +
-                     "не поддерживает управление яркостью, эти клавиши ничего не сделают — " +
-                     "назначьте на F1 и F2 что-нибудь другое.\n\n" +
-                     "Вторая настройка нужна, только если функциональным рядом занят чужой " +
-                     "драйвер: тогда программа ловит его коды яркости и применяет их к внешним " +
-                     "мониторам.")));
+            // Правый ⌥ — одним вопросом, до модификаторов: он и есть самая спорная клавиша.
+            stack.Children.Add(RightOptionCard());
+            AddModifierCards(stack);
 
             return stack;
         }
 
-        private UIElement PageModifiers()
+        /// <summary>
+        /// Модификаторы — карточками на странице «Клавиши», а не отдельной страницей.
+        /// Вопрос у человека один: что происходит, когда я жму вот эту клавишу; резать
+        /// его надвое по устройству программы незачем.
+        /// </summary>
+        private void AddModifierCards(StackPanel stack)
         {
-            var stack = new StackPanel();
-
             var presets = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, -8, -8) };
-            presets.Children.Add(PresetButton("Как в macOS", "⌘ работает как Ctrl: ⌘+C копирует", delegate
+            // Не «как в macOS»: так называется перевод сочетаний на первой странице,
+            // и два разных механизма под одним именем — то, из-за чего человек включал
+            // оба сразу и получал, что половина переводов молча переставала работать.
+            presets.Children.Add(PresetButton("⌘ работает как Ctrl", "Обмен клавиш вместо перевода сочетаний", delegate
             {
                 _s.MapLCtrl = ModKey.LWin;
                 _s.MapLWin = ModKey.LCtrl;
@@ -538,33 +529,71 @@ namespace MagicKeys
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(280) });
 
-            AddModRow(grid, 0, "control (левый)", "Крайняя левая клавиша", _s.MapLCtrl,
-                delegate(ModKey m) { _s.MapLCtrl = m; Save(); });
-            AddModRow(grid, 1, "⌥ option (левый)", "Между control и ⌘", _s.MapLAlt,
-                delegate(ModKey m) { _s.MapLAlt = m; Save(); });
-            AddModRow(grid, 2, "⌘ command (левая)", "Слева от пробела", _s.MapLWin,
-                delegate(ModKey m) { _s.MapLWin = m; Save(); });
-            AddModRow(grid, 3, "⌘ command (правая)", "Справа от пробела", _s.MapRWin,
-                delegate(ModKey m) { _s.MapRWin = m; Save(); });
-            AddModRow(grid, 4, "⌥ option (правый)", "Правее правой ⌘", _s.MapRAlt,
-                delegate(ModKey m) { _s.MapRAlt = m; Save(); });
-            AddModRow(grid, 5, "Caps Lock", "Часто удобнее как Ctrl или Escape", _s.MapCapsLock,
+            // Caps Lock первой строкой: с мака его меняют чаще, чем все остальные вместе.
+            AddModRow(grid, 0, "Caps Lock", "Часто удобнее как control или Escape", _s.MapCapsLock,
                 delegate(ModKey m) { _s.MapCapsLock = m; Save(); });
+            AddModRow(grid, 1, "control (левый)", "Крайняя левая клавиша", _s.MapLCtrl,
+                delegate(ModKey m) { _s.MapLCtrl = m; Save(); });
+            AddModRow(grid, 2, "⌥ option (левый)", "Между control и ⌘", _s.MapLAlt,
+                delegate(ModKey m) { _s.MapLAlt = m; Save(); });
+            AddModRow(grid, 3, "⌘ command (левая)", "Слева от пробела", _s.MapLWin,
+                delegate(ModKey m) { _s.MapLWin = m; Save(); });
+            AddModRow(grid, 4, "⌘ command (правая)", "Справа от пробела", _s.MapRWin,
+                delegate(ModKey m) { _s.MapRWin = m; Save(); });
+            // Правого ⌥ здесь нет: у него своя карточка выше, где он спрашивается один раз.
 
             stack.Children.Add(Card("Отдельные клавиши", "Слева — что напечатано на клавише, справа — чем она станет.", grid));
+        }
 
-            stack.Children.Add(Card("Поведение", null,
-                Toggle("⌘+Tab переключает окна, как Alt+Tab", _s.CmdTabSwitchesWindows,
-                    delegate(bool v) { _s.CmdTabSwitchesWindows = v; Save(); }),
-                Toggle("Правый ⌥ — обычный Alt, без AltGr", _s.DisableAltGr,
-                    delegate(bool v) { _s.DisableAltGr = v; Save(); }),
-                Note("На раскладках с AltGr правый ⌥ приходит именно как AltGr — Windows добавляет " +
-                     "к нему невидимый Ctrl, и сочетания вроде ⌥+буква срабатывают не так, как " +
-                     "ожидаешь. Включайте, только если не набираете символы через AltGr: с этой " +
-                     "настройкой третий уровень раскладки — правый ⌥ и клавиша — перестанет " +
-                     "набираться.")));
+        /// <summary>
+        /// Правый ⌥ — один вопрос вместо четырёх.
+        ///
+        /// По умолчанию эта клавиша делала четыре работы разом, и спрашивали о них
+        /// на трёх страницах: заменитель Fn, третий уровень раскладки, обычный модификатор
+        /// и отмена AltGr. Что из этого выходило, видно было на живой клавиатуре: правый ⌥
+        /// со стрелкой влево давал «на слово влево», а со стрелкой вверх — PgUp. Одна
+        /// клавиша, две соседние стрелки, две разные логики. Программа даже предупреждала
+        /// об этом карточкой — а предупреждение о собственных умолчаниях означает, что
+        /// умолчания разошлись.
+        /// </summary>
+        private UIElement RightOptionCard()
+        {
+            Choice[] roles =
+            {
+                new Choice { Value = "fn",     Text = "Клавиша Fn" },
+                new Choice { Value = "symbols",Text = "Символы ⌥ (третий уровень раскладки)" },
+                new Choice { Value = "plain",  Text = "Обычный Alt" }
+            };
 
-            return stack;
+            bool asFn = _s.FnSubstitute == ModKey.RAlt;
+            bool asSym = _s.OptLevel != OptLevel.Off;
+            string now = asFn ? "fn" : (asSym ? "symbols" : "plain");
+
+            string what =
+                now == "fn"
+                    ? "Переключает верхний ряд и даёт Fn+стрелки. Настоящей Fn у Magic Keyboard " +
+                      "в Windows нет — без замены до F-клавиш не добраться совсем."
+                : now == "symbols"
+                    ? "Набирает символы, напечатанные на клавише третьими. Работает, только когда " +
+                      "включены раскладки Apple."
+                    : "Ничего не забирает: обычный Alt, и AltGr системной раскладки работает как всегда.";
+
+            var rows = new StackPanel();
+            rows.Children.Add(Row("Делает", null, Combo(roles, now, delegate(object v)
+            {
+                string pick = (string)v;
+                _s.FnSubstitute = pick == "fn" ? ModKey.RAlt : ModKey.None;
+                _s.OptLevel = pick == "symbols" ? OptLevel.RightOption : OptLevel.Off;
+                Save(); BuildPage();
+            })));
+            rows.Children.Add(Note(what));
+
+            if (now == "symbols")
+                rows.Children.Add(Toggle("Любой ⌥, как на маке — но тогда левый Alt перестанет открывать меню",
+                    _s.OptLevel == OptLevel.AnyOption,
+                    delegate(bool v) { _s.OptLevel = v ? OptLevel.AnyOption : OptLevel.RightOption; Save(); }));
+
+            return Card("Правый ⌥ (option)", null, rows);
         }
 
         private UIElement PageLayout()
@@ -601,27 +630,9 @@ namespace MagicKeys
             else
                 physBox.Visibility = Visibility.Collapsed;
 
-            // ---- перестановка двух клавиш ISO ----
-            var isoToggle = Toggle("Поменять эти две клавиши местами", _s.SwapIsoKeys,
-                delegate(bool v) { _s.SwapIsoKeys = v; Save(); });
-            isoToggle.IsEnabled = !_s.AppleLayoutEnabled && phys == PhysLayout.Iso;
+            // Перестановки двух клавиш ISO здесь больше нет: это не вкус, а исправление
+            // аппаратной особенности, и программа делает его сама, когда клавиатура ISO.
 
-            string isoNote =
-                "У ISO-клавиатуры Apple эти две клавиши стоят наоборот по отношению к тому, " +
-                "что ожидает Windows.\n\n" +
-                "Проверено на подключённой клавиатуре: клавиша слева от «1» отдаёт скан-код 0x56 " +
-                "(в Windows это дополнительная клавиша ISO, «\\»), а клавиша слева от «Z» — " +
-                "скан-код 0x29 (в Windows это клавиша слева от «1»: «ё» в русской раскладке, " +
-                "«`~» в английской). Ровно то же исправление делает драйвер hid-apple в Linux.\n\n" +
-                "С этой настройкой обе встают на свои места в любой раскладке: символ выбирает " +
-                "сама раскладка, программа лишь меняет скан-коды местами.";
-            if (_s.AppleLayoutEnabled)
-                isoNote = "Не нужно: включены раскладки Apple, а они и так расставляют символы " +
-                          "по скан-кодам правильно.\n\n" + isoNote;
-            else if (phys != PhysLayout.Iso)
-                isoNote = "Не нужно: клавиатура не в исполнении ISO, лишней клавиши на ней нет.\n\n" + isoNote;
-
-            stack.Children.Add(Card("Клавиши слева от «1» и слева от «Z»", null, isoToggle, Note(isoNote)));
 
             // ---- раскладки Apple ----
             // Третий уровень раньше был спрятан за режим разработчика. Для пришедшего
@@ -701,32 +712,6 @@ namespace MagicKeys
                      "«layouts» рядом с программой, свои можно положить в " + Layouts.UserFolder +
                      " — одноимённые вытеснят встроенные.")));
 
-            // ---- японские клавиши ----
-            if (phys == PhysLayout.Jis)
-            {
-                string[] names = { "かな (кана)", "変換 (преобразовать)", "無変換 (не преобразовывать)", "ろ (ро)", "¥ (иена)" };
-                var jisGrid = new Grid();
-                jisGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                jisGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });
-                for (int i = 0; i < names.Length; i++)
-                {
-                    jisGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                    var lbl = new TextBlock { Text = names[i], VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 6, 16, 6) };
-                    Grid.SetRow(lbl, i); Grid.SetColumn(lbl, 0);
-                    int idx = i;
-                    var box = ActionCombo(_s.JisKey(i), delegate(string id) { _s.JisKeys[idx] = id; Save(); });
-                    box.Margin = new Thickness(0, 6, 0, 6);
-                    Grid.SetRow(box, i); Grid.SetColumn(box, 1);
-                    jisGrid.Children.Add(lbl);
-                    jisGrid.Children.Add(box);
-                }
-                if (_s.DeveloperMode)
-                    stack.Children.Add(Card("Клавиши японской раскладки", null, jisGrid,
-                        Note("Раздел появляется, когда клавиатура опознана как JIS и включён " +
-                             "режим разработчика. Проверить его на настоящей японской клавиатуре " +
-                             "не удалось — её здесь нет, так что скан-коды взяты из документации, " +
-                             "а не из опыта.")));
-            }
 
             return stack;
         }
@@ -760,52 +745,30 @@ namespace MagicKeys
             return result;
         }
 
-        private UIElement PageGeneral()
+        /// <summary>Запуск программы — одной карточкой на странице «О программе».</summary>
+        private UIElement StartupCard()
         {
-            var stack = new StackPanel();
-
-            string failure = _engine == null ? null : _engine.Failure;
-            if (!String.IsNullOrEmpty(failure))
-                stack.Children.Add(Card("Перехват клавиатуры не работает", null,
-                    Note(failure + "\n\nПока этого не случится, переназначения, сочетания macOS " +
-                         "и раскладки не работают.")));
-
-            stack.Children.Add(Card("Работа программы", null,
-                Toggle("Переназначения включены", _s.Enabled,
-                    delegate(bool v) { _s.Enabled = v; Save(); }),
-                Toggle("Приостанавливать, пока Magic Keyboard не подключена", _s.PauseWhenAppleAbsent,
-                    delegate(bool v) { _s.PauseWhenAppleAbsent = v; Save(); }),
-                Note("Windows не сообщает низкоуровневому перехватчику, с какой именно клавиатуры " +
-                     "пришло нажатие — сведения об устройстве приходят уже после того, как решение " +
-                     "принято. Поэтому переназначения действуют на весь ввод. Если рядом работает " +
-                     "вторая клавиатура, вторая настройка избавляет хотя бы от случая, когда " +
-                     "Magic Keyboard выключена, а её правила всё ещё в силе.")));
-
-            stack.Children.Add(Card("Запуск", null,
+            return Card("Запуск", null,
                 Toggle("Запускать вместе с Windows", Autostart.Enabled,
                     delegate(bool v) { Autostart.Set(v); }),
                 Toggle("Запускаться свёрнутой в значок", _s.StartMinimized,
-                    delegate(bool v) { _s.StartMinimized = v; Save(); })));
+                    delegate(bool v) { _s.StartMinimized = v; Save(); }));
+        }
 
-            var openFolder = new Button { Content = "Открыть папку настроек", HorizontalAlignment = HorizontalAlignment.Left };
-            openFolder.SetResourceReference(StyleProperty, "Btn");
-            openFolder.Click += delegate
-            {
-                try
-                {
-                    System.IO.Directory.CreateDirectory(Settings.Folder);
-                    Process.Start(new ProcessStartInfo(Settings.Folder) { UseShellExecute = true });
-                }
-                catch { }
-            };
-            stack.Children.Add(Card("Настройки", Settings.FilePath, openFolder));
-
+        /// <summary>
+        /// Диагностика: что программа видит и что до неё доходит. Прежде это были две
+        /// страницы, а вопрос за обеими стоит один.
+        /// </summary>
+        private UIElement PageDiag()
+        {
+            var stack = new StackPanel();
+            AddDeviceCards(stack);
+            AddSelfTestCards(stack);
             return stack;
         }
 
-        private UIElement PageDevices()
+        private void AddDeviceCards(StackPanel stack)
         {
-            var stack = new StackPanel();
 
             IList<KeyboardInfo> all = Devices.Known;
             if (all.Count == 0)
@@ -865,7 +828,6 @@ namespace MagicKeys
             refresh.Click += delegate { Devices.Rescan(); RefreshDevices(); };
             stack.Children.Add(refresh);
 
-            return stack;
         }
 
         // ------------------------------------------------------------------
@@ -887,56 +849,139 @@ namespace MagicKeys
         {
             var stack = new StackPanel();
 
-            stack.Children.Add(Card("Главный выключатель", null,
-                Toggle("Переводить сочетания macOS в виндовые", _s.MacShortcuts,
+            // Состояние клавиатуры первой строкой. Заряд здесь, а не на служебной
+            // странице: этого Windows не умеет вовсе — свойство Bluetooth пустое,
+            // а программа заряд спрашивает у самой клавиатуры отчётом.
+            stack.Children.Add(StateCard());
+
+            stack.Children.Add(Card("Сочетания macOS", null,
+                Toggle("⌘C, ⌘←, ⌘Q и остальные работают как на маке", _s.MacShortcuts,
                     delegate(bool v) { _s.MacShortcuts = v; Save(); BuildPage(); }),
-                Note("По умолчанию ⌘ остаётся клавишей Windows: программа не меняет её назначение, " +
-                     "а переводит сами сочетания. Поэтому получается и то, чего простой " +
-                     "заменой клавиш не добиться: ⌘← уходит в начало строки, ⌘Backspace стирает " +
-                     "до начала строки, ⌘Q закрывает программу.\n\n" +
-                     "Если на странице «Модификаторы» выбрана схема «Как в macOS», ⌘ уже стала " +
-                     "Ctrl — тогда эти переводы ей не нужны.\n\n" +
-                     "Любое сочетание можно выключить по отдельности — тогда оно вернётся " +
-                     "к обычному поведению Windows.")));
+                Note("⌘ остаётся клавишей Windows: программа не меняет её назначение, " +
+                     "а переводит сами сочетания. Поэтому получается и то, чего заменой " +
+                     "клавиш не добиться: ⌘← уходит в начало строки, ⌘Q закрывает программу.")));
 
             if (!_s.MacShortcuts) return stack;
 
+            // Один вопрос вместо двух. На маке поиск живёт на одной из двух клавиш,
+            // и второй достаётся переключение языка — спрашивать про обе по отдельности
+            // значит позволить выбрать бессмыслицу.
             Choice[] spaceChoices =
             {
-                new Choice { Value = "search",   Text = "Поиск Windows (Win+S)" },
-                new Choice { Value = "language", Text = "Переключить язык (Win+Space)" },
-                new Choice { Value = "none",     Text = "Не трогать" }
+                new Choice { Value = "cmd",  Text = "⌘ + пробел" },
+                new Choice { Value = "ctrl", Text = "control + пробел" },
+                new Choice { Value = "none", Text = "Не трогать пробел" }
             };
+            string spaceNow = _s.CmdSpace == "search" ? "cmd"
+                            : _s.CtrlSpace == "search" ? "ctrl" : "none";
 
-            stack.Children.Add(Card("Пробел", "На маке привычки расходятся, поэтому обе клавиши отдельно.",
-                Row("⌘ + пробел", null, Combo(spaceChoices, _s.CmdSpace,
-                    delegate(object v) { _s.CmdSpace = (string)v; Save(); })),
-                Row("control + пробел", null, Combo(spaceChoices, _s.CtrlSpace,
-                    delegate(object v) { _s.CtrlSpace = (string)v; Save(); })),
-                Note("Привычки расходятся: у одних ⌘Space открывает поиск, у других переключает " +
-                     "язык. Переключение языка отдаётся Win+Space — своему переключателю Windows.")));
+            stack.Children.Add(Card("Поиск и язык", null,
+                Row("Поиск открывается по", null, Combo(spaceChoices, spaceNow,
+                    delegate(object v)
+                    {
+                        string pick = (string)v;
+                        _s.CmdSpace = pick == "cmd" ? "search" : (pick == "ctrl" ? "language" : "none");
+                        _s.CtrlSpace = pick == "ctrl" ? "search" : (pick == "cmd" ? "language" : "none");
+                        Save();
+                    })),
+                Toggle("⌘+Tab переключает окна, как Alt+Tab", _s.CmdTabSwitchesWindows,
+                    delegate(bool v) { _s.CmdTabSwitchesWindows = v; Save(); }),
+                Note("Второй клавише достаётся переключение языка — через собственный " +
+                     "переключатель Windows.")));
 
+            // Три группы вместо сорока семи строк. Человек либо хочет всё — а хочет он
+            // всё почти всегда, — либо ему мешает ровно одно сочетание; ради второго
+            // случая держать полсотни переключателей на виду не стоит.
             string[] groups = { MacKeys.GroupEdit, MacKeys.GroupText, MacKeys.GroupSystem };
             string[] hints =
             {
-                "Привычные действия с ⌘ вместо Ctrl.",
+                "Копировать, вставить, найти, вкладки.",
                 "Перемещение и правка текста — то, чего на Windows больше всего не хватает.",
-                "Окна, поиск и снимки экрана. Часть таких сочетаний Windows забирает себе, " +
-                "и тогда перевод может не сработать."
+                "Окна, снимки экрана, параметры."
             };
 
             for (int g = 0; g < groups.Length; g++)
             {
+                string group = groups[g];
                 var rows = new StackPanel();
+
+                int on = 0, all = 0;
+                var sample = new List<string>();
                 foreach (MacShortcut sc in MacKeys.All)
                 {
-                    if (sc.Group != groups[g]) continue;
-                    rows.Children.Add(MacRow(sc));
+                    if (sc.Group != group) continue;
+                    all++;
+                    if (_s.MacEnabled(sc.Id)) on++;
+                    if (sample.Count < 6) sample.Add(sc.Mac);
                 }
-                stack.Children.Add(Card(groups[g], hints[g], rows));
+
+                rows.Children.Add(Toggle(hints[g], on > 0, delegate(bool v)
+                {
+                    foreach (MacShortcut sc in MacKeys.All)
+                        if (sc.Group == group) _s.MacSet(sc.Id, v);
+                    Save(); BuildPage();
+                }));
+                rows.Children.Add(Note(String.Join(" · ", sample.ToArray()) +
+                                       (all > sample.Count ? " и ещё " + (all - sample.Count) : "")));
+
+                if (_macOpen == group)
+                {
+                    foreach (MacShortcut sc in MacKeys.All)
+                        if (sc.Group == group) rows.Children.Add(MacRow(sc));
+                }
+
+                string g2 = group;
+                rows.Children.Add(LinkButton(_macOpen == group ? "Свернуть" : "Показать все " + all,
+                    delegate { _macOpen = _macOpen == g2 ? null : g2; BuildPage(); }));
+
+                stack.Children.Add(Card(group, null, rows));
             }
 
             return stack;
+        }
+
+        /// <summary>Какая группа сочетаний сейчас развёрнута. Пусто — все свёрнуты.</summary>
+        private string _macOpen;
+
+        /// <summary>
+        /// Состояние клавиатуры одной карточкой: что подключено, заряд и когда программа
+        /// работает. Три вопроса, на которые человек хочет ответ сразу, а не после того,
+        /// как найдёт нужную страницу.
+        /// </summary>
+        private UIElement StateCard()
+        {
+            var lines = new StackPanel();
+
+            AppleModel m = Devices.AppleModel;
+            int battery = KeyboardBattery.Percent;
+            string what = m != null ? m.Name : (Devices.AppleConnected ? "Клавиатура Apple" : "Клавиатура Apple не найдена");
+            if (battery >= 0) what += " · заряд " + battery + " %";
+            lines.Children.Add(new TextBlock { Text = what, TextWrapping = TextWrapping.Wrap });
+
+            // Один трёхпозиционный выбор вместо двух галочек: из их четырёх сочетаний
+            // осмысленны три, а «выключено, но приостанавливать» не значит ничего.
+            Choice[] when =
+            {
+                new Choice { Value = "apple", Text = "Только пока Magic Keyboard подключена" },
+                new Choice { Value = "always", Text = "Всегда, на любой клавиатуре" },
+                new Choice { Value = "off",    Text = "Приостановлено" }
+            };
+            string nowWhen = !_s.Enabled ? "off" : (_s.PauseWhenAppleAbsent ? "apple" : "always");
+
+            lines.Children.Add(Row("Работает", null, Combo(when, nowWhen, delegate(object v)
+            {
+                string pick = (string)v;
+                _s.Enabled = pick != "off";
+                _s.PauseWhenAppleAbsent = pick != "always";
+                Save();
+            })));
+
+            if (_s.Enabled && !_s.PauseWhenAppleAbsent)
+                lines.Children.Add(Note("Перехват не знает, с какой клавиатуры пришло нажатие, " +
+                                        "поэтому правила действуют на весь ввод — включая встроенную " +
+                                        "клавиатуру ноутбука."));
+
+            return Card(null, null, lines);
         }
 
         private UIElement MacRow(MacShortcut sc)
@@ -991,9 +1036,8 @@ namespace MagicKeys
             _selfTestLines.Clear();
         }
 
-        private UIElement PageSelfTest()
+        private void AddSelfTestCards(StackPanel stack)
         {
-            var stack = new StackPanel();
 
             AppleDriver.Refresh(false);
             bool yielding = YieldingNow;
@@ -1037,7 +1081,6 @@ namespace MagicKeys
             KeyWatch.Activity += _selfTest;
 
             RefreshSelfTest();
-            return stack;
         }
 
         private void OnSelfTestEvent(KeyWatch.KeyEvent e)
@@ -1209,8 +1252,6 @@ namespace MagicKeys
             }
 
             stack.Children.Add(Card("Уживание", null,
-                Toggle("Уступать функциональный ряд драйверу Apple, когда тот его забирает",
-                    _s.YieldToAppleDriver, delegate(bool v) { _s.YieldToAppleDriver = v; Save(); }),
                 Note("Драйвер и программа делают одно и то же — переназначают F1–F12. Если работают " +
                      "оба сразу, нажатие переназначается дважды и получается ерунда. С этой настройкой " +
                      "программа отдаёт функциональный ряд драйверу, а всё остальное — модификаторы, " +
@@ -1476,6 +1517,7 @@ namespace MagicKeys
             column.Children.Add(AboutNumbers());
             column.Children.Add(AboutAuthor());
             column.Children.Add(AboutUpdate());
+            column.Children.Add(StartupCard());
             column.Children.Add(AboutButtons());
             column.Children.Add(AboutFooter());
 
@@ -2121,13 +2163,6 @@ namespace MagicKeys
         private void ApplyDriverProfile()
         {
             var done = new List<string>();
-
-            if (!_s.YieldToAppleDriver)
-            {
-                _s.YieldToAppleDriver = true;
-                done.Add("• Функциональный ряд отдан драйверу — он с ним справляется лучше, "
-                       + "потому что привязан к самой клавиатуре.");
-            }
 
             if (AppleDriver.TakesFunctionRow)
             {

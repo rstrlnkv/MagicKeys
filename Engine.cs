@@ -24,11 +24,6 @@ namespace MagicKeys
     internal sealed class Engine
     {
         // Скан-коды, которых нет на клавиатуре ANSI.
-        // Японские клавиши перехват разбирает сам — им нужны скан-коды. А вот исполнение
-        // клавиатуры угадывает перепись клавиш: здесь неизвестно, с какого устройства
-        // пришло нажатие, и чужая клавиатура сбивала бы догадку. См. KeyWatch.
-        private static readonly uint[] JisScans = { 0x70, 0x79, 0x7B, 0x73, 0x7D };
-
         private Thread _thread;
         private uint _threadId;
         private IntPtr _hook;
@@ -377,13 +372,14 @@ namespace MagicKeys
             if (phantomCtrl)
             {
                 _phantomCtrl = down;
-                // Дальше не пускаем вовсе. Раньше он доходил до HandleModifier и там
-                // подчинялся переназначению левого control: со схемой «как в macOS»,
-                // где control становится клавишей Windows, каждое нажатие правого ⌥
-                // слало в Windows Win — то есть открывало «Пуск» посреди набора символа
-                // третьего уровня. А если control переназначен на Caps Lock, ещё и
-                // переворачивало регистр.
-                return s.DisableAltGr;
+                // Дальше не пускаем вовсе, но и не глотаем. Не пускаем — потому что
+                // раньше он доходил до HandleModifier и подчинялся переназначению левого
+                // control: со схемой «как в macOS» каждое нажатие правого ⌥ слало в Windows
+                // клавишу Windows, то есть открывало «Пуск» посреди набора символа.
+                // А не глотаем — потому что глотание убивает AltGr системной раскладки,
+                // и настройка, которая это делала, обещала «правый ⌥ — обычный Alt»,
+                // а получалось наоборот: свой третий уровень оставался, чужой пропадал.
+                return false;
             }
 
             ModKey phys;
@@ -506,18 +502,10 @@ namespace MagicKeys
             // Цифровой блок Apple: ⌧ приходит как Num Lock и невзначай выключает блок,
             // а «=» шлёт VK_CLEAR со скан-кодом 0x59, который Windows просто игнорирует.
             if (vk == Vk.NumLock) { if (HandleSingle(s, vk, s.NumpadClear, down)) return true; }
-            else if (k.scanCode == 0x59 && vk == Vk.Clear) { if (HandleSingle(s, vk, s.NumpadEquals, down)) return true; }
-
-            // Клавиши японской раскладки: かな, 変換, 無変換, ろ, ¥.
-            for (int i = 0; i < JisScans.Length; i++)
-            {
-                if (k.scanCode != JisScans[i]) continue;
-                KeyAction ja = Actions.Get(s.JisKey(i));
-                if (ja.Kind == ActionKind.PassThrough) break;
-                if (down) Actions.Begin(ja, false, s.BrightnessStep);
-                else Actions.End(ja);
-                return true;
-            }
+            // «=» печатает «=». Второго осмысленного ответа нет: Windows не понимает
+            // того, что эта клавиша шлёт на самом деле, и настройка существовала только
+            // потому, что механизм внутри общий с ⌧.
+            else if (k.scanCode == 0x59 && vk == Vk.Clear) { if (HandleSingle(s, vk, "text.equals", down)) return true; }
 
             if (s.AppleLayoutEnabled)
             {
@@ -541,7 +529,11 @@ namespace MagicKeys
                 Input.Scan((ushort)(k.scanCode == 0x29 ? 0x56 : 0x29), false, false);
                 return true;
             }
-            if (down && s.SwapIsoKeys && Physical(s) == PhysLayout.Iso
+            // Без настройки: это не вкус, а исправление аппаратной особенности —
+            // две клавиши на ISO-клавиатурах Apple подключены наоборот, и то же самое
+            // безусловно правит квирк APPLE_ISO_TILDE_QUIRK в Linux. Желания оставить
+            // клавиши перепутанными не бывает.
+            if (down && Physical(s) == PhysLayout.Iso
                 && (k.scanCode == 0x29 || k.scanCode == 0x56))
             {
                 _isoSwapped.Add(k.scanCode);
@@ -643,7 +635,7 @@ namespace MagicKeys
                 // Если правый ⌥ объявлен обычным Alt, третьего уровня на нём быть
                 // не может — иначе настройка обещает одно, а делает противоположное:
                 // свой третий уровень остаётся, а пропадает системный AltGr.
-                case OptLevel.RightOption: optWanted = _altRight && !s.DisableAltGr; break;
+                case OptLevel.RightOption: optWanted = _altRight; break;
                 default: optWanted = false; break;
             }
             // Alt, который не просили считать третьим уровнем, оставляем меню.
@@ -888,12 +880,12 @@ namespace MagicKeys
                     id = actionId;
                     if (Actions.Get(id).Kind == ActionKind.PassThrough) return false;
                     _singleAction[sourceVk] = id;
-                    Actions.Begin(Actions.Get(id), false, s.BrightnessStep);
+                    Actions.Begin(Actions.Get(id), false, Settings.BrightnessStep);
                     return true;
                 }
                 // Автоповтор: то же действие, но повтором — аккорды и запуск программ
                 // на нём не срабатывают, иначе удержание плодило бы окна калькулятора.
-                Actions.Begin(Actions.Get(id), true, s.BrightnessStep);
+                Actions.Begin(Actions.Get(id), true, Settings.BrightnessStep);
                 return true;
             }
 
@@ -910,7 +902,9 @@ namespace MagicKeys
         /// </summary>
         public static bool YieldsRow(Settings s, int index)
         {
-            return s != null && index < 12 && s.YieldToAppleDriver
+            // Без выключателя: не уступать, когда драйвер ряд забирает, — значит
+            // переназначать одно нажатие дважды. Правильное значение здесь одно.
+            return s != null && index < 12
                 && AppleDriver.TakesFunctionRow && KeyWatch.MediaSeen;
         }
 
@@ -977,7 +971,7 @@ namespace MagicKeys
             {
                 bool repeat = _fkeyDown[index];
                 _fkeyDown[index] = true;
-                Actions.Begin(a, repeat, s.BrightnessStep);
+                Actions.Begin(a, repeat, Settings.BrightnessStep);
             }
             else
             {

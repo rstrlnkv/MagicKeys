@@ -78,7 +78,7 @@ namespace MagicKeys
         public string NumpadClear = "key.delete";
 
         /// <summary>Клавиша «=» на цифровом блоке: Windows её не понимает и по умолчанию молчит.</summary>
-        public string NumpadEquals = "text.equals";
+
 
         /// <summary>Клавиша ⏏ — приходит не как клавиша, а отчётом медиастраницы.</summary>
         public string EjectKey = "none";
@@ -94,7 +94,7 @@ namespace MagicKeys
         public ModKey MapCapsLock = ModKey.CapsLock;
 
         /// <summary>Поменять местами клавишу слева от «1» и клавишу слева от «Z».</summary>
-        public bool SwapIsoKeys = true;
+
 
         /// <summary>Исполнение клавиатуры. «Auto» — определять по нажатиям.</summary>
         public PhysLayout Physical = PhysLayout.Auto;
@@ -115,16 +115,19 @@ namespace MagicKeys
         public bool FnNavigation = true;
 
         /// <summary>Уступать функциональный ряд родному драйверу Apple, если он установлен.</summary>
-        public bool YieldToAppleDriver = true;
+
 
         /// <summary>Действия для клавиш японской раскладки: かな, 変換, 無変換, ろ, ¥.</summary>
-        public string[] JisKeys = new string[] { "none", "none", "none", "none", "none" };
+
 
         /// <summary>Отключить AltGr: правый ⌥ станет обычным Alt.</summary>
-        public bool DisableAltGr = false;
+
 
         /// <summary>⌘+Tab переключает окна так же, как Alt+Tab.</summary>
-        public bool CmdTabSwitchesWindows = false;
+        // Включено: это первое, что человек с мака жмёт не глядя, а выключенным оно
+        // давало молчание. Техническая причина держать его выключенным отпала, когда
+        // перед отпусканием Win стали подсовывать незанятый код — иначе выскакивал «Пуск».
+        public bool CmdTabSwitchesWindows = true;
 
         /// <summary>Переводить сочетания macOS в виндовые: ⌘C, ⌘←, ⌘Q и прочие.</summary>
         // Включены сразу: ради них программа и переделывалась. Выключенными по умолчанию
@@ -175,15 +178,21 @@ namespace MagicKeys
         /// но Windows применяет их только к встроенной панели ноутбука, и на обычном ПК
         /// они пропадают зря.
         /// </summary>
-        public bool BrightnessFromMediaKeys = true;
 
-        public bool ShowBrightnessOsd = true;
-        public int BrightnessStep = 10;
+
+
+
 
 
         public bool StartMinimized = false;
 
         /// <summary>F1…F24 — больше в Windows не бывает.</summary>
+        /// <summary>
+        /// Шаг яркости. Постоянная, а не настройка: три значения одного вкуса, и кому
+        /// десять процентов много — нажмёт один раз вместо двух.
+        /// </summary>
+        public const int BrightnessStep = 10;
+
         public const int MaxFKeys = 24;
 
         public static string[] DefaultFKeys()
@@ -215,20 +224,38 @@ namespace MagicKeys
             return FKeys[index] ?? "none";
         }
 
-        public string JisKey(int index)
-        {
-            if (JisKeys == null || index < 0 || index >= JisKeys.Length) return "none";
-            return JisKeys[index] ?? "none";
-        }
-
         /// <summary>Какая раскладка Apple назначена этому языку ввода Windows.</summary>
+        /// <summary>
+        /// Какая раскладка Apple отвечает за этот язык ввода Windows.
+        ///
+        /// Сначала то, что человек выбрал руками. Если не выбирал — подбираем сами
+        /// по коду языка: файлы названы теми же кодами, что и культуры Windows
+        /// (ru.xml, de.xml, en-GB.xml), и совпадение здесь не догадка, а тождество.
+        /// Прежде это была таблица из тридцати с лишним строк, которую человек сводил
+        /// вручную, — и, включив раскладки Apple, он не получал ничего и не понимал
+        /// почему: по умолчанию не было привязано ни одного языка.
+        /// </summary>
         public string LayoutFor(int langId)
         {
-            if (LayoutBindings == null) return null;
             string hex = langId.ToString("X4");
-            foreach (LayoutBinding b in LayoutBindings)
-                if (b != null && String.Equals(b.Lang, hex, StringComparison.OrdinalIgnoreCase))
-                    return String.IsNullOrEmpty(b.Layout) ? null : b.Layout;
+            if (LayoutBindings != null)
+                foreach (LayoutBinding b in LayoutBindings)
+                    if (b != null && String.Equals(b.Lang, hex, StringComparison.OrdinalIgnoreCase))
+                        return String.IsNullOrEmpty(b.Layout) ? null : b.Layout;
+            return GuessLayout(langId);
+        }
+
+        /// <summary>Раскладка по коду языка: сперва точная («en-GB»), потом общая («en»).</summary>
+        public static string GuessLayout(int langId)
+        {
+            try
+            {
+                CultureInfo c = CultureInfo.GetCultureInfo(langId & 0xFFFF);
+                if (Layouts.ById(c.Name) != null) return c.Name;
+                string two = c.TwoLetterISOLanguageName;
+                if (Layouts.ById(two) != null) return two;
+            }
+            catch { /* язык, которого нет в списке культур, — просто не подбираем */ }
             return null;
         }
 
@@ -437,16 +464,7 @@ namespace MagicKeys
                     fixedUp[i] = (FKeys != null && i < FKeys.Length && FKeys[i] != null) ? FKeys[i] : def[i];
                 FKeys = fixedUp;
             }
-            if (JisKeys == null || JisKeys.Length != 5)
-            {
-                string[] j = new string[5];
-                for (int i = 0; i < 5; i++)
-                    j[i] = (JisKeys != null && i < JisKeys.Length && JisKeys[i] != null) ? JisKeys[i] : "none";
-                JisKeys = j;
-            }
             if (LayoutBindings == null) LayoutBindings = new LayoutBinding[0];
-            if (BrightnessStep < 1) BrightnessStep = 1;
-            if (BrightnessStep > 25) BrightnessStep = 25;
         }
     }
 

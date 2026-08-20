@@ -93,7 +93,7 @@ namespace MagicKeys
                 if (s == null) return;
                 KeyAction a = Actions.Get(s.EjectKey);
                 if (a.Kind == ActionKind.PassThrough) return;
-                Actions.Begin(a, false, s.BrightnessStep);
+                Actions.Begin(a, false, Settings.BrightnessStep);
                 Actions.End(a);
             };
             // Коды яркости с медиастраницы. Когда функциональным рядом занимается драйвер,
@@ -106,9 +106,12 @@ namespace MagicKeys
                 if (!e.Media) return;
                 // Снимок: сюда приходят с потока переписи клавиш, а живой объект правит окно.
                 Settings s = _engine.Current;
-                if (s == null || !s.Enabled || !s.BrightnessFromMediaKeys) return;
-                if (e.Code == Native.UsageBrightnessUp) Brightness.Nudge(s.BrightnessStep);
-                else if (e.Code == Native.UsageBrightnessDown) Brightness.Nudge(-s.BrightnessStep);
+                // Без настройки: чужой драйвер шлёт эти коды или не шлёт, и подхватывать
+                // их безвредно в любом случае — Windows на обычном ПК всё равно применяет
+                // их только к встроенной панели, которой тут нет.
+                if (s == null || !s.Enabled) return;
+                if (e.Code == Native.UsageBrightnessUp) Brightness.Nudge(Settings.BrightnessStep);
+                else if (e.Code == Native.UsageBrightnessDown) Brightness.Nudge(-Settings.BrightnessStep);
             };
 
             // Один раз при запуске: событие DevicesChanged поднимается только когда
@@ -131,7 +134,8 @@ namespace MagicKeys
                 Dispatcher.BeginInvoke((Action)delegate
                 {
                     Diag.Log("индикатор яркости: " + percent + "% на " + (name ?? "?"));
-                    if (!_settings.ShowBrightnessOsd) return;
+                    // Плашка показывается всегда: системной для внешних мониторов
+                    // не существует, и выключить свою — менять яркость вслепую.
                     try { Osd.Show(percent, screen); }
                     catch (Exception e) { Diag.Log("индикатор яркости: сбой", e); }
                 });
@@ -295,6 +299,12 @@ namespace MagicKeys
                     : (_settings.PauseWhenAppleAbsent && !Devices.AppleConnected
                         ? "ожидание Magic Keyboard"
                         : "работает"));
+            // Заряд в подсказке: этого Windows не умеет вовсе — свойство Bluetooth пустое,
+            // а программа спрашивает заряд у самой клавиатуры отчётом. Прятать такое
+            // на служебной странице жалко.
+            int battery = KeyboardBattery.Percent;
+            if (battery >= 0) state += " · заряд " + battery + " %";
+
             // NotifyIcon.Text не принимает больше 63 символов.
             string text = "MagicKeys — " + state;
             _tray.Text = text.Length > 62 ? text.Substring(0, 62) : text;

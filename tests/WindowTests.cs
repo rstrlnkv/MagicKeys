@@ -58,10 +58,50 @@ namespace MagicKeys
             Console.WriteLine("== кнопки ==");
             foreach (string p in pages) Buttons(p);
 
+            RightOptionSymbols();
+
             Console.WriteLine();
             Console.WriteLine("прошло " + _pass + ", провалено " + _fail);
             foreach (string f in _fails) Console.WriteLine("  ПРОВАЛ: " + f);
             return _fail == 0 ? 0 : 1;
+        }
+
+        /// <summary>
+        /// Правый ⌥ в роли «символы». С заводскими настройками эта ветка карточки
+        /// не собирается вовсе — клавиша занята заменой Fn, — а вместе с ней стенда
+        /// не касался и переключатель «Любой ⌥», у которого своё правило в Normalize.
+        /// </summary>
+        static void RightOptionSymbols()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== правый ⌥ в роли «символы» ==");
+            Settings saved = _s.Snapshot();
+
+            _s.FnSubstitute = ModKey.None;
+            _s.OptLevel = OptLevel.RightOption;
+            _s.MapRAlt = ModKey.RAlt;
+            _s.MapCapsLock = ModKey.LAlt;   // левый Alt живёт на Caps Lock,
+            _s.MapLAlt = ModKey.LCtrl;      // а сама клавиша ⌥ уведена
+            _eng.Apply(_s);
+
+            MethodInfo m = typeof(MainWindow).GetMethod("PageKeys",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            var boxes = new List<CheckBox>();
+            var combos = new List<ComboBox>();
+            try { Walk((UIElement)m.Invoke(_win, null), boxes, combos); }
+            catch (Exception e) { Check("страница «Клавиши» с ролью «символы»", false, Inner(e)); Restore(saved); return; }
+
+            bool found = false;
+            foreach (CheckBox cb in boxes)
+            {
+                string name = Label(cb);
+                if (name == null || name.IndexOf("Любой") < 0) continue;
+                found = true;
+                Flip(cb);
+            }
+            Check("переключатель «Любой ⌥» есть, когда правый ⌥ набирает символы",
+                  found, "его нет на странице");
+            Restore(saved);
         }
 
         static void Check(string name, bool ok, string got)
@@ -106,7 +146,8 @@ namespace MagicKeys
         static readonly string[] SafeButtons =
         {
             "⌘ работает как Ctrl", "Как в Windows", "Без изменений",
-            "Вернуть заводские для этой модели", "Настроить программу под драйвер"
+            "Вернуть заводские для этой модели", "Настроить программу под драйвер",
+            "Stable", "Dev"
         };
 
         static void Buttons(string page)
@@ -140,7 +181,11 @@ namespace MagicKeys
                 string diff = Diff(before, Snap());
                 Check("кнопка «" + title + "»: изменённое дошло до перехвата",
                       diff == "" || _applied > applied, "изменила " + diff + ", а перехвату не отдала");
-                Consistent("после «" + title + "»");
+                string undone = Undone();
+                Check("кнопка «" + title + "»: выбранное переживает Normalize", undone == "",
+                      "Normalize вернул " + undone);
+                string wrong = Wrong();
+                Check("кнопка «" + title + "»: настройки не разошлись", wrong == "", wrong);
             }
             Restore(saved);
         }
@@ -178,17 +223,37 @@ namespace MagicKeys
         /// на клавише, которой его не набрать, «любой ⌥» обещал левую клавишу, увёденную
         /// на другую роль.
         /// </summary>
-        static void Consistent(string where)
+        /// <summary>
+        /// Что разошлось в настройках — или пусто, если всё сошлось. Отвечает строкой,
+        /// а не отчётом: спрашивают это на каждый пункт каждого списка, и по строке
+        /// на каждый ответ прогон распухал до тысяч строк, в которых ничего не видно.
+        ///
+        /// Достижимость, а не поле: перехват узнаёт ⌥ перебором зажатых клавиш
+        /// с вопросом «во что она превращается», и третий уровень работает, когда Alt
+        /// живёт хоть на Caps Lock.
+        /// </summary>
+        static string Wrong()
         {
-            Check(where + ": правый ⌥ не заменяет Fn и не набирает символы разом",
-                  !(_s.FnSubstitute == ModKey.RAlt && _s.OptLevel != OptLevel.Off),
-                  "FnSubstitute=" + _s.FnSubstitute + ", OptLevel=" + _s.OptLevel);
-            Check(where + ": третьему уровню оставлен правый Alt",
-                  _s.OptLevel == OptLevel.Off || _s.MapRAlt == ModKey.RAlt,
-                  "MapRAlt=" + _s.MapRAlt + ", OptLevel=" + _s.OptLevel);
-            Check(where + ": «любой ⌥» достижим левой клавишей",
-                  _s.OptLevel != OptLevel.AnyOption || _s.MapLAlt == ModKey.LAlt,
-                  "MapLAlt=" + _s.MapLAlt + ", OptLevel=" + _s.OptLevel);
+            if (_s.FnSubstitute == ModKey.RAlt && _s.OptLevel != OptLevel.Off)
+                return "правый ⌥ разом заменяет Fn и набирает символы (OptLevel=" + _s.OptLevel + ")";
+            if (_s.OptLevel != OptLevel.Off && !_s.Reaches(ModKey.RAlt))
+                return "третьего уровня не набрать: правого Alt не даёт ни одна клавиша";
+            if (_s.OptLevel == OptLevel.AnyOption && !_s.Reaches(ModKey.LAlt))
+                return "«любой ⌥» обещан, а левого Alt не даёт ни одна клавиша";
+            return "";
+        }
+
+        /// <summary>
+        /// Переживает ли выбор человека Normalize. Программа применяет настройки не так,
+        /// как стенд: ApplyAndSave сперва зовёт Normalize. Не переживает — значит окно
+        /// показывает одно, а держит другое: галочка стоит, настройка сброшена,
+        /// и ни одна надпись об этом не сказала.
+        /// </summary>
+        static string Undone()
+        {
+            Dictionary<string, string> before = Snap();
+            _s.Normalize();
+            return Diff(before, Snap());
         }
 
         static void Walk(object node, List<CheckBox> boxes, List<ComboBox> combos)
@@ -302,6 +367,11 @@ namespace MagicKeys
             bool ok = diff != "" && _applied > applied;
             Check("«" + Short(name) + "» → " + (diff == "" ? "ничего не изменил" : diff),
                   ok, diff == "" ? "ни одно поле настроек не изменилось" : "настройки не применились");
+            string undone = Undone();
+            Check("«" + Short(name) + "»: выбранное переживает Normalize", undone == "",
+                  "Normalize вернул " + undone);
+            string wrong = Wrong();
+            Check("«" + Short(name) + "»: настройки не разошлись", wrong == "", wrong);
 
             // Возвращаем как было: следующая проверка должна начинаться с чистого места.
             try { cb.IsChecked = was; } catch { }
@@ -323,6 +393,7 @@ namespace MagicKeys
             string why = "";
 
             var dead = new List<string>();
+            string badItem = "";
             Settings saved = _s.Snapshot();
             for (int i = 0; i < box.Items.Count; i++)
             {
@@ -337,6 +408,12 @@ namespace MagicKeys
                 if (diff == "") { dead.Add(Text(box, i)); continue; }
                 if (_applied == applied) { ok = false; why = "пункт «" + Text(box, i) + "» не применился"; break; }
                 seen.Add(diff);
+                string undone = Undone();
+                if (undone != "" && badItem == "")
+                    badItem = "пункт «" + Text(box, i) + "»: Normalize вернул " + undone;
+                string wrong = Wrong();
+                if (wrong != "" && badItem == "")
+                    badItem = "пункт «" + Text(box, i) + "»: " + wrong;
             }
             if (ok && dead.Count > 0)
             {
@@ -346,6 +423,8 @@ namespace MagicKeys
 
             string field = seen.Count > 0 ? Field(seen[0]) : "?";
             Check("список «" + field + "»: " + seen.Count + " пунктов меняют настройки", ok, why);
+            Check("список «" + field + "»: ни один пункт не разошёлся с Normalize",
+                  badItem == "", badItem);
 
             // Возвращаемся к тому пункту, который список показывал с самого начала.
             // Настройки обязаны стать теми же, что были: список показывает состояние,

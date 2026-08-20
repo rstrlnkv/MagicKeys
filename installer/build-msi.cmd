@@ -32,6 +32,16 @@ if not exist "%ROOT%\MagicKeys.exe" (
   exit /b 1
 )
 
+rem И версия собранного файла та же. Читать её из BuildInfo.cs мало: это исходник, то есть
+rem версия, какой она СТАНЕТ после следующей сборки. Забыв build.cmd, можно собрать пакет
+rem 0.2.0 с программой 0.1.0 внутри — и человек получит вечное «есть новый выпуск»:
+rem обновление сверяет тег с версией собранного файла, а не с именем пакета.
+powershell -NoProfile -Command "exit [int]((Get-Item '%ROOT%\MagicKeys.exe').VersionInfo.FileVersion -notlike '%VERSION%*')"
+if errorlevel 1 (
+  echo Версия собранного MagicKeys.exe не сходится с %VERSION% — пересоберите: build.cmd
+  exit /b 1
+)
+
 rem Эти три собирать нечем — они просто лежат в репозитории. Совет «соберите
 rem программу» отправил бы делать то, что не помогает.
 for %%F in ("%ROOT%\MagicKeys.ico" "%ROOT%\LICENSE" "%ROOT%\README.md") do (

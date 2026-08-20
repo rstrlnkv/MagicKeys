@@ -353,10 +353,16 @@ namespace MagicKeys
             Actions.End(a);
             Tapped("⏏ → Delete", true, Vk.Delete);
 
+            // Заводское значение спрашиваем у нового объекта: строкой ниже мы его
+            // переписываем, и прежняя проверка сверяла только что записанное — она
+            // прошла бы при любом заводском назначении.
+            Check("⏏ по умолчанию не вмешивается",
+                  Actions.Get(new Settings().EjectKey).Kind == ActionKind.PassThrough,
+                  "заводское назначение ⏏ — «" + new Settings().EjectKey + "»");
             s = Fresh(); s.EjectKey = "none";
             _eng.Apply(s); Clear();
             a = Actions.Get(_eng.Current.EjectKey);
-            Check("⏏ по умолчанию не вмешивается", a.Kind == ActionKind.PassThrough, "" + a.Kind);
+            Check("выключенное ⏏ не вмешивается", a.Kind == ActionKind.PassThrough, "" + a.Kind);
             Clear();
         }
 
@@ -797,8 +803,14 @@ namespace MagicKeys
             bool passDown = Down(Vk.F1 + 6);    // F7 ушла насквозь: Fn никто не держит
             Clear();
             DownE(Vk.RMenu);                    // заменитель Fn нажали, не отпуская F7
-            Down(Vk.F1 + 6);                    // автоповтор F7
-            Up(Vk.F1 + 6);
+            bool passRepeat = Down(Vk.F1 + 6);  // автоповтор F7
+            bool passUp = Up(Vk.F1 + 6);
+            // Вердикты, а не только отправленное: ими и отличается «правильно»
+            // от «клавиша ушла в приложение, а отпускание съели мы».
+            Check("F-клавишу, ушедшую насквозь, заменитель Fn не отбирает",
+                  !passDown && !passRepeat && !passUp,
+                  "нажатие=" + passDown + ", повтор=" + passRepeat +
+                  ", отпускание=" + passUp + ", пришло «" + Sent() + "»");
             Check("F-клавиша, ушедшая насквозь, не превращается в медиадействие",
                   !passDown && Sent().IndexOf(N(Vk.MediaPrev)) < 0,
                   "нажатие=" + passDown + ", пришло «" + Sent() + "»");
@@ -993,6 +1005,53 @@ namespace MagicKeys
             Check("русская раскладка читается", Layouts.ById("ru") != null, "нет ru");
 
             DeadKeyUnderAlt();
+            BrokenLayoutFile();
+        }
+
+        /// <summary>
+        /// Файл раскладки из пользовательской папки пишет не программа: он может быть
+        /// чужим, оборванным или неполным. Ни один такой не должен ни ронять разбор,
+        /// ни превращать нажатие в пустоту.
+        /// </summary>
+        static void BrokenLayoutFile()
+        {
+            Head("Битый файл раскладки");
+            string dir = Path.Combine(Path.GetTempPath(), "magickeys-proba");
+            string p = Path.Combine(dir, "proba.xml");
+            try
+            {
+                Directory.CreateDirectory(dir);
+
+                File.WriteAllText(p, "<Chuzhoe sam=\"po sebe\"/>", Encoding.UTF8);
+                Check("чужой корень раскладкой не считается", Load(p) == null, "вернул раскладку");
+
+                File.WriteAllText(p, "<AppleLayout id=\"proba\"><Key scan=\"ZZ\" base=\"a\"/></AppleLayout>",
+                                  Encoding.UTF8);
+                Check("чепуха вместо скан-кода не роняет разбор", Load(p) == null, "вернул раскладку");
+
+                File.WriteAllText(p, "<AppleLayout id=\"proba\"><Key scan=\"1E\" base=\"a\"/>", Encoding.UTF8);
+                Check("оборванный файл не роняет разбор", Load(p) == null, "вернул раскладку");
+
+                File.WriteAllText(p,
+                    "<AppleLayout id=\"proba\"><Key scan=\"1E\" base=\"a\"/><Dead from=\"^a\"/></AppleLayout>",
+                    Encoding.UTF8);
+                AppleLayoutFile f = Load(p);
+                Check("переход без «to» не превращает нажатие в пустоту",
+                      f == null || f.Compose("^", "a") != "", "получили пустую строку");
+            }
+            catch (Exception e) { Check("битый файл раскладки", false, e.Message); }
+            finally
+            {
+                try { File.Delete(p); } catch { }
+                try { Directory.Delete(dir); } catch { }
+            }
+        }
+
+        /// <summary>Разбор, который не роняет стенд: битый файл вправе бросить.</summary>
+        static AppleLayoutFile Load(string path)
+        {
+            try { return AppleLayoutFile.Load(path); }
+            catch { return null; }
         }
 
         /// <summary>

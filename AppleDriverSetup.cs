@@ -107,7 +107,10 @@ namespace MagicKeys
                 // чужой установщик может любая программа этого же пользователя.
                 string msi = Path.Combine(CacheFolder, "7zip.msi");
                 report(0, "скачиваю 7-Zip…");
-                if (!Download(SevenZipMsi, msi, report, null, out error)) return null;
+                // Не держимся сайта: у установщика 7-Zip своя подпись, свой подписант
+                // и корень из машинного хранилища — три проверки, каждой из которых
+                // хватило бы и без этой.
+                if (!Download(SevenZipMsi, msi, report, null, false, out error)) return null;
 
                 // Перед msiexec проверяем подпись: административная установка исполняет
                 // последовательность действий из самого пакета, то есть чужой MSI здесь
@@ -457,7 +460,7 @@ namespace MagicKeys
                 // проверять его слабее, чем сам пакет, значит запирать вторую дверь
                 // при открытой первой.
                 string catalogError;
-                using (HttpWebResponse resp = OpenHttps(Catalog, "GET", 0, out catalogError))
+                using (HttpWebResponse resp = OpenHttps(Catalog, "GET", 0, true, out catalogError))
                 {
                     if (resp == null) { error = catalogError; return false; }
                     using (var reader = new StreamReader(resp.GetResponseStream()))
@@ -504,6 +507,29 @@ namespace MagicKeys
         }
 
         /// <summary>
+        /// Тот же сайт, что и вначале: совпадают две последние части имени. Строже
+        /// нельзя — каталог Apple живёт на swscan.apple.com, а пакеты раздаёт
+        /// swcdn.apple.com, и это законный переход.
+        /// </summary>
+        private static bool SameSite(Uri a, Uri b)
+        {
+            return Site(a) == Site(b) && Site(a).Length > 0;
+        }
+
+        private static readonly char[] Dot = { (char)46 };
+
+        private static string Site(Uri u)
+        {
+            try
+            {
+                string[] parts = u.Host.ToLowerInvariant().Split(Dot);
+                if (parts.Length < 2) return u.Host.ToLowerInvariant();
+                return parts[parts.Length - 2] + "." + parts[parts.Length - 1];
+            }
+            catch { return ""; }
+        }
+
+        /// <summary>
         /// Ведёт ли ссылка на серверы Apple. Список каталога подписью не защищён,
         /// и адрес в нём — такие же данные, как всё остальное.
         /// </summary>
@@ -524,7 +550,7 @@ namespace MagicKeys
             try
             {
                 string error;
-                using (HttpWebResponse resp = OpenHttps(url, "HEAD", 0, out error))
+                using (HttpWebResponse resp = OpenHttps(url, "HEAD", 0, true, out error))
                     return resp == null ? -1 : resp.ContentLength;
             }
             catch { return -1; }
@@ -538,17 +564,29 @@ namespace MagicKeys
         /// с правами администратора. То же требование уже выполнено в Updater.Grab —
         /// здесь оно ничем не слабее.
         /// </summary>
-        private static HttpWebResponse OpenHttps(string url, string method, long from, out string error)
+        private static HttpWebResponse OpenHttps(string url, string method, long from,
+                                                 bool sameSite, out string error)
         {
             error = null;
             EnsureTls();
             Uri at;
             if (!Uri.TryCreate(url, UriKind.Absolute, out at)) { error = "ссылка не разбирается"; return null; }
+            Uri start = at;
             for (int hop = 0; hop < 5; hop++)
             {
                 if (at.Scheme != Uri.UriSchemeHttps)
                 {
                     error = "загрузка увела с защищённого соединения";
+                    return null;
+                }
+                // И с сайта не увела. Проверка хоста на первой ссылке ничего не стоит,
+                // если переход уводит куда угодно, — а сюда попадает пакет Apple, который
+                // потом уйдёт в pnputil с правами администратора и не проверяется больше
+                // ничем, кроме подписи драйвера. Для установщика 7-Zip требование мягче:
+                // у него своя подпись, свой подписант и корень из машинного хранилища.
+                if (sameSite && !SameSite(start, at))
+                {
+                    error = "загрузка увела на другой сайт: " + at.Host;
                     return null;
                 }
                 var req = (HttpWebRequest)WebRequest.Create(at);
@@ -638,8 +676,28 @@ namespace MagicKeys
         }
 
         /// <summary>Качает пакет, докачивая начатое. report(доля 0..1, поясняющая строка).</summary>
-        public static bool Download(string url, string target, Action<double, string> report,
-                                    ManualResetEvent cancel, out string error)
+        /// <summary>
+        /// Скачать пакет Apple: не сходя с https и не сходя с сайта Apple. После этого
+        /// файла проверять нечем — он уйдёт в pnputil с правами администратора, и
+        /// последним заслоном останется подпись драйвера.
+        /// </summary>
+        public static bool DownloadFromApple(string url, string target, Action<double, string> report,
+                                            ManualResetEvent cancel, out string error)
+        {
+            if (!AppleHost(url))
+            {
+                error = "ссылка на пакет ведёт не к Apple — качать оттуда не буду";
+                return false;
+            }
+            return Download(url, target, report, cancel, true, out error);
+        }
+
+        /// <param name="sameSite">
+        /// Держаться ли того же сайта на перенаправлениях. Для пакета Apple — да:
+        /// после него проверять нечем. Для установщика 7-Zip — нет: у него своя подпись.
+        /// </param>
+        private static bool Download(string url, string target, Action<double, string> report,
+                                    ManualResetEvent cancel, bool sameSite, out string error)
         {
             error = null;
             try
@@ -673,7 +731,7 @@ namespace MagicKeys
                 }
                 if (total > 0) WriteState(target, url, total, null);
 
-                HttpWebResponse opened = OpenHttps(url, "GET", have, out error);
+                HttpWebResponse opened = OpenHttps(url, "GET", have, sameSite, out error);
                 if (opened == null) return false;
 
                 using (HttpWebResponse resp = opened)
@@ -993,7 +1051,6 @@ namespace MagicKeys
         //  Установка
         // ------------------------------------------------------------------
 
-        /// <summary>Ставит драйвер через pnputil. Требует прав администратора — их спросит Windows.</summary>
         /// <summary>
         /// Ставит драйвер через pnputil. Требует прав администратора — их спросит Windows.
         ///

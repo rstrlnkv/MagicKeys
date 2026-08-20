@@ -79,8 +79,20 @@
       <RegistrySearch Id="PrevShortcut" Root="HKLM" Key="Software\MagicKeys"
                       Name="ShortcutChoice" Type="raw" Win64="yes" />
     </Property>
-    <SetProperty Id="INSTALLSHORTCUT" Value="0" After="AppSearch" Sequence="both">
-      PREVSHORTCUT = "0"
+    <!--
+      Ответ берём в три шага, и порядок важен. Пусто — значит из командной строки
+      о ярлыке не просили: тогда слушаем прошлый выбор, а если и его нет — ставим.
+      Прежде свойство имело значение по умолчанию и перезаписывалось безусловно,
+      и переустановка с INSTALLSHORTCUT=1 молча возвращалась к 0: передумать
+      было нечем.
+    -->
+    <SetProperty Id="INSTALLSHORTCUT" Value="0" After="AppSearch" Sequence="both"
+                 Action="ShortcutFromPrev">
+      NOT INSTALLSHORTCUT AND PREVSHORTCUT = "0"
+    </SetProperty>
+    <SetProperty Id="INSTALLSHORTCUT" Value="1" After="ShortcutFromPrev" Sequence="both"
+                 Action="ShortcutDefault">
+      NOT INSTALLSHORTCUT
     </SetProperty>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -139,7 +151,8 @@
       нельзя отказаться — компонент ставится целиком. Ключом здесь запись в реестре,
       потому что сам ярлык ключом быть не может.
     -->
-    <Property Id="INSTALLSHORTCUT" Value="1" Secure="yes" />
+    <!-- Без значения по умолчанию: пусто здесь значит «не просили», см. SetProperty выше. -->
+    <Property Id="INSTALLSHORTCUT" Secure="yes" />
 
     <DirectoryRef Id="ProgramMenuFolder">
       <Component Id="StartMenuShortcut" Guid="*" Win64="yes">

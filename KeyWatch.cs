@@ -462,8 +462,13 @@ namespace MagicKeys
                 if (n > _maxFunctionKey) _maxFunctionKey = n;
             }
 
-            Action h = Discovered;
-            if (h != null) h();
+            // Как и у Report: упавший подписчик не должен уносить разбор события.
+            try
+            {
+                Action h = Discovered;
+                if (h != null) h();
+            }
+            catch (Exception ex) { Diag.Log("перепись клавиш: подписчик Discovered упал", ex); }
         }
 
         private static void Report(KeyEvent e)

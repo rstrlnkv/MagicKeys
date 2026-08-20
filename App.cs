@@ -114,7 +114,11 @@ namespace MagicKeys
                 // и подхватывать их безвредно в любом случае — Windows на обычном ПК всё
                 // равно применяет их только к встроенной панели, которой тут нет. А вот
                 // общий выключатель спрашиваем: «Переназначения: Выключены» значит всё.
+                // И паузу тоже: выбрав «Только с Magic Keyboard», человек попросил
+                // программу не вмешиваться, пока её нет, — а коды яркости приходят
+                // и с чужой клавиатуры.
                 if (s == null || !s.Enabled) return;
+                if (s.PauseWhenAppleAbsent && !Devices.AppleConnected) return;
                 if (e.Code == Native.UsageBrightnessUp) Brightness.Nudge(Settings.BrightnessStep);
                 else if (e.Code == Native.UsageBrightnessDown) Brightness.Nudge(-Settings.BrightnessStep);
             };
@@ -204,8 +208,10 @@ namespace MagicKeys
                 // И спрятанное тоже: закрытие прячет окно в трей, то есть спрятанное —
                 // обычное его состояние. Без этого страница показывала прежний ответ
                 // до следующего запуска, а первый щелчок по списку «выбирал» показанное.
-                if (_window != null) _window.Rebuild();
+                // Сперва применяем: ApplyAndSave зовёт Normalize, и тот вправе поправить
+                // настройки. Показывать надо то, что вышло, а не то, что просили.
                 ApplyAndSave();
+                if (_window != null) _window.Rebuild();
             };
 
             var quit = new Forms.ToolStripMenuItem("Выход");

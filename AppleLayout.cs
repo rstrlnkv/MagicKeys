@@ -120,8 +120,13 @@ namespace MagicKeys
                 }
                 else if (e.Name == "Dead")
                 {
+                    // Оба непустые. GetAttribute для отсутствующего атрибута отдаёт
+                    // пустую строку, а не null, — прежняя проверка «to != null» не могла
+                    // провалиться. Переход в пустоту потом съедал нажатие и не печатал
+                    // ничего: клавиша переставала работать, и понять почему было нельзя.
                     string from = e.GetAttribute("from"), to = e.GetAttribute("to");
-                    if (!String.IsNullOrEmpty(from) && to != null) f.Transforms[from] = to;
+                    if (!String.IsNullOrEmpty(from) && !String.IsNullOrEmpty(to))
+                        f.Transforms[from] = to;
                 }
             }
             return f.Keys.Count > 0 ? f : null;

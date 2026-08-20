@@ -22,17 +22,24 @@ namespace MagicKeys
         private const int ReportSize = 3;
 
         private static readonly object Sync = new object();
-        // −2 — ещё не спрашивали, −1 — спросили и не ответила. Разница видна человеку:
-        // при −2 показывать «клавиатура не ответила» значит утверждать то, чего никто
-        // не проверял, — а по Bluetooth первый ответ приходит секундами позже.
+        // Состояний три, и путать их нельзя: человеку показывают разные слова.
+        // −1 — спросили, клавиатура не ответила (бывает по Bluetooth у спящей).
+        // −2 — ещё не спрашивали: по Bluetooth первый ответ приходит секундами позже,
+        //      и говорить «не ответила» в эту секунду значит утверждать непроверенное.
+        // −3 — спрашивать некого: вендорной коллекции, через которую спрашивают заряд,
+        //      у этой клавиатуры нет вовсе. Ждать нечего, и обещать «сейчас придёт»
+        //      нельзя — это штатное состояние для алюминиевых моделей, а не сбой.
         private static int _percent = Unknown;
 
         /// <summary>Ещё не спрашивали.</summary>
         public const int Unknown = -2;
+
+        /// <summary>Спрашивать некого: клавиатура заряд не сообщает.</summary>
+        public const int NoSource = -3;
         private static DateTime _stamp = DateTime.MinValue;
 
         /// <summary>
-        /// Проценты заряда или −1, если пока неизвестно.
+        /// Проценты заряда или одно из трёх «не число»: −1, Unknown, NoSource.
         ///
         /// Чтение НЕ здесь: оно открывает устройство HID и ждёт отчёта, а по Bluetooth
         /// у спящей клавиатуры это заметная заминка — и приходилась она на поток окна,
@@ -81,12 +88,21 @@ namespace MagicKeys
             });
         }
 
+        /// <summary>
+        /// Забыть ответ. Не только срок: число тоже, иначе заряд прежней клавиатуры
+        /// показывается как заряд новой — «промах не стирает известного» относится
+        /// к промаху той же клавиатуры, а не к смене устройства.
+        /// </summary>
         public static void Invalidate()
         {
-            lock (Sync) _stamp = DateTime.MinValue;
+            lock (Sync) { _stamp = DateTime.MinValue; _percent = Unknown; }
         }
 
-        /// <summary>Спросить клавиатуру о заряде. Срок держит Wake, здесь его нет.</summary>
+        /// <summary>
+        /// Спросить клавиатуру о заряде и потратить на это минутный срок. Срок держат
+        /// оба: Wake решает, пора ли спрашивать, а здесь он отсчитывается заново —
+        /// но только когда было кого спрашивать.
+        /// </summary>
         private static void Refresh()
         {
             // Путь узнаём до срока: список устройств заполняется в своём потоке, а по
@@ -94,8 +110,14 @@ namespace MagicKeys
             // не ответила» и держали этот ответ минуту — при исправной клавиатуре.
             string path = Devices.AppleStatusPath;
 
-            // Срок тратим, только если было кого спрашивать.
-            if (!String.IsNullOrEmpty(path)) { lock (Sync) _stamp = DateTime.UtcNow; }
+            // Срок тратим, только если было кого спрашивать. И только если за то время,
+            // пока мы узнавали путь, набор клавиатур не сменился: иначе свежий Invalidate
+            // затирается сроком, отсчитанным по старому пути, и новую клавиатуру не
+            // спросят целую минуту.
+            if (!String.IsNullOrEmpty(path) && path == Devices.AppleStatusPath)
+            {
+                lock (Sync) _stamp = DateTime.UtcNow;
+            }
 
             int percent = -1, flags = -1;
             if (!String.IsNullOrEmpty(path)) Ask(path, out percent, out flags);
@@ -106,10 +128,10 @@ namespace MagicKeys
             // клавиатуры больше нет.
             lock (Sync)
             {
-                // Клавиатуры нет — не «не ответила», а «спрашивать было некого».
-                if (String.IsNullOrEmpty(path)) _percent = Unknown;
+                // Клавиатуры нет — не «не ответила», а «спрашивать некого».
+                if (String.IsNullOrEmpty(path)) _percent = NoSource;
                 else if (percent >= 0) _percent = percent;
-                else if (_percent == Unknown) _percent = -1;
+                else if (_percent < 0) _percent = -1;   // ждали ответа — не дождались
                 // Иначе не трогаем: известное число промах не стирает.
             }
             if (percent >= 0) Diag.Log("заряд клавиатуры: " + percent + " % (состояние " + flags + ")");

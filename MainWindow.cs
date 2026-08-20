@@ -390,7 +390,13 @@ namespace MagicKeys
                     : _s.FnSubstitute == ModKey.None
                         ? "Пока заменителя нет, нажать эти сочетания нечем: настоящая Fn " +
                           "до Windows не доходит."
-                    : _s.MacShortcuts && _s.FnSubstitute == ModKey.RAlt
+                    // По назначению, а не по надписи. Таблица macOS узнаёт ⌥ так же —
+                    // перебором зажатых клавиш с вопросом «во что она превращается», —
+                    // и ошибались мы в обе стороны: отключив обычное значение правого ⌥
+                    // (о чём сама же сноска ниже и просит), человек получал работающие
+                    // Fn+←→ и утверждение, что они отобраны; а выбрав заменителем клавишу,
+                    // которая после схемы «Как в Windows» стала левым Alt, — наоборот.
+                    : _s.MacShortcuts && FnSubstituteIsOption
                         ? "Fn+↑↓ листают страницу, Fn+Enter — это Insert. Fn+←→ и Fn+Backspace " +
                           "достаются сочетаниям macOS: там ⌥ ходит по словам, а начало и конец " +
                           "строки — на ⌘←→."
@@ -674,9 +680,24 @@ namespace MagicKeys
             rows.Children.Add(Note(what));
 
             if (now == "symbols")
-                rows.Children.Add(Toggle("Любой ⌥, как на маке — но тогда левый Alt перестанет открывать меню",
+            {
+                // Пересобираем страницу: Normalize вправе отменить этот выбор, если
+                // левого Alt не достать ни одной клавишей, — и тогда переключатель обязан
+                // погаснуть сам. Молча отменённый выбор — это окно, показывающее одно
+                // и держащее другое.
+                var anyOpt = Toggle("Любой ⌥, как на маке — но тогда левый Alt перестанет открывать меню",
                     _s.OptLevel == OptLevel.AnyOption,
-                    delegate(bool v) { _s.OptLevel = v ? OptLevel.AnyOption : OptLevel.RightOption; Save(); }));
+                    delegate(bool v)
+                    {
+                        _s.OptLevel = v ? OptLevel.AnyOption : OptLevel.RightOption;
+                        Save(); BuildPage();
+                    });
+                rows.Children.Add(anyOpt);
+                if (!_s.Reaches(ModKey.LAlt))
+                    rows.Children.Add(Note("Левого Alt сейчас не даёт ни одна клавиша — его увели " +
+                                           "переназначения ниже. Пока так, «любой ⌥» включить нечем: " +
+                                           "третий уровень остаётся на правом."));
+            }
 
             // Чем клавиша приходит в Windows — спрашиваем всегда, кроме роли «символы»:
             // там она обязана оставаться Alt, иначе третьего уровня не набрать. Заменителю
@@ -945,7 +966,11 @@ namespace MagicKeys
             else
             {
                 stack.Children.Add(Card("Заряд батареи", null,
-                    Note(battery == KeyboardBattery.Unknown
+                    Note(battery == KeyboardBattery.NoSource
+                        ? "Эта клавиатура заряд не сообщает: вендорной коллекции, через которую " +
+                          "его спрашивают, у неё нет. Ждать нечего — так устроены модели " +
+                          "без неё, и это не поломка."
+                        : battery == KeyboardBattery.Unknown
                         ? "Спрашиваю у клавиатуры… По Bluetooth ответ приходит не сразу; "  +
                           "как только он придёт, число появится здесь само."
                         : "Спросить не удалось: клавиатура не ответила. Придумывать число " +
@@ -983,6 +1008,17 @@ namespace MagicKeys
         private TextBlock _selfTestLog;
         private StackPanel _selfTestChecks;
         private readonly List<string> _selfTestLines = new List<string>();
+
+        /// <summary>Приходит ли клавиша-заменитель Fn в Windows как ⌥ — левый или правый.</summary>
+        private bool FnSubstituteIsOption
+        {
+            get
+            {
+                if (_s.FnSubstitute == ModKey.None) return false;
+                ModKey t = _s.TargetOf(_s.FnSubstitute);
+                return t == ModKey.LAlt || t == ModKey.RAlt;
+            }
+        }
 
         /// <summary>
         /// На какой клавише сейчас живёт ⌘. Пустая строка — на своей; null — ни на какой.
@@ -1216,12 +1252,10 @@ namespace MagicKeys
         }
 
         /// <summary>
-        /// Снять подписку страницы проверки и стереть накопленное.
+        /// Снять подписку страницы проверки.
         ///
-        /// Важно не только при уходе со страницы, но и когда окно прячут: закрытие окна
-        /// программу не выключает, а список последних нажатий — упорядоченная история
-        /// с человеческими именами клавиш. Оставленная в спрятанном окне, она через час
-        /// показала бы набранный за это время пароль тому, кто снова откроет окно.
+        /// Накопленное не трогает: пересборка той же страницы — не уход с глаз.
+        /// Стирает его соседний ForgetSelfTest, и зовут его там, где окно правда уходит.
         /// </summary>
         private void DetachSelfTest()
         {
@@ -1443,6 +1477,9 @@ namespace MagicKeys
             {
                 int fb = AppleDriver.FnBehavior;
                 var modes = new StackPanel();
+                // Пока идёт работа с драйвером, кнопки гасим: второй щелчок дал бы
+                // второй запрос прав администратора поверх первого.
+                modes.IsEnabled = !SetupBusy;
                 modes.Children.Add(PresetButton(
                     "Медиа сразу — как на маке" + (fb == 1 ? "  ·  сейчас так" : ""),
                     "F1–F12 сами дают громкость и перемотку, обычные F-клавиши — через Fn. " +
@@ -1543,10 +1580,17 @@ namespace MagicKeys
                      "и ничего не качает без нажатия кнопки.")));
 
             // ---- добыча и установка ----
+            // null — ещё ищем, пустая строка — искали и не нашли. Разницу нельзя терять:
+            // поиск идёт в стороне и занимает секунды (обход распакованного Boot Camp,
+            // потом SHA-256 двух мегабайт), и всё это время страница уверяла, что 7-Zip
+            // нет, — на машине, где он установлен.
             string sevenZip = String.IsNullOrEmpty(_sevenZip) ? null : _sevenZip;
+            bool stillLooking = _sevenZip == null;
             _setupLog = new TextBlock { TextWrapping = TextWrapping.Wrap, LineHeight = 19 };
             _setupLog.SetResourceReference(StyleProperty, "Caption");
             _setupLog.Text = _setupText != null ? _setupText
+                : stillLooking
+                ? "Ищу 7-Zip…"
                 : sevenZip != null
                 ? "7-Zip найден: " + sevenZip
                 : "7-Zip не найден. Он нужен для распаковки: внутри пакета Apple лежит образ DMG, "
@@ -1628,7 +1672,7 @@ namespace MagicKeys
                 buttons.Children.Add(wipe);
             }
 
-            if (sevenZip == null)
+            if (sevenZip == null && !stillLooking)
             {
                 var get7z = new Button { Content = "Открыть страницу 7-Zip", Margin = new Thickness(0, 0, 8, 8) };
                 get7z.SetResourceReference(StyleProperty, "Btn");
@@ -1807,7 +1851,7 @@ namespace MagicKeys
                         // Семьсот мегабайт человеку надо уметь остановить. Просьба об отмене
                         // и так проверяется на каждом куске — не хватало только способа
                         // её подать; кнопка «Отменить» появляется рядом с ходом загрузки.
-                        if (!AppleDriverSetup.Download(url, package,
+                        if (!AppleDriverSetup.DownloadFromApple(url, package,
                                 delegate(double part, string what) { SetupSay(head + "\n\n" + what); },
                                 _setupCancel, out error))
                         {

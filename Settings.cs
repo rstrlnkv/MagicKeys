@@ -238,6 +238,55 @@ namespace MagicKeys
             LayoutBindings = list.ToArray();
         }
 
+        /// <summary>
+        /// Снимок для тех, кто читает настройки с чужого потока.
+        ///
+        /// Живой объект настроек правит окно — прямо в полях, по одному на каждое
+        /// движение галочки. А поток перехвата читает их из обработчика на каждое
+        /// нажатие, без всякой синхронизации. Пока каждое поле умещается в машинное
+        /// слово, это сходит с рук: чтение отдаёт либо старое значение, либо новое,
+        /// и оба осмысленны. Но правило это нигде не записано, а держится оно на
+        /// свойстве, которого никто не обещал. Первое же составное значение — список
+        /// или пара полей, которые обязаны меняться вместе, — сломается молча и редко,
+        /// то есть самым дорогим способом.
+        ///
+        /// Поэтому потокам, кроме оконного, достаётся не сам объект, а его копия,
+        /// и меняется она только целиком: Engine.Apply кладёт новый снимок вместо
+        /// старого. Внутри снимка ничего не правят — он существует, чтобы его читали.
+        /// </summary>
+        public Settings Snapshot()
+        {
+            Settings s = (Settings)MemberwiseClone();
+
+            // Массивы копируем: без этого снимок делил бы их с живым объектом, и вся
+            // затея теряла бы смысл ровно там, где составные значения и опасны.
+            s.FKeys = CopyOf(FKeys);
+            s.JisKeys = CopyOf(JisKeys);
+            s.MacShortcutsOff = CopyOf(MacShortcutsOff);
+
+            if (LayoutBindings == null) s.LayoutBindings = null;
+            else
+            {
+                var b = new LayoutBinding[LayoutBindings.Length];
+                for (int i = 0; i < b.Length; i++)
+                {
+                    LayoutBinding src = LayoutBindings[i];
+                    if (src == null) continue;
+                    b[i] = new LayoutBinding { Lang = src.Lang, Layout = src.Layout };
+                }
+                s.LayoutBindings = b;
+            }
+            return s;
+        }
+
+        private static string[] CopyOf(string[] a)
+        {
+            if (a == null) return null;
+            var b = new string[a.Length];
+            Array.Copy(a, b, a.Length);
+            return b;
+        }
+
         // ---------- хранение ----------
 
         public static string Folder

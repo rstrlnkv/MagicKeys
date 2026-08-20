@@ -87,7 +87,8 @@ namespace MagicKeys
             };
             KeyWatch.EjectPressed += delegate
             {
-                Settings s = _settings;
+                // Тоже с потока переписи клавиш — тоже снимок.
+                Settings s = _engine.Current;
                 if (s == null) return;
                 KeyAction a = Actions.Get(s.EjectKey);
                 if (a.Kind == ActionKind.PassThrough) return;
@@ -102,7 +103,8 @@ namespace MagicKeys
             KeyWatch.Activity += delegate(KeyWatch.KeyEvent e)
             {
                 if (!e.Media) return;
-                Settings s = _settings;
+                // Снимок: сюда приходят с потока переписи клавиш, а живой объект правит окно.
+                Settings s = _engine.Current;
                 if (s == null || !s.Enabled || !s.BrightnessFromMediaKeys) return;
                 if (e.Code == Native.UsageBrightnessUp) Brightness.Nudge(s.BrightnessStep);
                 else if (e.Code == Native.UsageBrightnessDown) Brightness.Nudge(-s.BrightnessStep);

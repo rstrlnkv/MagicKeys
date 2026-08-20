@@ -756,6 +756,12 @@ namespace MagicKeys
 
                 LayoutBinding picked = _s.BindingFor(lang.Key);
                 string current = picked == null ? "auto" : (picked.Layout == null ? "" : picked.Layout);
+                // Выбранной раскладки может не оказаться среди файлов: её убрали из папки
+                // или переименовали. Список, не найдя своего значения, показал бы первый
+                // пункт — то есть уверял бы, что раскладка подбирается сама, тогда как
+                // выбор человека на месте и подмены не будет. Показываем как есть.
+                if (current != "" && current != "auto" && Layouts.ById(current) == null)
+                    choices.Add(new Choice { Value = current, Text = "«" + current + "» — файла нет" });
                 int langId = lang.Key;
                 var box = Combo(choices.ToArray(), current,
                     delegate(object v)
@@ -825,7 +831,13 @@ namespace MagicKeys
                 Toggle("Запускать вместе с Windows", Autostart.Enabled,
                     delegate(bool v) { Autostart.Set(v); }),
                 Toggle("Запускаться свёрнутой в значок", _s.StartMinimized,
-                    delegate(bool v) { _s.StartMinimized = v; Save(); }));
+                    delegate(bool v)
+                    {
+                        _s.StartMinimized = v;
+                        Save();
+                        // Запись автозапуска несёт в себе этот ответ — переписываем её.
+                        if (Autostart.Enabled) Autostart.Set(true);
+                    }));
         }
 
         /// <summary>
@@ -972,12 +984,14 @@ namespace MagicKeys
                         // выбора, — без этого он обещал язык там, где пробел не трогают.
                         Save(); BuildPage();
                     })),
-                Toggle("⌘+Tab переключает окна, как Alt+Tab", _s.CmdTabSwitchesWindows,
-                    delegate(bool v) { _s.CmdTabSwitchesWindows = v; Save(); }),
                 Note(_s.SpaceSearch == Settings.SpaceNone
                         ? "Пробел с модификатором остаётся программам как есть."
                         : "Второй клавише достаётся переключение языка — через собственный " +
                           "переключатель Windows.")));
+
+            stack.Children.Add(Card("Переключение окон", null,
+                Toggle("⌘+Tab переключает окна, как Alt+Tab", _s.CmdTabSwitchesWindows,
+                    delegate(bool v) { _s.CmdTabSwitchesWindows = v; Save(); })));
 
             // Три группы вместо сорока семи строк. Человек либо хочет всё — а хочет он
             // всё почти всегда, — либо ему мешает ровно одно сочетание; ради второго
@@ -2018,6 +2032,9 @@ namespace MagicKeys
             if (_building) return;
             _apply();
         }
+
+        /// <summary>Пересобрать страницу: настройки поменяли снаружи окна.</summary>
+        public void Rebuild() { BuildPage(); }
 
         private static Border Card(string title, string subtitle, params UIElement[] children)
         {

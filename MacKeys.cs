@@ -126,7 +126,7 @@ namespace MagicKeys
                 MacMod.Cmd, Vk.M, new int[] { Vk.LWin }, Vk.Down);
             Add("hide", GroupSystem, "Свернуть всё", "⌘H", "Win+D",
                 MacMod.Cmd, Vk.H, new int[] { Vk.LWin }, Vk.D);
-            // ⌘Space и ⌃Space настраиваются отдельно — см. SpaceAction.
+            // ⌘Space и ⌃Space — см. SpaceAction: там один вопрос на обе клавиши.
             Add("taskmgr", GroupSystem, "Диспетчер задач", "⌥⌘Esc", "Ctrl+Shift+Esc",
                 MacMod.Cmd | MacMod.Opt, Vk.Escape, new int[] { Vk.LControl, Vk.LShift }, Vk.Escape);
             Add("lock", GroupSystem, "Заблокировать экран", "⌃⌘Q", "Win+L",
@@ -226,8 +226,9 @@ namespace MagicKeys
         /// <summary>
         /// Пробел с модификатором. На маке привычки расходятся: у одних ⌘Space
         /// открывает поиск, у других переключает язык, а поиск живёт на ⌃Space.
-        /// Навязывать один вариант неправильно, поэтому обе клавиши настраиваются
-        /// по отдельности, а здесь только перевод роли в нажатие.
+        /// Навязывать один вариант неправильно, поэтому человек выбирает, на какой
+        /// из двух клавиш живёт поиск; второй достаётся язык. Здесь только перевод
+        /// роли в нажатие.
         /// </summary>
         public static MacShortcut SpaceAction(string role)
         {

@@ -9,6 +9,7 @@ using System.IO;
 using System.Net;
 using System.Text;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.RegularExpressions;
 using System.Threading;
 using Microsoft.Win32;
@@ -128,7 +129,7 @@ namespace MagicKeys
                     }
 
                 string signer;
-                if (!SignatureValid(msi, out signer) || !SignedBy7Zip(signer))
+                if (!SignatureValid(msi, out signer) || !SignedBy7Zip(signer) || !RootedInMachineStore(msi))
                 {
                     error = signer == null
                         ? "установщик 7-Zip не подписан — запускать его нельзя"
@@ -266,6 +267,42 @@ namespace MagicKeys
         {
             return !String.IsNullOrEmpty(signer)
                 && signer.IndexOf(SevenZipSigner, StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        /// <summary>
+        /// Ведёт ли подпись к корню из МАШИННОГО хранилища.
+        ///
+        /// Без этой проверки предыдущая ничего не стоит. Доверенным Windows считает
+        /// и корень, добавленный в хранилище текущего пользователя, а туда пишут без прав
+        /// администратора — то есть тот самый противник, ради которого проверка и делается,
+        /// выпускает себе сертификат с любым именем, хоть «Igor Pavlov», и обе проверки
+        /// проходит. В машинное хранилище без прав администратора не записать, а если
+        /// они у него уже есть, защищать нечего.
+        /// </summary>
+        private static bool RootedInMachineStore(string path)
+        {
+            try
+            {
+                var leaf = new X509Certificate2(X509Certificate.CreateFromSignedFile(path));
+                var chain = new X509Chain();
+                chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+                if (!chain.Build(leaf)) return false;
+                if (chain.ChainElements.Count == 0) return false;
+                string rootThumb = chain.ChainElements[chain.ChainElements.Count - 1].Certificate.Thumbprint;
+
+                var store = new X509Store(StoreName.Root, StoreLocation.LocalMachine);
+                try
+                {
+                    store.Open(OpenFlags.ReadOnly);
+                    return store.Certificates.Find(X509FindType.FindByThumbprint, rootThumb, false).Count > 0;
+                }
+                finally { store.Close(); }
+            }
+            catch (Exception e)
+            {
+                Diag.Log("не удалось выяснить корень подписи", e);
+                return false;
+            }
         }
 
         /// <summary>Сколько места занято скачанным и распакованным.</summary>
@@ -667,9 +704,20 @@ namespace MagicKeys
         // ------------------------------------------------------------------
 
         /// <summary>Ставит драйвер через pnputil. Требует прав администратора — их спросит Windows.</summary>
+        /// <summary>
+        /// Ставит драйвер через pnputil. Требует прав администратора — их спросит Windows.
+        ///
+        /// Файл .inf держим открытым без права записи на всё время установки: он лежит
+        /// там, куда 7-Zip распаковал архив Apple, а это папка текущего пользователя,
+        /// и писать в неё может любой его процесс — пока человек смотрит на запрос прав.
+        /// Соседние файлы драйвера так не удержать, и последним заслоном остаётся проверка
+        /// подписи самой Windows: неподписанный .sys в ядро не встанет. Заслон настоящий,
+        /// но единственным ему быть не следует, а этот — наш — стоит одной строки.
+        /// </summary>
         public static bool Install(string inf, out string output)
         {
-            return Pnputil("/add-driver \"" + inf + "\" /install", out output);
+            using (FileStream keep = Open(inf))
+                return Pnputil("/add-driver \"" + inf + "\" /install", out output);
         }
 
         public static bool Uninstall(string infName, out string output)
@@ -708,7 +756,13 @@ namespace MagicKeys
                 psi.Verb = "runas";
                 psi.CreateNoWindow = true;
                 psi.WindowStyle = ProcessWindowStyle.Hidden;
-                using (Process p = Process.Start(psi))
+                Process started = Process.Start(psi);
+                if (started == null)
+                {
+                    output = "Запрос прав администратора отклонён.";
+                    return false;
+                }
+                using (Process p = started)
                 {
                     if (!p.WaitForExit(120000))
                     {

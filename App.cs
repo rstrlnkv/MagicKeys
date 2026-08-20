@@ -62,7 +62,9 @@ namespace MagicKeys
 
             _settings = Settings.Load();
             _settings.MakeCurrent();
-            if (dev) _settings.DeveloperMode = true;
+            // Ключ включает режим на этот запуск, а первый же Save() от любой галочки
+            // делал его постоянным. Человек просил на один раз — в файл он не идёт.
+            if (dev && !_settings.DeveloperMode) { _settings.DeveloperMode = true; _devOnce = true; }
             if (_settings.StartMinimized) startHidden = true;
 
             _engine = new Engine();
@@ -190,6 +192,10 @@ namespace MagicKeys
             _enabledItem.Click += delegate
             {
                 _settings.Enabled = _enabledItem.Checked;
+                // Окно, если оно открыто, показывает то же самое списком — пересобираем,
+                // иначе там останется прежний ответ, и первый же щелчок по списку
+                // «выберет» показанное, а настройка к этому времени уже другая.
+                if (_window != null && _window.IsVisible) _window.Rebuild();
                 ApplyAndSave();
             };
 
@@ -381,10 +387,20 @@ namespace MagicKeys
             _window.RefreshDevices();
         }
 
+        /// <summary>Режим разработчика включён ключом на один запуск — в файл он не идёт.</summary>
+        private bool _devOnce;
+
         private void ApplyAndSave()
         {
             _engine.Apply(_settings);
-            _settings.Save();
+            if (_devOnce)
+            {
+                bool was = _settings.DeveloperMode;
+                _settings.DeveloperMode = false;
+                _settings.Save();
+                _settings.DeveloperMode = was;
+            }
+            else _settings.Save();
             UpdateTrayText();
         }
 

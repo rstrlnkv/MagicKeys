@@ -102,7 +102,16 @@ namespace MagicKeys
                 psi.Verb = "runas";
                 psi.WorkingDirectory = Environment.SystemDirectory;
                 psi.WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden;
-                using (System.Diagnostics.Process p = System.Diagnostics.Process.Start(psi))
+                System.Diagnostics.Process started = System.Diagnostics.Process.Start(psi);
+                if (started == null)
+                {
+                    // ShellExecute вернул пусто: нового процесса не было, то есть запрос
+                    // прав отклонили. Раньше это давало исключение, и человек читал
+                    // английский текст .NET вместо объяснения.
+                    error = "Запрос прав администратора отклонён.";
+                    return false;
+                }
+                using (System.Diagnostics.Process p = started)
                 {
                     p.WaitForExit(30000);
                     if (!p.HasExited) { error = "Windows не ответила на запрос записи"; return false; }

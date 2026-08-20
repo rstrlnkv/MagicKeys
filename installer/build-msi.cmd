@@ -52,9 +52,23 @@ if errorlevel 1 (
 )
 
 set WIX=%HERE%wix\wix\tools
-if not exist "%WIX%\candle.exe" (
+if not exist "%WIX%\light.exe" (
+  rem Проверяем light.exe, а не candle.exe: оборвавшаяся установка оставляла дерево,
+  rem в котором первый файл уже есть, а последнего нет, — и оно больше никогда
+  rem не доустанавливалось и не проверялось.
   echo === Набор WiX ===
   "%NUGET%" install WiX -Version 3.14.1 -OutputDirectory "%HERE%wix" -NonInteractive -ExcludeVersion || exit /b 1
+)
+
+rem Пакет собирает как раз WiX, а не nuget: тот его только приносит. Проверка,
+rem стоявшая на курьере, ничего не говорила об инструменте.
+rem Замерено: сами candle.exe, light.exe и heat.exe подписи Authenticode не имеют
+rem вовсе — проверять её у них нечего. Подписан пакет целиком, подписью хранилища
+rem nuget.org, и вот её проверить можно: без этого весь набор, которым собирается
+rem подписываемый нашим ключом пакет, приходит на одном доверии к TLS.
+"%NUGET%" verify -Signatures "%HERE%wix\wix\wix.nupkg" >nul || (
+  echo Подпись набора WiX не проверилась — сборка остановлена.
+  exit /b 1
 )
 
 rem Программу подписываем в копии, а не на месте: она может быть запущена,

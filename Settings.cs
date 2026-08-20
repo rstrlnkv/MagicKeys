@@ -578,7 +578,13 @@ namespace MagicKeys
                     if (on)
                     {
                         string exe = System.Reflection.Assembly.GetEntryAssembly().Location;
-                        k.SetValue(Name, "\"" + exe + "\" --tray");
+                        // «--tray» — только если человек этого просил. Раньше он ставился
+                        // всегда, и переключатель «запускаться свёрнутой» при включённом
+                        // автозапуске не делал ничего: обещание, которого программа
+                        // не исполняла.
+                        Settings s = Settings.Current;
+                        bool hidden = s == null || s.StartMinimized;
+                        k.SetValue(Name, "\"" + exe + "\"" + (hidden ? " --tray" : ""));
                     }
                     else if (k.GetValue(Name) != null)
                     {

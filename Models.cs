@@ -119,14 +119,17 @@ namespace MagicKeys
             m.Numpad = p.IndexOf("numeric", StringComparison.Ordinal) >= 0
                     || p.IndexOf("keypad", StringComparison.Ordinal) >= 0;
             m.TouchId = p.IndexOf("touch id", StringComparison.Ordinal) >= 0;
-            m.Eject = m.Numpad && !m.TouchId;
             m.FunctionKeys = m.Numpad ? 19 : 12;
             m.Phys = PhysLayout.Auto;
-            // «Magic Keyboard» без Touch ID — это 2015-й ряд подписей; с Touch ID — 2021-й.
-            if (p.IndexOf("magic", StringComparison.Ordinal) >= 0)
-                m.Gen = m.TouchId ? AppleGen.Magic2021 : AppleGen.Magic2015;
-            else
-                m.Gen = AppleGen.Alu;
+            m.Gen = p.IndexOf("magic", StringComparison.Ordinal) >= 0
+                ? (m.TouchId ? AppleGen.Magic2021 : AppleGen.Magic2015)
+                : AppleGen.Alu;
+
+            // Правило для ⏏ берём то же, что в основной таблице, а не своё. Своё
+            // говорило «есть блок и нет Touch ID», и алюминиевая компактная — как раз
+            // та, у которой ⏏ и есть, — получала «нет». Ответ про одну и ту же
+            // клавиатуру зависел от того, узнали ли её код.
+            m.Eject = m.Gen == AppleGen.Alu || (m.Gen == AppleGen.Magic2015 && m.Numpad);
             return m;
         }
 

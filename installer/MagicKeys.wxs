@@ -215,8 +215,15 @@
       их найдёт), а кэш убираем: кнопка «очистить загруженное» в программе есть, но
       после удаления её негде нажать.
     -->
+    <!--
+      Before="CostInitialize", а не CostFinalize: действие, собирающее список файлов
+      на удаление, стоит раньше — при CostFinalize свойство было ещё пусто, и список
+      выходил пустым всегда. Замерено по таблице последовательности собранного пакета.
+      NOT UPGRADINGPRODUCTCODE обязателен: при обновлении установщик прогоняет удаление
+      прежнего пакета целиком, и без оговорки кэш стирался бы на каждом обновлении.
+    -->
     <SetProperty Id="MagicKeysCacheFolder" Value="[LocalAppDataFolder]MagicKeys"
-                 Before="CostFinalize" Sequence="both" />
+                 Before="CostInitialize" Sequence="both">NOT UPGRADINGPRODUCTCODE</SetProperty>
 
     <InstallExecuteSequence>
       <!--

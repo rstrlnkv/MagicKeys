@@ -65,8 +65,6 @@ namespace MagicKeys
         {
             public Version Version;
             public string Tag;
-            public string Notes;
-            public string Page;
             public string FileUrl;
             public string FileName;
             public bool Early;
@@ -142,8 +140,6 @@ namespace MagicKeys
             var r = new Release();
             r.Tag = tag;
             r.Version = v;
-            r.Notes = Text(item, "body");
-            r.Page = Text(item, "html_url");
             r.Early = Truthy(item, "prerelease");
 
             object assets;
@@ -358,7 +354,6 @@ namespace MagicKeys
         /// которого к моменту запуска может уже не быть.
         /// </summary>
         private static FileStream _held;
-        private static string _heldPath;
 
         private static bool Hold(string path)
         {
@@ -367,16 +362,15 @@ namespace MagicKeys
             {
                 _held = new FileStream(path, FileMode.Open, FileAccess.Read,
                                        FileShare.Read);   // читать можно всем, писать — никому
-                _heldPath = path;
                 return true;
             }
-            catch { _held = null; _heldPath = null; return false; }
+            catch { _held = null; return false; }
         }
 
         private static void Unhold()
         {
             FileStream s = _held;
-            _held = null; _heldPath = null;
+            _held = null;
             if (s != null) try { s.Dispose(); } catch { }
         }
 

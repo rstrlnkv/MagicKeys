@@ -159,7 +159,13 @@ namespace MagicKeys
             // И здесь тоже только для встроенной панели. Эта ветка достаётся случаю,
             // когда по DDC/CI не отвечает ни один монитор: на ноутбуке с телевизором
             // без неё приглушалась бы панель ноутбука, где бы ни стоял указатель.
-            if (shown < 0 && IsInternal(cursorScreen)) shown = ApplyWmi(delta);
+            if (shown < 0 && IsInternal(cursorScreen))
+            {
+                shown = ApplyWmi(delta);
+                // Плашке нужен экран, иначе она уедет на главный, а не на тот,
+                // где указатель, — соседняя ветка передаёт его именно так.
+                if (shown >= 0) shownOn = cursorScreen;
+            }
             Diag.Log("яркость: итог " + shown + "% на " + ScreenName(shownOn) + (shownName == null ? "" : " (" + shownName + ")"));
             if (shown >= 0)
             {
@@ -379,6 +385,7 @@ namespace MagicKeys
                 if (cur < 0) return -1;
                 int target = Math.Max(0, Math.Min(100, cur + delta));
                 if (target == cur) return cur;
+                bool applied = false;
 
                 using (var searcher = new System.Management.ManagementObjectSearcher(
                            "root\\WMI", "SELECT * FROM WmiMonitorBrightnessMethods"))
@@ -387,9 +394,13 @@ namespace MagicKeys
                     foreach (System.Management.ManagementObject o in all)
                     {
                         using (o) o.InvokeMethod("WmiSetBrightness", new object[] { (uint)1, (byte)target });
+                        applied = true;
                     }
                 }
-                return target;
+                // Пустое перечисление — это «панели, которая слушается, нет», а не успех.
+                // Возвращая target без этой проверки, мы рисовали плашку с процентом,
+                // которого никто не выставлял, — ровно то, что уже исправили для DDC/CI.
+                return applied ? target : -1;
             }
             catch { return -1; }
         }

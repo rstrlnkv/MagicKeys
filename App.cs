@@ -271,7 +271,7 @@ namespace MagicKeys
                     if (_window != null)
                     {
                         Fluent.ApplyWindowStyling(_window);   // тёмный заголовок и Mica
-                        _window.RefreshTheme();
+                        _window.Rebuild();
                     }
                 }
                 catch (Exception ex) { Diag.Log("оформление: не удалось пересобрать", ex); }

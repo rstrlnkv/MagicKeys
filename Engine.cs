@@ -71,13 +71,25 @@ namespace MagicKeys
         private bool _fnHeld;
         private int _fnEffectiveVk;
         private int _subReleased;
-        private bool _cmdHeld;
         private bool _cmdTabAlt;
         // Стороны различаются нарочно. Один флаг на обе давал залипание: сочетание
         // macOS отпускало оба ⇧, а возвращало всегда левый — и после ⇧⌘Z, набранного
         // правым ⇧, в Windows навсегда оставался нажатым тот, которого не нажимали.
         private bool _shiftLeft, _shiftRight, _ctrlLeft, _ctrlRight;
-        private bool _winDown, _altLeft, _altRight;
+        private bool _winLeft, _winRight, _altLeft, _altRight;
+
+        /// <summary>Держат ли клавишу ⌘ — любую из двух.</summary>
+        private bool WinDown { get { return _winLeft || _winRight; } }
+
+        /// <summary>
+        /// Держат ли ⌘ так, что она и правда ⌘. Множество, а не флаг: зажать обе
+        /// и отпустить одну — обычное дело, а флаг при этом гас, и весь слой аккордов
+        /// вместе с ⌘+Tab переставал узнаваться до следующего нажатия. Стороны ⇧
+        /// и control здесь давно различают — эту клавишу забыли.
+        /// </summary>
+        private bool CmdHeld { get { return _cmdSources.Count > 0; } }
+
+        private readonly HashSet<ModKey> _cmdSources = new HashSet<ModKey>();
         private bool ShiftDown { get { return _shiftLeft || _shiftRight; } }
         private bool CtrlDown { get { return _ctrlLeft || _ctrlRight; } }
         private bool _phantomCtrl;
@@ -470,7 +482,7 @@ namespace MagicKeys
             }
 
             // ⌘+Tab ведёт себя как Alt+Tab.
-            if (s.CmdTabSwitchesWindows && vk == Vk.Tab && _cmdHeld && !Busy(vk, k.scanCode))
+            if (s.CmdTabSwitchesWindows && vk == Vk.Tab && CmdHeld && !Busy(vk, k.scanCode))
             {
                 if (!down) return false;   // нажатия не брали — и отпускание не наше
                 _chordTaken[vk] = null;
@@ -498,7 +510,7 @@ namespace MagicKeys
             if (s.MacShortcuts)
             {
                 MacMod mm = MacMod.None;
-                if (_cmdHeld) mm |= MacMod.Cmd;
+                if (CmdHeld) mm |= MacMod.Cmd;
                 if (_altLeft || _altRight) mm |= MacMod.Opt;
                 if (ShiftDown) mm |= MacMod.Shift;
                 if (CtrlDown && !_phantomCtrl) mm |= MacMod.Ctrl;
@@ -618,7 +630,7 @@ namespace MagicKeys
             if (cmdMiss)
             {
                 if (!down) return false;   // нажатия не брали — и отпускание не наше
-                if (_winDown) Input.Tap(VkNoop);
+                if (WinDown) Input.Tap(VkNoop);
                 _chordTaken[vk] = null;
                 return true;
             }
@@ -839,7 +851,8 @@ namespace MagicKeys
                 case ModKey.RShift: _shiftRight = down; break;
                 case ModKey.LCtrl: _ctrlLeft = down; break;
                 case ModKey.RCtrl: _ctrlRight = down; break;
-                case ModKey.LWin: case ModKey.RWin: _winDown = down; break;
+                case ModKey.LWin: _winLeft = down; break;
+                case ModKey.RWin: _winRight = down; break;
                 case ModKey.LAlt: _altLeft = down; break;
                 case ModKey.RAlt: _altRight = down; break;
             }
@@ -856,7 +869,8 @@ namespace MagicKeys
                 // а не открывать переключатель окон, и переводить сочетания ей уже
                 // незачем: человек попросил обмен клавиш вместо перевода. Заодно
                 // «выключить клавишу» перестаёт работать как ⌘.
-                _cmdHeld = down && (target == ModKey.LWin || target == ModKey.RWin);
+                if (down && (target == ModKey.LWin || target == ModKey.RWin)) _cmdSources.Add(phys);
+                else _cmdSources.Remove(phys);
                 if (!down && _cmdTabAlt)
                 {
                     Input.Key(Vk.LMenu, false);
@@ -1200,7 +1214,7 @@ namespace MagicKeys
             // одиночное нажатие. Поэтому пока Win ещё зажата, подсовываем незанятый
             // код: он ничего не делает, но снимает признак одиночного нажатия.
             // Тот же приём спасает от строки меню, которую открывает одиночный Alt.
-            if (_winDown || _altLeft || _altRight) Input.Tap(VkNoop);
+            if (WinDown || _altLeft || _altRight) Input.Tap(VkNoop);
 
             ModRelease(ModKey.LWin); ModRelease(ModKey.RWin);
             ModRelease(ModKey.LAlt); ModRelease(ModKey.RAlt);
@@ -1249,7 +1263,7 @@ namespace MagicKeys
                 _fnEffectiveVk = 0;
                 _subReleased = 0;
                 _phantomCtrl = false;
-                _cmdHeld = false;
+                _cmdSources.Clear();
                 _chordTaken.Clear();
                 // Настройки могли смениться — запомненную раскладку окна забываем.
                 _layHkl = IntPtr.Zero; _layFor = null; _layFile = null;
@@ -1305,7 +1319,8 @@ namespace MagicKeys
                 // требует точного совпадения набора модификаторов.
                 _shiftLeft = Held(Vk.LShift); _shiftRight = Held(Vk.RShift);
                 _ctrlLeft = Held(Vk.LControl); _ctrlRight = Held(Vk.RControl);
-                _winDown = Held(Vk.LWin) || Held(Vk.RWin);
+                _winLeft = Held(Vk.LWin);
+                _winRight = Held(Vk.RWin);
                 _altLeft = Held(Vk.LMenu); _altRight = Held(Vk.RMenu);
                 _capsOn = (Native.GetKeyState(Vk.Capital) & 1) != 0;
             }

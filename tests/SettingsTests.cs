@@ -757,6 +757,18 @@ namespace MagicKeys
             Clear();
             Up(Vk.LWin); Clear();
 
+            // Зажали обе ⌘, отпустили одну — сочетания продолжают узнаваться.
+            s = Fresh();
+            Use(s);
+            Down(Vk.LWin);
+            DownE(Vk.RWin);
+            UpE(Vk.RWin);           // правую отпустили, левую держим
+            Clear();
+            bool sw = Down(0x43);   // ⌘C
+            Seq("одна из двух ⌘ отпущена — сочетание всё ещё узнаётся", sw,
+                N(Vk.LControl) + "v", "Cv", "C^", N(Vk.LControl) + "^");
+            Up(0x43); Up(Vk.LWin); Clear();
+
             // Удержание ⌘+пробела не открывает поиск два десятка раз.
             s = Fresh();
             s.SpaceSearch = Settings.SpaceCmd;
@@ -953,6 +965,28 @@ namespace MagicKeys
 
             Check("правка живых настроек не проступает в снимке", moved.Count == 0,
                   "проступило: " + String.Join(", ", moved.ToArray()));
+
+            // И отдельно — поля, которые снимок скопировать не умеет вовсе. Сторож
+            // внутри программы о таком говорит в журнал, а журнал по умолчанию выключен:
+            // о нарушении правила «у состояния есть хозяин» не узнал бы никто, пока
+            // окно и перехват не разошлись бы молча. Здесь оно должно падать.
+            var cannot = new List<string>();
+            foreach (FieldInfo f in typeof(Settings).GetFields(BindingFlags.Public | BindingFlags.Instance))
+            {
+                Type ft = f.FieldType;
+                if (ft.IsValueType || ft == typeof(string)) continue;
+                if (ft.IsArray)
+                {
+                    Type el = ft.GetElementType();
+                    if (el.IsValueType || el == typeof(string) || el == typeof(LayoutBinding)) continue;
+                    cannot.Add(f.Name + " (массив " + el.Name + ")");
+                    continue;
+                }
+                cannot.Add(f.Name + " (" + ft.Name + ")");
+            }
+            Check("снимок умеет скопировать каждое поле", cannot.Count == 0,
+                  "не умеет: " + String.Join(", ", cannot.ToArray()) +
+                  " — допишите копирование в Settings.Snapshot");
         }
 
         /// <summary>Что приходит из файла, может быть каким угодно.</summary>

@@ -23,8 +23,6 @@ namespace MagicKeys
         public AppleModel Apple;
         public string Manufacturer;   // строка HID, например «Apple Inc.»
         public string Product;        // строка HID, например «Magic Keyboard with Numeric Keypad»
-        public string Serial;
-
         public string VendorProduct
         {
             get
@@ -103,11 +101,28 @@ namespace MagicKeys
             get { lock (Sync) return _cache; }
         }
 
-        /// <summary>Перечитать список клавиатур. Возвращает true, если наличие Apple-клавиатуры изменилось.</summary>
         /// <summary>Набор клавиатур стал другим. Поднимается на том потоке, что опрашивал.</summary>
         public static event Action SetChanged;
 
-        public static bool Rescan()
+        /// <summary>Замок опроса. Не тот, что бережёт поля, — см. Rescan.</summary>
+        private static readonly object ScanSync = new object();
+
+        /// <summary>
+        /// Перечитать список клавиатур.
+        ///
+        /// Опрос целиком под своим замком, а не только запись полей. Замок полей
+        /// закрывает разрыв между ними, но не порядок: опрос устройств по Bluetooth
+        /// идёт секунды, и начатый раньше мог кончиться позже — тогда в полях оставался
+        /// старый набор, а событие «набор изменился» поднималось дважды. Окно показывало
+        /// отсоединённую клавиатуру как подключённую, а заводские назначения не той
+        /// модели успевали подставиться и сохраниться.
+        /// </summary>
+        public static void Rescan()
+        {
+            lock (ScanSync) RescanHeld();
+        }
+
+        private static void RescanHeld()
         {
             string statusPath;
             List<KeyboardInfo> found = Enumerate(out statusPath);
@@ -148,10 +163,13 @@ namespace MagicKeys
             // заводские назначения новой не подставлялись, зажатое не отпускалось.
             if (changed)
             {
+                // Заряд спрашиваем заново: у новой клавиатуры он свой, а прежний ответ
+                // держится минуту. Без этого подключённая на ходу клавиатура до минуты
+                // числилась «не ответившей».
+                KeyboardBattery.Invalidate();
                 Action h = SetChanged;
                 if (h != null) h();
             }
-            return changed;
         }
 
         /// <summary>
@@ -253,8 +271,10 @@ namespace MagicKeys
             try
             {
                 info.Manufacturer = HidString(h, 1);
+                // Серийный номер не спрашиваем: показывать его негде, а лишний обход HID
+                // на каждую клавиатуру повторяется раз в две секунды и по Bluetooth
+                // стоит дорого.
                 info.Product = HidString(h, 2);
-                info.Serial = HidString(h, 3);
             }
             finally { Native.CloseHandle(h); }
         }
@@ -265,12 +285,9 @@ namespace MagicKeys
             bool ok;
             try
             {
-                switch (which)
-                {
-                    case 1: ok = Native.HidD_GetManufacturerString(handle, buf, buf.Length); break;
-                    case 2: ok = Native.HidD_GetProductString(handle, buf, buf.Length); break;
-                    default: ok = Native.HidD_GetSerialNumberString(handle, buf, buf.Length); break;
-                }
+                ok = which == 1
+                   ? Native.HidD_GetManufacturerString(handle, buf, buf.Length)
+                   : Native.HidD_GetProductString(handle, buf, buf.Length);
             }
             catch { return null; }
             if (!ok) return null;

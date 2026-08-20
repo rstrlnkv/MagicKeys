@@ -41,13 +41,6 @@ namespace MagicKeys
         private readonly bool[] _fkeyYield = new bool[Settings.MaxFKeys];
         private readonly string[] _fkeyAction = new string[Settings.MaxFKeys];
 
-        // Какие физические клавиши прямо сейчас выдают в Windows control и Win. Не флаг,
-        // а множество: на control могут быть назначены сразу две клавиши, и отпускание
-        // одной не значит, что control отпущен. Нужно раскладке — подменять символ, пока
-        // зажат control, нельзя, иначе Ctrl+C перестанет копировать. По физической
-        // клавише этого не видно: у пришедших с мака control обычно висит на Caps Lock.
-
-        /// <summary>Что Windows видит как ⇧ — то же множество, что у control и Win.</summary>
         /// <summary>Чьи нажатия взял на себя разбор модификаторов.</summary>
         private readonly HashSet<ModKey> _modTaken = new HashSet<ModKey>();
 
@@ -111,7 +104,6 @@ namespace MagicKeys
         // где ⌘ приходит клавишей Alt, печатала символ прямо под зажатым Alt. У Caps Lock
         // множество было, но общий сброс его не восстанавливал.
 
-        /// <summary>Держат ли клавишу ⌘ — любую из двух.</summary>
         /// <summary>
         /// Что человек держит по нашим настройкам — не глядя на то, что мы у Windows
         /// временно сняли. Этим опознаются сочетания: ⌘+Tab снимает подставленную Win
@@ -156,9 +148,9 @@ namespace MagicKeys
         private bool AltRightHeld { get { return MeansAny(ModKey.RAlt, ModKey.RAlt); } }
 
         /// <summary>
-        /// Держит ли Windows ⇧ — от своей клавиши или от переназначенной. Раскладке
-        /// нужен именно этот ответ: символ выбирается по тому, что видит система,
-        /// а не по тому, какую клавишу нажал человек.
+        /// Держит ли человек ⇧ — своей клавишей или переназначенной. Раскладке нужен
+        /// именно этот ответ, а не «что видит Windows»: символ выбираем мы сами
+        /// и отправляем его мимо системной раскладки, через Input.Text.
         /// </summary>
         private bool ShiftHeld { get { return MeansAny(ModKey.LShift, ModKey.RShift); } }
         private bool _phantomCtrl;
@@ -545,7 +537,9 @@ namespace MagicKeys
             ModKey phys;
             if (TryPhysical(vk, ext, out phys))
             {
-                TrackModifier(s, phys, down);
+                // Что нажал человек: по этому множеству опознаются сочетания и заменитель
+                // Fn. Add и Remove при автоповторе безобидны: множество.
+                if (down) _modsDown.Add(phys); else _modsDown.Remove(phys);
                 // Считаем по тому, что реально ушло в Windows, а не по тому, что нажали.
                 // Caps Lock мог быть переназначен — у тех, кто пришёл с мака, на нём
                 // обычно control, — и тогда индикатор не переключается, флаг трогать
@@ -605,8 +599,12 @@ namespace MagicKeys
                         // «Пуск» — который вдобавок заберёт фокус у переключателя окон.
                         // Подсовываем незанятый код: тот же приём, что в MacSend.
                         Input.Tap(VkNoop);
-                        ReleaseInjected(ModKey.LWin);
-                        ReleaseInjected(ModKey.RWin);
+                        // Снимаем по тому, что клавиша держит в Windows, а не по её
+                        // имени. _injected ключуется физической клавишей: со схемой
+                        // «Как в Windows» ⌘ приходит клавишей ⌥, запись лежала под
+                        // ключом левого ⌥, и оба снятия по имени промахивались —
+                        // в Windows уходило Win+Alt+Tab вместо переключателя окон.
+                        ReleaseWindowsKey();
                         Input.Key(Vk.LMenu, true);
                         _cmdTabAlt = true;
                     }
@@ -722,8 +720,11 @@ namespace MagicKeys
             // две клавиши на ISO-клавиатурах Apple подключены наоборот, и то же самое
             // безусловно правит квирк APPLE_ISO_TILDE_QUIRK в Linux. Желания оставить
             // клавиши перепутанными не бывает.
-            if (down && !Busy(vk, k.scanCode) && Physical(s) == PhysLayout.Iso
-                && (k.scanCode == 0x29 || k.scanCode == 0x56))
+            // Скан-код спрашиваем первым: Physical идёт в Devices.AppleModel, а там замок.
+            // Брать его в обработчике перехвата на каждое нажатие ради двух клавиш из ста
+            // незачем.
+            if (down && (k.scanCode == 0x29 || k.scanCode == 0x56)
+                && !Busy(vk, k.scanCode) && Physical(s) == PhysLayout.Iso)
             {
                 _isoSwapped.Add(k.scanCode);
                 Input.Scan((ushort)(k.scanCode == 0x29 ? 0x56 : 0x29), false, true);
@@ -900,7 +901,7 @@ namespace MagicKeys
 
             if (dead)
             {
-                if (_deadPrefix != null) EmitText(_deadPrefix, optWanted);
+                if (_deadPrefix != null) EmitText(_deadPrefix);
                 _deadPrefix = text;
                 return 1;
             }
@@ -910,11 +911,11 @@ namespace MagicKeys
                 string composed = lay.Compose(_deadPrefix, text);
                 string result = composed != null ? composed : _deadPrefix + text;
                 _deadPrefix = null;
-                EmitText(result, optWanted);
+                EmitText(result);
                 return 1;
             }
 
-            EmitText(text, optWanted);
+            EmitText(text);
             return 1;
         }
 
@@ -926,22 +927,29 @@ namespace MagicKeys
             if (space)
             {
                 string composed = lay.Compose(prefix, " ");
-                EmitText(composed != null ? composed : prefix, false);
+                EmitText(composed != null ? composed : prefix);
             }
-            else EmitText(prefix, false);
+            else EmitText(prefix);
         }
 
-        private void EmitText(string text, bool optHeld)
+        /// <summary>
+        /// Отправить символ и уберечь его от зажатого Alt.
+        ///
+        /// Вопрос здесь один: держит ли Alt Windows прямо сейчас. Прежде спрашивали
+        /// другое — просил ли человек считать ⌥ третьим уровнем, — и ответ передавали
+        /// параметром. FlushDead передавала «нет» всегда, а зовут её как раз при
+        /// зажатых Alt и Ctrl: знак ударения уходил под Alt, то есть приходил
+        /// как WM_SYSCHAR — пропадал сам и открывал строку меню.
+        /// </summary>
+        private void EmitText(string text)
         {
             var released = new List<int>();
-            if (optHeld)
-            {
-                // Снимаем то, что Windows держит как Alt, — от любой зажатой клавиши,
-                // а не только от своих двух.
-                foreach (ModKey phys in new List<ModKey>(_modsDown))
-                    if (IsMenuKeyAlt(WindowsHolds(phys))) Release(phys, released);
-                if (_phantomCtrl) { Input.Key(Vk.LControl, false); released.Add(Vk.LControl); }
-            }
+            // Снимаем то, что Windows держит как Alt, — от любой зажатой клавиши,
+            // а не только от своих двух.
+            foreach (ModKey phys in new List<ModKey>(_modsDown))
+                if (IsMenuKeyAlt(WindowsHolds(phys))) Release(phys, released);
+            // Призрачный Ctrl от AltGr в _modsDown не попадает: его отсекают раньше.
+            if (_phantomCtrl) { Input.Key(Vk.LControl, false); released.Add(Vk.LControl); }
             Input.Text(text);
             for (int i = released.Count - 1; i >= 0; i--)
             {
@@ -997,35 +1005,23 @@ namespace MagicKeys
         //  Модификаторы, F-клавиши, навигация
         // ------------------------------------------------------------------
 
-        private void TrackModifier(Settings s, ModKey phys, bool down)
-        {
-            // Что видит Windows. Add и Remove при автоповторе безобидны: множество.
-            ModKey target = TargetFor(s, phys);
-
-
-            // А это — что нажал человек: по нему опознаются сочетания и заменитель Fn.
-            if (down) _modsDown.Add(phys); else _modsDown.Remove(phys);
-        }
-
         private bool HandleModifier(Settings s, ModKey phys, bool down)
         {
             ModKey target = TargetFor(s, phys);
 
-            if (phys == ModKey.LWin || phys == ModKey.RWin)
+            // Переключатель окон закрываем, когда отпущена последняя ⌘, — не спрашивая,
+            // какую клавишу отпустили. Спрашивали: условие стояло на именах клавиш Win,
+            // а ⌘ живёт там, куда её положил человек. После схемы «Как в Windows» ⌘
+            // приходит клавишей ⌥, условие не срабатывало, и подставленный Alt оставался
+            // зажатым в Windows навсегда — снять его было нечем, о нём не знало ни одно
+            // из наших множеств.
+            // Обе ⌘, а не любая: отпустив вторую при открытом переключателе окон,
+            // человек закрывал его и переключался на подсвеченное окно, продолжая
+            // держать первую.
+            if (!down && _cmdTabAlt && !CmdHeld)
             {
-                // По назначению, а не по клавише. Если ⌘ переназначена — а схема
-                // «как в macOS» делает её Ctrl, — то Ctrl+Tab должен листать вкладки,
-                // а не открывать переключатель окон, и переводить сочетания ей уже
-                // незачем: человек попросил обмен клавиш вместо перевода. Заодно
-                // «выключить клавишу» перестаёт работать как ⌘.
-                // Обе ⌘, а не любая: отпустив вторую при открытом переключателе окон,
-                // человек закрывал его и переключался на подсвеченное окно, продолжая
-                // держать первую.
-                if (!down && _cmdTabAlt && !CmdHeld)
-                {
-                    Input.Key(Vk.LMenu, false);
-                    _cmdTabAlt = false;
-                }
+                Input.Key(Vk.LMenu, false);
+                _cmdTabAlt = false;
             }
 
             // Заменитель Fn отслеживаем по физической клавише, каким бы ни было её назначение.
@@ -1078,6 +1074,12 @@ namespace MagicKeys
 
             int tvk = ModNames.VirtualKey(target);
             if (tvk == 0) return true;
+
+            // Переключатель окон уже открыт, и Win для него снята нарочно. Вторая ⌘
+            // нажала бы её снова: следующий Tab ушёл бы как Win+Alt+Tab, а отпускание
+            // выкинуло бы «Пуск» поверх переключателя. Нажатие всё равно считаем взятым
+            // (_modTaken выше), так что отпускание никуда не денется.
+            if (_cmdTabAlt && (tvk == Vk.LWin || tvk == Vk.RWin)) return true;
 
             Input.Key(tvk, true);
             _injected[phys] = tvk;
@@ -1362,17 +1364,19 @@ namespace MagicKeys
         }
 
         /// <summary>
-        /// Отпустить подставленный модификатор и забыть о нём. Забыть обязательно:
-        /// иначе отпускание уходило вторым разом — при настоящем отпускании клавиши
-        /// и потом ещё раз при общем сбросе, — а EffectiveVk продолжал уверять,
-        /// что клавиша зажата.
+        /// Отпустить всё, что Windows держит клавишей Windows, — какой бы физической
+        /// клавишей её ни нажали. Забыть о снятом обязательно: иначе отпускание уходит
+        /// вторым разом — при настоящем отпускании клавиши и потом ещё раз при общем
+        /// сбросе, — а WindowsHolds продолжает уверять, что клавиша зажата.
         /// </summary>
-        private void ReleaseInjected(ModKey phys)
+        private void ReleaseWindowsKey()
         {
-            int vk;
-            if (!_injected.TryGetValue(phys, out vk)) return;
-            Input.Key(vk, false);
-            _injected.Remove(phys);
+            foreach (KeyValuePair<ModKey, int> pair in new List<KeyValuePair<ModKey, int>>(_injected))
+                if (pair.Value == Vk.LWin || pair.Value == Vk.RWin)
+                {
+                    Input.Key(pair.Value, false);
+                    _injected.Remove(pair.Key);
+                }
         }
 
         /// <summary>

@@ -76,28 +76,30 @@ namespace MagicKeys
             });
         }
 
-        /// <summary>Второй байт отчёта — состояние. Показываем его только в журнале.</summary>
-        private static int FlagsUnused
-        {
-            get { lock (Sync) return _flags; }
-        }
-
         public static void Invalidate()
         {
             lock (Sync) _stamp = DateTime.MinValue;
         }
 
-        /// <summary>Перечитать, если прошло больше минуты (или если попросили немедленно).</summary>
-        public static void Refresh(bool force)
+        /// <summary>
+        /// Перечитать, если прошло больше минуты. Зовут её из одного места и всегда
+        /// с force = true, но проверка срока остаётся здесь: она и есть тот самый срок,
+        /// а Wake лишь не даёт спрашивать двум потокам сразу.
+        /// </summary>
+        private static void Refresh(bool force)
         {
+            // Путь узнаём до срока: список устройств заполняется в своём потоке, а по
+            // Bluetooth это секунды. Спросив раньше него, мы записывали «клавиатура
+            // не ответила» и держали этот ответ минуту — при исправной клавиатуре.
+            string path = Devices.AppleStatusPath;
+
             lock (Sync)
             {
                 if (!force && (DateTime.UtcNow - _stamp) < TimeSpan.FromSeconds(60)) return;
-                _stamp = DateTime.UtcNow;
+                if (!String.IsNullOrEmpty(path)) _stamp = DateTime.UtcNow;
             }
 
             int percent = -1, flags = -1;
-            string path = Devices.AppleStatusPath;
             if (!String.IsNullOrEmpty(path)) Ask(path, out percent, out flags);
 
             // Промах не стирает известного. По Bluetooth клавиатура отвечает не всегда,

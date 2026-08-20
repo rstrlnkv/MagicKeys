@@ -88,7 +88,7 @@ if not exist "%HERE%wix.sha256" (
   echo Нет файла с закреплёнными суммами WiX — сборка остановлена.
   exit /b 1
 )
-powershell -NoProfile -Command "$l = @(Get-Content '%HERE%wix.sha256' | Where-Object { $_.Trim() }); if ($l.Count -lt 60) { exit 1 }; $seen=@{}; foreach ($x in $l) { $n,$h = $x -split ' '; $f = Join-Path '%WIX%' $n; if (-not (Test-Path $f)) { exit 1 }; if ((Get-FileHash $f -Algorithm SHA256).Hash -ne $h) { exit 1 }; $seen[$n]=1 }; foreach ($f in Get-ChildItem '%WIX%' -File) { if (-not $seen.ContainsKey($f.Name)) { exit 1 } }; exit 0"
+powershell -NoProfile -Command "$l = @(Get-Content '%HERE%wix.sha256' | Where-Object { $_.Trim() }); if ($l.Count -lt 60) { exit 1 }; $seen=@{}; foreach ($x in $l) { $n,$h = $x -split ' '; $f = Join-Path '%WIX%' $n; if (-not (Test-Path $f)) { exit 1 }; if ((Get-FileHash $f -Algorithm SHA256).Hash -ne $h) { exit 1 }; $seen[$n]=1 }; foreach ($f in Get-ChildItem '%WIX%' -File -Force) { if (-not $seen.ContainsKey($f.Name)) { exit 1 } }; exit 0"
 if errorlevel 1 (
   echo Файлы WiX не совпали с закреплёнными суммами — сборка остановлена.
   exit /b 1

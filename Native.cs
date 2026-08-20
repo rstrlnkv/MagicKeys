@@ -408,8 +408,6 @@ namespace MagicKeys
         public static extern bool HidD_GetProductString(IntPtr h, [Out] byte[] buffer, int size);
         [DllImport("hid.dll")] [return: MarshalAs(UnmanagedType.U1)]
         public static extern bool HidD_GetManufacturerString(IntPtr h, [Out] byte[] buffer, int size);
-        [DllImport("hid.dll")] [return: MarshalAs(UnmanagedType.U1)]
-        public static extern bool HidD_GetSerialNumberString(IntPtr h, [Out] byte[] buffer, int size);
 
         // ---------- скрытое окно для сырого ввода ----------
 

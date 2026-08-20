@@ -386,8 +386,33 @@ namespace MagicKeys
             // почти ничего не стоит.
 
             foreach (string t in tries)
-                try { if (File.Exists(t)) return t; } catch { }
+                try { if (File.Exists(t) && Usable(t)) return t; } catch { }
             return null;
+        }
+
+        /// <summary>
+        /// Годится ли эта копия — та же проверка, что и перед самим запуском.
+        ///
+        /// Спрашиваем уже здесь. Иначе копия, проверку не проходящая, занимала место
+        /// ответа навсегда: 7-Zip, поставленный не в Program Files (скажем, на D:),
+        /// попадал сюда через ветку HKLM, FetchSevenZip возвращал его, не скачивая
+        /// свою копию, а запуск отказывал — и выхода не было ни одного. Совет «уберите
+        /// скачанное и повторите» чистит свою папку, а мешала чужая.
+        /// </summary>
+        private static bool Usable(string path)
+        {
+            try
+            {
+                string dll = Path.Combine(Path.GetDirectoryName(path), "7z.dll");
+                using (FileStream keep = Open(path))
+                using (FileStream keepDll = Open(dll))
+                {
+                    if (keep == null) return false;
+                    string error;
+                    return TrustedSevenZip(path, keep, keepDll, out error);
+                }
+            }
+            catch { return false; }
         }
 
         // ------------------------------------------------------------------
@@ -450,13 +475,50 @@ namespace MagicKeys
         {
             try
             {
-                EnsureTls();
-                var req = (HttpWebRequest)WebRequest.Create(url);
-                req.Method = "HEAD";
-                req.Timeout = 30000;
-                using (var resp = (HttpWebResponse)req.GetResponse()) return resp.ContentLength;
+                string error;
+                using (HttpWebResponse resp = OpenHttps(url, "HEAD", 0, out error))
+                    return resp == null ? -1 : resp.ContentLength;
             }
             catch { return -1; }
+        }
+
+        /// <summary>
+        /// Открыть ответ, идя по перенаправлениям своими руками.
+        ///
+        /// Своими — потому что каждый переход надо проверить на https: HttpWebRequest
+        /// молча уходит с https на http, а скачанное отсюда попадает потом в pnputil
+        /// с правами администратора. То же требование уже выполнено в Updater.Grab —
+        /// здесь оно ничем не слабее.
+        /// </summary>
+        private static HttpWebResponse OpenHttps(string url, string method, long from, out string error)
+        {
+            error = null;
+            EnsureTls();
+            Uri at;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out at)) { error = "ссылка не разбирается"; return null; }
+            for (int hop = 0; hop < 5; hop++)
+            {
+                if (at.Scheme != Uri.UriSchemeHttps)
+                {
+                    error = "загрузка увела с защищённого соединения";
+                    return null;
+                }
+                var req = (HttpWebRequest)WebRequest.Create(at);
+                req.Method = method;
+                req.AllowAutoRedirect = false;
+                req.Timeout = 60000;
+                req.ReadWriteTimeout = 120000;
+                if (from > 0) req.AddRange(from);
+                var resp = (HttpWebResponse)req.GetResponse();
+                int code = (int)resp.StatusCode;
+                if (code < 300 || code >= 400) return resp;
+                string next = resp.Headers["Location"];
+                resp.Close();
+                if (String.IsNullOrEmpty(next) || !Uri.TryCreate(at, next, out at))
+                { error = "сервер отправил в никуда"; return null; }
+            }
+            error = "сервер водит по кругу";
+            return null;
         }
 
         // ------------------------------------------------------------------
@@ -563,13 +625,10 @@ namespace MagicKeys
                 }
                 if (total > 0) WriteState(target, url, total, null);
 
-                EnsureTls();
-                var req = (HttpWebRequest)WebRequest.Create(url);
-                req.Timeout = 60000;
-                req.ReadWriteTimeout = 120000;
-                if (have > 0) req.AddRange(have);
+                HttpWebResponse opened = OpenHttps(url, "GET", have, out error);
+                if (opened == null) return false;
 
-                using (var resp = (HttpWebResponse)req.GetResponse())
+                using (HttpWebResponse resp = opened)
                 using (Stream src = resp.GetResponseStream())
                 {
                     // Докачивать можно, только если сервер на диапазон согласился. Он
@@ -701,11 +760,19 @@ namespace MagicKeys
             // записи, подменить их между проверкой и запуском нельзя.
             string dll = Path.Combine(Path.GetDirectoryName(sevenZip), "7z.dll");
             using (FileStream keep = Open(sevenZip))
-            using (FileStream keepDll = File.Exists(dll) ? Open(dll) : null)
+            using (FileStream keepDll = Open(dll))
             {
                 if (keep == null)
                 {
                     error = "7-Zip занят другой программой";
+                    return false;
+                }
+                // «Занята» и «её нет» — разные беды и разные советы. Прежде оба случая
+                // сливались в «рядом с 7z.exe нет 7z.dll», и человека отправляли искать
+                // библиотеку, которая лежит на месте.
+                if (keepDll == null && File.Exists(dll))
+                {
+                    error = "библиотека 7z.dll занята другой программой";
                     return false;
                 }
                 if (!TrustedSevenZip(sevenZip, keep, keepDll, out error)) return false;
@@ -899,6 +966,16 @@ namespace MagicKeys
                     output = "Файл драйвера занят другой программой.";
                     return false;
                 }
+                // Держим мы разрешённый файл, а pnputil получает строку и разбирает путь
+                // заново — уже с правами администратора. Между этими двумя разборами любой
+                // процесс этого же пользователя может подставить соединение (junction прав
+                // администратора не требует) и увести установку на чужой подписанный пакет.
+                // Точек повторного разбора на пути быть не должно.
+                if (PathHasLink(inf))
+                {
+                    output = "На пути к файлу драйвера есть точка повторного разбора — установку не начинаю.";
+                    return false;
+                }
                 return Pnputil("/add-driver \"" + inf + "\" /install", out output);
             }
         }
@@ -1066,6 +1143,24 @@ namespace MagicKeys
         {
             try { return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0; }
             catch { return true; }   // не смогли выяснить — считаем подозрительным
+        }
+
+        /// <summary>Есть ли точка повторного разбора на самом файле или на любой папке пути.</summary>
+        private static bool PathHasLink(string path)
+        {
+            try
+            {
+                string full = Path.GetFullPath(path);
+                if (IsLink(full)) return true;
+                DirectoryInfo d = new DirectoryInfo(Path.GetDirectoryName(full));
+                while (d != null)
+                {
+                    if ((d.Attributes & FileAttributes.ReparsePoint) != 0) return true;
+                    d = d.Parent;
+                }
+                return false;
+            }
+            catch { return true; }
         }
     }
 }

@@ -470,13 +470,32 @@ namespace MagicKeys
             // Отпустили вторую ⌘ — переключатель окон не закрывается.
             s = Fresh();
             Use(s);
-            Down(Vk.LWin); Down(Vk.Tab); Up(Vk.Tab);
-            DownE(Vk.RWin); Clear();
+            Down(Vk.LWin); Down(Vk.Tab); Up(Vk.Tab); Clear();
+            DownE(Vk.RWin);
+            Check("вторая ⌘ при открытом переключателе не жмёт настоящую Win",
+                  Sent().IndexOf(N(Vk.RWin) + "v") < 0, Sent());
+            Clear();
             UpE(Vk.RWin);
             Check("вторую ⌘ отпустили — переключатель окон остался открыт",
                   Sent().IndexOf(N(Vk.LMenu) + "^") < 0, Sent());
             Clear();
             Up(Vk.LWin); Clear();
+
+            // Схема «Как в Windows»: ⌘ приходит клавишей ⌥. Снимать подставленную Win
+            // и возвращать Alt надо по назначению, а не по имени клавиши.
+            s = Fresh();
+            s.MapLAlt = ModKey.LWin; s.MapLWin = ModKey.LAlt;
+            Use(s);
+            Down(Vk.LMenu); Clear();
+            Down(Vk.Tab); Up(Vk.Tab);
+            Check("переназначенная ⌘: подставленная Win снимается перед переключателем",
+                  Sent().IndexOf(N(Vk.LWin) + "^") >= 0
+                  && Sent().IndexOf(N(Vk.LWin) + "^") < Sent().IndexOf(N(Vk.LMenu) + "v"), Sent());
+            Clear();
+            Up(Vk.LMenu);
+            Check("переназначенная ⌘: Alt переключателя отпускается",
+                  Sent().IndexOf(N(Vk.LMenu) + "^") >= 0, Sent());
+            Clear();
 
             s = Fresh(); s.CmdTabSwitchesWindows = false;
             Use(s);
@@ -904,6 +923,45 @@ namespace MagicKeys
 
             Check("файлы раскладок на месте", Layouts.All.Count > 0, "их " + Layouts.All.Count);
             Check("русская раскладка читается", Layouts.ById("ru") != null, "нет ru");
+
+            DeadKeyUnderAlt();
+        }
+
+        /// <summary>
+        /// Знак ударения, повисший на мёртвой клавише, выпускают в том числе при зажатом
+        /// Alt — а под ним синтетический символ приходит как WM_SYSCHAR: пропадает сам
+        /// и открывает строку меню. Щит здесь обязателен, и ставиться он должен по тому,
+        /// что держит Windows, а не по тому, просили ли считать ⌥ третьим уровнем.
+        /// </summary>
+        static void DeadKeyUnderAlt()
+        {
+            // Раскладка окна берётся у того окна, что сейчас впереди, — какое бы это
+            // ни было. Привязываем испанскую именно к его языку: у неё «´» на 0x1A
+            // объявлена мёртвой на базовом уровне.
+            IntPtr w = Native.GetForegroundWindow();
+            uint tid = w == IntPtr.Zero ? 0 : Native.GetWindowThreadProcessId(w, IntPtr.Zero);
+            int lang = (int)(Native.GetKeyboardLayout(tid).ToInt64() & 0xFFFF);
+
+            Settings s = Fresh();
+            s.AppleLayoutEnabled = true;
+            s.OptLevel = OptLevel.Off;          // ⌥ третьим уровнем не просили — он меню
+            s.SetLayoutFor(lang, "es");
+            Use(s);
+
+            bool sw = Send(0xDB, 0x1A, true, false);
+            Send(0xDB, 0x1A, false, false);
+            Check("мёртвая клавиша ничего не печатает сразу", sw && Sent().Length == 0, Sent());
+            Clear();
+
+            Down(Vk.LMenu); Clear();
+            Send(0x41, 0x1E, true, false);
+            Send(0x41, 0x1E, false, false);
+            int alt = Sent().IndexOf(N(Vk.LMenu) + "^");
+            int sign = Sent().IndexOf("´");
+            Check("знак ударения не выпускают под зажатым Alt",
+                  alt >= 0 && sign > alt, Sent());
+            Clear();
+            Up(Vk.LMenu); Clear();
         }
 
         static void SnapshotIndependence()

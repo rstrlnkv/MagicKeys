@@ -322,13 +322,25 @@ namespace MagicKeys
             fnChoices.Add(new Choice { Value = ModKey.None, Text = "Нет — переключать только в этом окне" });
             // Правого control в списке нет: на клавиатурах Apple его не бывает,
             // а предлагать несуществующую клавишу — обещать то, чего не нажать.
-            // Правого ⌥ в списке нет: он решается карточкой «Правый ⌥» ниже. Спрашивать
-            // об одной клавише в двух местах — верный способ получить два разных ответа.
-            foreach (ModKey m in new[] { ModKey.RWin, ModKey.LWin, ModKey.CapsLock })
+            //
+            // Правый ⌥ есть, хотя о нём спрашивает и карточка ниже. Без него список лгал:
+            // с завода заменитель — именно правый ⌥, в списке его не было, и список
+            // показывал «Нет». Прикоснувшийся к нему человек не выбирал ничего — и терял
+            // замену Fn. Два места об одной клавише — плохо; место, показывающее неправду, —
+            // хуже, поэтому карточка перерисовывается вслед за списком.
+            foreach (ModKey m in new[] { ModKey.RAlt, ModKey.RWin, ModKey.LWin, ModKey.CapsLock })
                 fnChoices.Add(new Choice { Value = m, Text = ModNames.Of(m) });
 
             var fnBox = Combo(fnChoices.ToArray(), _s.FnSubstitute,
-                delegate(object v) { _s.FnSubstitute = (ModKey)v; Save(); });
+                delegate(object v)
+                {
+                    ModKey pick = (ModKey)v;
+                    _s.FnSubstitute = pick;
+                    // Правый ⌥ не может быть и заменителем Fn, и третьим уровнем разом —
+                    // о том же спрашивает карточка ниже, и ответы обязаны сойтись.
+                    if (pick == ModKey.RAlt) _s.OptLevel = OptLevel.Off;
+                    Save(); BuildPage();
+                });
 
             if (!_s.MediaFirst && _s.FnSubstitute == ModKey.None && !YieldingNow)
             {
@@ -673,15 +685,34 @@ namespace MagicKeys
                 left.Children.Add(code);
                 Grid.SetRow(left, row); Grid.SetColumn(left, 0);
 
+                // Три разных ответа, а не два: «подобрать самой» — это не то же, что
+                // «не подменять», и раньше их было не различить. Подбор показывался так,
+                // будто его выбрали руками, а «не подменять» не выбиралось вовсе.
+                string guess = Settings.GuessLayout(lang.Key);
+                AppleLayoutFile guessed = guess == null ? null : Layouts.ById(guess);
                 var choices = new List<Choice>();
+                choices.Add(new Choice
+                {
+                    Value = "auto",
+                    Text = guessed == null
+                        ? "Подобрать по языку (для этого языка раскладки нет)"
+                        : "Подобрать по языку — сейчас " + guessed.Title
+                });
                 choices.Add(new Choice { Value = "", Text = "Не подменять" });
                 foreach (AppleLayoutFile f in Layouts.All)
                     choices.Add(new Choice { Value = f.Id, Text = f.Title + " · " + f.MacName });
 
-                string current = _s.LayoutFor(lang.Key) ?? "";
+                LayoutBinding picked = _s.BindingFor(lang.Key);
+                string current = picked == null ? "auto" : (picked.Layout == null ? "" : picked.Layout);
                 int langId = lang.Key;
                 var box = Combo(choices.ToArray(), current,
-                    delegate(object v) { _s.SetLayoutFor(langId, (string)v); Save(); });
+                    delegate(object v)
+                    {
+                        string id = (string)v;
+                        if (id == "auto") _s.ClearLayoutFor(langId);
+                        else _s.SetLayoutFor(langId, id);
+                        Save();
+                    });
                 box.Margin = new Thickness(0, 6, 0, 6);
                 box.IsEnabled = _s.AppleLayoutEnabled;
                 Grid.SetRow(box, row); Grid.SetColumn(box, 1);

@@ -31,3 +31,5 @@ drivers/
 # Рабочие файлы разбора и замеров
 /tools/preview.png
 MagicKeys.Tests.exe
+MagicKeys.WindowTests.exe
+MagicKeys.WindowTests.exe

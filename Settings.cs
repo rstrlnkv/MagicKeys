@@ -102,8 +102,16 @@ namespace MagicKeys
         /// <summary>Воспроизводить раскладки macOS: то, что напечатано на клавишах Apple.</summary>
         public bool AppleLayoutEnabled = false;
 
-        /// <summary>Каким ⌥ набирается третий уровень (символы, напечатанные на клавише третьими).</summary>
-        public OptLevel OptLevel = OptLevel.RightOption;
+        /// <summary>
+        /// Каким ⌥ набирается третий уровень (символы, напечатанные на клавише третьими).
+        ///
+        /// По умолчанию — никаким. Правый ⌥ с завода занят заменой Fn, и одна клавиша
+        /// не может делать оба дела сразу: карточка «Правый ⌥» спрашивает именно об этом,
+        /// одним вопросом. Прежнее умолчание отвечало на него дважды и по-разному —
+        /// карточка показывала «Клавиша Fn», а третий уровень при этом был включён.
+        /// Вдобавок он всё равно ничего не набирал: раскладки Apple с завода выключены.
+        /// </summary>
+        public OptLevel OptLevel = OptLevel.Off;
 
         /// <summary>Подменять все клавиши раскладки, а не только отличающиеся от раскладки Microsoft.</summary>
 
@@ -135,7 +143,10 @@ namespace MagicKeys
         /// Значения: search, language, none.
         /// </summary>
         public string CmdSpace = "search";
-        public string CtrlSpace = "none";
+        // Второй клавише достаётся язык — так написано в карточке, и так было на маке.
+        // С «none» выходило, что до первого касания списка ⌃Space не делал ничего,
+        // а после касания — даже если выбрали то же самое — начинал переключать язык.
+        public string CtrlSpace = "language";
 
         /// <summary>
         /// Режим разработчика: показывает страницы и настройки, которые обычному
@@ -250,6 +261,23 @@ namespace MagicKeys
             return null;
         }
 
+        /// <summary>Что человек выбрал для этого языка руками, или null, если не выбирал.</summary>
+        public LayoutBinding BindingFor(int langId)
+        {
+            string hex = langId.ToString("X4");
+            if (LayoutBindings != null)
+                foreach (LayoutBinding b in LayoutBindings)
+                    if (b != null && String.Equals(b.Lang, hex, StringComparison.OrdinalIgnoreCase))
+                        return b;
+            return null;
+        }
+
+        /// <summary>
+        /// Выбор человека для языка. Пустая раскладка — это «не подменять», и это тоже
+        /// выбор: его надо запомнить. Раньше пустая строка стирала привязку, а пустая
+        /// привязка от «подобрать самой» неотличима — и «не подменять» нельзя было выбрать
+        /// вовсе: подбор возвращался следующей же перерисовкой.
+        /// </summary>
         public void SetLayoutFor(int langId, string layout)
         {
             string hex = langId.ToString("X4");
@@ -258,12 +286,21 @@ namespace MagicKeys
                 foreach (LayoutBinding b in LayoutBindings)
                     if (b != null && !String.Equals(b.Lang, hex, StringComparison.OrdinalIgnoreCase))
                         list.Add(b);
-            if (!String.IsNullOrEmpty(layout))
-            {
-                LayoutBinding nb = new LayoutBinding();
-                nb.Lang = hex; nb.Layout = layout;
-                list.Add(nb);
-            }
+            LayoutBinding nb = new LayoutBinding();
+            nb.Lang = hex; nb.Layout = layout == null ? "" : layout;
+            list.Add(nb);
+            LayoutBindings = list.ToArray();
+        }
+
+        /// <summary>Убрать выбор человека: раскладка снова подбирается по языку.</summary>
+        public void ClearLayoutFor(int langId)
+        {
+            string hex = langId.ToString("X4");
+            var list = new List<LayoutBinding>();
+            if (LayoutBindings != null)
+                foreach (LayoutBinding b in LayoutBindings)
+                    if (b != null && !String.Equals(b.Lang, hex, StringComparison.OrdinalIgnoreCase))
+                        list.Add(b);
             LayoutBindings = list.ToArray();
         }
 

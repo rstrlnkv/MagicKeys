@@ -590,6 +590,18 @@ namespace MagicKeys
 
             s.LayoutBindings = new LayoutBinding[] { new LayoutBinding { Lang = "0419", Layout = "" } };
             Check("«не трогать» руками — и не трогаем", s.LayoutFor(0x0419) == null, "«" + s.LayoutFor(0x0419) + "»");
+
+            // Три ответа должны быть тремя, а не двумя: подбор, отказ и выбор.
+            Settings th = Fresh();
+            th.SetLayoutFor(0x0419, "");
+            Check("отказ запоминается", th.BindingFor(0x0419) != null && th.LayoutFor(0x0419) == null,
+                  "привязка " + (th.BindingFor(0x0419) == null ? "исчезла" : "есть") +
+                  ", раскладка «" + th.LayoutFor(0x0419) + "»");
+            th.ClearLayoutFor(0x0419);
+            Check("отказ снимается — подбор возвращается",
+                  th.BindingFor(0x0419) == null && th.LayoutFor(0x0419) == "ru", "«" + th.LayoutFor(0x0419) + "»");
+            th.SetLayoutFor(0x0419, "de");
+            Check("выбор руками запоминается", th.LayoutFor(0x0419) == "de", "«" + th.LayoutFor(0x0419) + "»");
         }
 
         static void OtherSettings()
@@ -606,6 +618,10 @@ namespace MagicKeys
             Check("свёрнутый запуск по умолчанию выключен", !d.StartMinimized, "включён");
             Check("режим разработчика по умолчанию выключен", !d.DeveloperMode, "включён");
             Check("раскладки Apple по умолчанию выключены", !d.AppleLayoutEnabled, "включены");
+            Check("третий уровень по умолчанию никакой", d.OptLevel == OptLevel.Off, "" + d.OptLevel);
+            Check("поиск по умолчанию на ⌘, язык на control",
+                  d.CmdSpace == "search" && d.CtrlSpace == "language",
+                  d.CmdSpace + " / " + d.CtrlSpace);
 
             Settings s = Fresh();
             s.MacShortcutsOff = new string[] { "copy", "paste" };

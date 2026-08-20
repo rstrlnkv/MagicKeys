@@ -172,15 +172,6 @@ namespace MagicKeys
                 string found = SevenZip();
                 if (found == null) { error = "7-Zip развернулся, но 7z.exe не нашёлся"; return null; }
 
-                // Запоминаем, каким он был сразу после распаковки из установщика
-                // с проверенной подписью. Дальше перед каждым запуском сверяем: папка
-                // доступна на запись любому процессу этого пользователя.
-                try
-                {
-                    using (FileStream f = Open(found))
-                        if (f != null) File.WriteAllText(SevenZipHashPath, HashOf(f));
-                }
-                catch (Exception e) { Diag.Log("не удалось запомнить сумму 7z.exe", e); }
                 return found;
             }
             catch (Exception e) { error = e.Message; return null; }
@@ -719,6 +710,21 @@ namespace MagicKeys
         }
 
         /// <summary>
+        /// Сумма 7z.exe из официального 7z2501-x64.msi — того самого, что скачивает
+        /// FetchSevenZip, и того же разряда.
+        ///
+        /// Закреплена здесь, а не в файле рядом со своей копией. Рядом она ничего
+        /// не стоила: противник, о котором идёт речь, — процесс этого же пользователя,
+        /// и папку он правит целиком, вместе с записью о ней. А программа лежит
+        /// в Program Files, куда без прав администратора не записать; если они есть,
+        /// защищать уже нечего.
+        ///
+        /// Меняется вместе со ссылкой на установщик — и только вместе с ней.
+        /// </summary>
+        private const string SevenZipSha256 =
+            "4cd7d776c686427226a151789d2d61f0b2ed2c392148cc4e69c0238362fafecf";
+
+        /// <summary>
         /// Можно ли верить этому 7z.exe. Файл уже открыт без права записи, и сумма
         /// считается по открытому — подменить его между проверкой и запуском нельзя.
         /// </summary>
@@ -729,30 +735,15 @@ namespace MagicKeys
             if (!Path.GetFullPath(path).StartsWith(mine, StringComparison.OrdinalIgnoreCase))
                 return true;   // не наша копия — значит из места, куда пишет администратор
 
-            string want = null;
-            try { want = File.ReadAllText(SevenZipHashPath).Trim(); }
-            catch { }
-            if (String.IsNullOrEmpty(want))
-            {
-                error = "не записано, каким 7-Zip был при распаковке, — уберите скачанное и повторите";
-                return false;
-            }
-
             string now = HashOf(open);
-            if (!String.Equals(now, want, StringComparison.OrdinalIgnoreCase))
+            if (!String.Equals(now, SevenZipSha256, StringComparison.OrdinalIgnoreCase))
             {
-                Diag.Log("7z.exe изменился: было " + want + ", стало " + now);
-                error = "7-Zip на этом компьютере изменился с тех пор, как программа его развернула — "
+                Diag.Log("7z.exe не тот, что кладёт официальный установщик: " + now);
+                error = "7-Zip в папке программы не тот, что кладёт официальный установщик — "
                       + "уберите скачанное и повторите";
                 return false;
             }
             return true;
-        }
-
-        /// <summary>Куда записана сумма своей копии 7-Zip.</summary>
-        private static string SevenZipHashPath
-        {
-            get { return Path.Combine(ToolsFolder, "7z.sha256"); }
         }
 
         /// <summary>Сумма уже открытого файла — без второго открытия и без окна для подмены.</summary>

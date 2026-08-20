@@ -160,7 +160,7 @@ namespace MagicKeys
             lock (Sync) return SeenKeys.Contains(vk);
         }
 
-        public static int[] All()
+        private static int[] AllUnused()
         {
             lock (Sync)
             {
@@ -329,17 +329,23 @@ namespace MagicKeys
         /// </summary>
         private static void HandleHid(IntPtr device, IntPtr buf, int headerSize, int size)
         {
-            // Описание отчётов добываем ДО замка: запрос уходит в стек устройства,
-            // и при подключении по Bluetooth ответа можно ждать заметно. На этом же
-            // замке стоит поток окна — держать его на время чужого ответа значит
-            // замораживать окно на каждом пробуждении. Разбор — уже под замком: описание
-            // освобождается из другого потока, и без замка мы читали бы освобождённое.
-            IntPtr preparsed = Preparsed(device);
-            if (preparsed == IntPtr.Zero) return;
+            // Два шага, и это важно. Сначала описание отчётов добывается — снаружи замка,
+            // потому что запрос уходит в стек устройства и по Bluetooth отвечает не сразу,
+            // а на этом же замке стоит поток окна. Потом берётся замок, и уже под ним
+            // описание достаётся из памяти и разбирается: освобождает его другой поток —
+            // отключение устройства и кнопка «Начать заново», — и указатель, взятый
+            // до замка, к разбору мог стать чужим. Ровно это и было: описание брали
+            // заранее, а под замок входили с указателем на руках.
+            Warm(device);
 
             var seen = new List<int>();
             var isNew = new List<bool>();
-            lock (Sync) CollectHid(preparsed, buf, headerSize, size, seen, isNew);
+            lock (Sync)
+            {
+                IntPtr preparsed;
+                if (!Preparsedes.TryGetValue(device, out preparsed) || preparsed == IntPtr.Zero) return;
+                CollectHid(preparsed, buf, headerSize, size, seen, isNew);
+            }
 
             for (int i = 0; i < seen.Count; i++)
             {
@@ -357,6 +363,9 @@ namespace MagicKeys
         private static void CollectHid(IntPtr preparsed, IntPtr buf, int headerSize, int size,
                                        List<int> seen, List<bool> isNew)
         {
+            // Сначала убеждаемся, что оба числа вообще лежат в буфере, и только потом
+            // их читаем: раньше проверка стояла строкой ниже самого чтения.
+            if (size < headerSize + 8) return;
             int sizeHid = Marshal.ReadInt32(buf, headerSize);
             int count = Marshal.ReadInt32(buf, headerSize + 4);
             // Число отчётов и их размер приходят из ядра и должны быть согласованы
@@ -395,10 +404,10 @@ namespace MagicKeys
         /// ответа можно ждать заметно. Держать на это время замок, за которым стоит
         /// поток окна, значит замораживать окно на каждом пробуждении.
         /// </summary>
-        private static IntPtr Preparsed(IntPtr device)
+        private static void Warm(IntPtr device)
         {
             IntPtr cached;
-            lock (Sync) if (Preparsedes.TryGetValue(device, out cached)) return cached;
+            lock (Sync) if (Preparsedes.TryGetValue(device, out cached)) return;
 
             IntPtr result = IntPtr.Zero;
             uint size = 0;
@@ -417,9 +426,20 @@ namespace MagicKeys
                     Marshal.FreeHGlobal(b);
             }
             // Пустоту запоминаем, только если Windows правда ответила, что описания
-            // отчётов нет, а не если запрос не удался.
-            if (result != IntPtr.Zero || (asked && size == 0)) lock (Sync) Preparsedes[device] = result;
-            return result;
+            // отчётов нет, а не если запрос не удался. Кладём под замком — и под ним же
+            // проверяем, не положил ли кто-то уже своё, пока мы спрашивали: иначе
+            // предыдущее описание осталось бы без хозяина и утекло.
+            if (result == IntPtr.Zero && !(asked && size == 0)) return;
+            lock (Sync)
+            {
+                IntPtr had;
+                if (Preparsedes.TryGetValue(device, out had))
+                {
+                    if (result != IntPtr.Zero) Marshal.FreeHGlobal(result);
+                    return;
+                }
+                Preparsedes[device] = result;
+            }
         }
 
         private static void Remember(int vk, int scanCode)

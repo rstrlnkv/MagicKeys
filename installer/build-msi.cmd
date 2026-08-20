@@ -13,9 +13,19 @@ chcp 65001>nul
 set HERE=%~dp0
 set ROOT=%HERE%..
 
-set VERSION=%1
-if not defined VERSION set VERSION=%MAGICKEYS_VERSION%
-if not defined VERSION set VERSION=0.1.0
+rem Версию берём из самой программы, а не пишем второй раз. Иначе пакет 1.2.0 мог
+rem нести программу 0.1.0: обновление это переживает, потому что старая версия
+rem удаляется до установки новой, — но стоит удалению споткнуться, и Windows увидит
+rem одинаковые версии файла, не заменит его и отчитается об успехе.
+for /f "delims=" %%V in ('powershell -NoProfile -Command "[regex]::Match((Get-Content -Raw '%ROOT%\BuildInfo.cs'), 'const string Version = ' + [char]34 + '([^' + [char]34 + ']+)').Groups[1].Value"') do set VERSION=%%V
+if not defined VERSION (
+  echo Не удалось прочитать версию из BuildInfo.cs.
+  exit /b 1
+)
+if not "%~1"=="" if not "%~1"=="%VERSION%" (
+  echo Просят собрать %~1, а в программе версия %VERSION% — поправьте BuildInfo.cs.
+  exit /b 1
+)
 
 if not exist "%ROOT%\MagicKeys.exe" (
   echo Нет MagicKeys.exe — сначала соберите программу: build.cmd
@@ -71,6 +81,15 @@ rem подписываемый нашим ключом пакет, приход�
   exit /b 1
 )
 
+rem Подпись пакета не ловит подмену того, что из него распаковано: пакет лежит
+rem нетронутым, а файлы правит кто угодно с правами того же пользователя. Поэтому
+rem у них закреплены суммы — как отпечаток у сертификата обновления.
+powershell -NoProfile -Command "$ok=$true; foreach ($l in Get-Content '%HERE%wix.sha256') { $n,$h = $l -split ' '; $a=(Get-FileHash (Join-Path '%WIX%' $n) -Algorithm SHA256).Hash; if ($a -ne $h) { $ok=$false } }; exit [int](-not $ok)"
+if errorlevel 1 (
+  echo Файлы WiX не совпали с закреплёнными суммами — сборка остановлена.
+  exit /b 1
+)
+
 rem Программу подписываем в копии, а не на месте: она может быть запущена,
 rem и signtool упрётся в занятый файл. Заодно сборка не правит рабочий каталог.
 echo === Подпись программы ===
@@ -116,7 +135,10 @@ echo.
 rem Корень у сертификата самодельный, поэтому «доверенной» подпись здесь не будет
 rem никогда — и не должна: Updater сверяет отпечаток, а не цепочку. Проверяем то,
 rem что важно: подпись есть и совпадает с содержимым файла.
-powershell -NoProfile -Command "$s = Get-AuthenticodeSignature '%ROOT%\MagicKeys-%VERSION%-x64.msi'; exit [int](($s.SignerCertificate -eq $null) -or ($s.Status -eq 'HashMismatch'))"
+rem Сверяем и отпечаток: подписать другим ключом можно нарочно (sign.cmd умеет брать
+rem его из переменной), но обновление верит ровно одному, и такой пакет оно отвергнет
+rem словами «подписан чужим ключом». Лучше узнать это здесь, чем от человека.
+powershell -NoProfile -Command "$want=(Get-Content '%HERE%sign.thumbprint').Trim(); $s = Get-AuthenticodeSignature '%ROOT%\MagicKeys-%VERSION%-x64.msi'; exit [int](($s.SignerCertificate -eq $null) -or ($s.Status -eq 'HashMismatch') -or ($s.SignerCertificate.Thumbprint -ne $want))"
 if errorlevel 1 (
   echo Готово, НО ПАКЕТ НЕ ПОДПИСАН: %ROOT%\MagicKeys-%VERSION%-x64.msi
   echo Выкладывать такой нельзя — обновление его отвергнет.

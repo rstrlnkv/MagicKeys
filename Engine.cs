@@ -51,6 +51,9 @@ namespace MagicKeys
         /// <summary>Чьи нажатия взял на себя разбор модификаторов.</summary>
         private readonly HashSet<ModKey> _modTaken = new HashSet<ModKey>();
 
+        /// <summary>Какие клавиши-модификаторы человек держит прямо сейчас.</summary>
+        private readonly HashSet<ModKey> _modsDown = new HashSet<ModKey>();
+
         /// <summary>
         /// Какие физические клавиши держат Caps Lock. Множество, а не флаг: назначить
         /// Caps Lock можно сразу нескольким, и тогда флаг гас на отпускании первой —
@@ -136,10 +139,14 @@ namespace MagicKeys
             // Снимок, а не сам объект: окно продолжит править свой экземпляр по полю
             // за раз, а поток перехвата должен видеть настройки целыми — либо прежние,
             // либо новые, но не половину одних и половину других.
-            _cfg = s == null ? new Settings() : s.Snapshot();
-
+            // Просьба отпустить — ДО подмены настроек. Иначе между ними остаётся окно,
+            // в котором нажатие разбирается новыми настройками против старого состояния:
+            // подставленный модификатор перезаписывался, не отпустившись, а взятое
+            // нажатие оставалось за нами навсегда.
+            //
             // Через сообщение: Apply зовут с потока окна, а состояние принадлежит потоку хука.
             PostRelease();
+            _cfg = s == null ? new Settings() : s.Snapshot();
             EnsureNumLock(_cfg);
         }
 
@@ -654,7 +661,7 @@ namespace MagicKeys
             if (cmdMiss)
             {
                 if (!down) return false;   // нажатия не брали — и отпускание не наше
-                if (WinDown) Input.Tap(VkNoop);
+                if (WindowsHoldsMenuKey()) Input.Tap(VkNoop);
                 _chordTaken[vk] = null;
                 return true;
             }
@@ -867,6 +874,32 @@ namespace MagicKeys
             return ModNames.VirtualKey(phys);
         }
 
+        /// <summary>
+        /// Какой код эта физическая клавиша прямо сейчас держит нажатым в Windows,
+        /// или 0, если не держит ничего.
+        ///
+        /// Три случая, и путать их нельзя. Мы подставили замену — держит замена.
+        /// Мы взяли нажатие себе и ничего не послали («выключить клавишу») — не держит
+        /// ничего, и трогать её нельзя: отпускание уйдёт в пустоту, а нажатие подставит
+        /// клавишу, которой человек не нажимал, — и снять её потом будет нечем.
+        /// Мы нажатия не брали — держит сама себя.
+        /// </summary>
+        private int WindowsHolds(ModKey phys)
+        {
+            int vk;
+            if (_injected.TryGetValue(phys, out vk)) return vk;
+            if (_modTaken.Contains(phys)) return 0;
+            return ModNames.VirtualKey(phys);
+        }
+
+        /// <summary>Держит ли Windows сейчас клавишу Windows или Alt — от любой из наших.</summary>
+        private bool WindowsHoldsMenuKey()
+        {
+            foreach (ModKey phys in _modsDown)
+                if (IsMenuKey(WindowsHolds(phys))) return true;
+            return false;
+        }
+
         // ------------------------------------------------------------------
         //  Модификаторы, F-клавиши, навигация
         // ------------------------------------------------------------------
@@ -881,6 +914,7 @@ namespace MagicKeys
             else _winSources.Remove(phys);
 
             // А это — что нажал человек: по нему опознаются сочетания и заменитель Fn.
+            if (down) _modsDown.Add(phys); else _modsDown.Remove(phys);
             switch (phys)
             {
                 case ModKey.LShift: _shiftLeft = down; break;
@@ -907,7 +941,10 @@ namespace MagicKeys
                 // «выключить клавишу» перестаёт работать как ⌘.
                 if (down && (target == ModKey.LWin || target == ModKey.RWin)) _cmdSources.Add(phys);
                 else _cmdSources.Remove(phys);
-                if (!down && _cmdTabAlt)
+                // Обе ⌘, а не любая: отпустив вторую при открытом переключателе окон,
+                // человек закрывал его и переключался на подсвеченное окно, продолжая
+                // держать первую.
+                if (!down && _cmdTabAlt && _cmdSources.Count == 0)
                 {
                     Input.Key(Vk.LMenu, false);
                     _cmdTabAlt = false;
@@ -1249,8 +1286,19 @@ namespace MagicKeys
 
         private void MacSend(MacShortcut sc)
         {
-            bool shiftL = _shiftLeft, shiftR = _shiftRight;
-            bool ctrlL = _ctrlLeft && !_phantomCtrl, ctrlR = _ctrlRight && !_phantomCtrl;
+            // Снимаем то, что Windows держит СЕЙЧАС, а не то, какие физические клавиши
+            // нажаты. Разница ровно в том случае, ради которого всё это заведено:
+            // у пришедших с мака control обычно висит на Caps Lock, и по физическим
+            // флагам его не видно. ⌃Space уходил как Ctrl+Win+Space и язык не переключал,
+            // ⌃⌘Q — как Ctrl+Win+L и экран не блокировал; а «выключенная» клавиша,
+            // наоборот, возвращалась нажатой, и снять её было уже нечем.
+            var held = new List<KeyValuePair<ModKey, int>>();
+            foreach (ModKey phys in _modsDown)
+            {
+                if (_phantomCtrl && (phys == ModKey.LCtrl || phys == ModKey.RCtrl)) continue;
+                int vk = WindowsHolds(phys);
+                if (vk != 0) held.Add(new KeyValuePair<ModKey, int>(phys, vk));
+            }
 
             // Windows открывает «Пуск», если клавишу Win нажали и отпустили, ничего
             // между ними не нажав. У нас выходит именно так: саму букву мы съели,
@@ -1258,24 +1306,20 @@ namespace MagicKeys
             // одиночное нажатие. Поэтому пока Win ещё зажата, подсовываем незанятый
             // код: он ничего не делает, но снимает признак одиночного нажатия.
             // Тот же приём спасает от строки меню, которую открывает одиночный Alt.
-            if (WinDown || _altLeft || _altRight) Input.Tap(VkNoop);
+            bool menu = false;
+            foreach (KeyValuePair<ModKey, int> p in held) if (IsMenuKey(p.Value)) menu = true;
+            if (menu) Input.Tap(VkNoop);
 
-            ModRelease(ModKey.LWin); ModRelease(ModKey.RWin);
-            ModRelease(ModKey.LAlt); ModRelease(ModKey.RAlt);
-            if (shiftL) ModRelease(ModKey.LShift);
-            if (shiftR) ModRelease(ModKey.RShift);
-            if (ctrlL) ModRelease(ModKey.LCtrl);
-            if (ctrlR) ModRelease(ModKey.RCtrl);
+            foreach (KeyValuePair<ModKey, int> p in held) Input.Key(p.Value, false);
 
             MacKeys.Send(sc);
 
-            // Возвращаем ровно те стороны, что держали. Вернуть «любую» — значит
-            // оставить в Windows нажатой клавишу, которой никто не нажимал: снять
-            // её потом нечем, отпускание другой стороны пройдёт мимо.
-            if (shiftL && _shiftLeft) ModPress(ModKey.LShift);
-            if (shiftR && _shiftRight) ModPress(ModKey.RShift);
-            if (ctrlL && _ctrlLeft) ModPress(ModKey.LCtrl);
-            if (ctrlR && _ctrlRight) ModPress(ModKey.RCtrl);
+            // Возвращаем безобидное — ⇧ и control, — и ровно то, что и держали. Клавишу
+            // Windows и Alt не возвращаем: сами по себе они открывают «Пуск» и строку
+            // меню, а пока они зажаты физически, следующее сочетание всё равно опознается
+            // по своему состоянию.
+            foreach (KeyValuePair<ModKey, int> p in held)
+                if (!IsMenuKey(p.Value) && _modsDown.Contains(p.Key)) Input.Key(p.Value, true);
         }
 
         // Отпускаем и нажимаем именно то, что реально ушло в Windows: у переназначенной
@@ -1318,6 +1362,7 @@ namespace MagicKeys
                 _winSources.Clear();
                 _capsSources.Clear();
                 _modTaken.Clear();
+                _modsDown.Clear();
 
                 // Отпускаем то, что держим ЗА человека, а не только модификаторы.
                 // Синтетическая Home от Fn+← — такая же зажатая клавиша, и снять её

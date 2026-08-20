@@ -208,13 +208,22 @@ namespace MagicKeys
         {
             object v = key.GetValue("OSXFnBehavior");
             if (v == null) return false;
+
+            // Значение, которое не удалось разобрать, — это «не нашли», а не «нашли».
+            // Раньше такое обрывало перебор остальных ключей и оставляло behavior = -1,
+            // а -1 считается за единицу: один мусорный OSXFnBehavior у любого устройства
+            // класса клавиатур — и программа навсегда уступала верхний ряд драйверу.
+            int found = -1;
             try
             {
-                if (v is int) behavior = (int)v;
-                else if (v is byte[]) { byte[] b = (byte[])v; if (b.Length > 0) behavior = b[0]; }
-                else { int parsed; if (int.TryParse(Convert.ToString(v), out parsed)) behavior = parsed; }
+                if (v is int) found = (int)v;
+                else if (v is byte[]) { byte[] b = (byte[])v; if (b.Length > 0) found = b[0]; }
+                else { int parsed; if (int.TryParse(Convert.ToString(v), out parsed)) found = parsed; }
             }
             catch { return false; }
+            if (found < 0) return false;
+
+            behavior = found;
             where = @"HKLM\" + path;
             return true;
         }

@@ -162,16 +162,19 @@ namespace MagicKeys
             if (shown < 0 && IsInternal(cursorScreen))
             {
                 shown = ApplyWmi(delta);
+                if (shown < 0) Diag.Log("яркость: встроенная панель не отозвалась");
                 // Плашке нужен экран, иначе она уедет на главный, а не на тот,
                 // где указатель, — соседняя ветка передаёт его именно так.
                 if (shown >= 0) shownOn = cursorScreen;
             }
             Diag.Log("яркость: итог " + shown + "% на " + ScreenName(shownOn) + (shownName == null ? "" : " (" + shownName + ")"));
-            if (shown >= 0)
-            {
-                Action<IntPtr, string, int> h = ChangedOn;
-                if (h != null) h(shownOn, shownName, shown);
-            }
+
+            // Плашку показываем всегда — и с процентом, и без него. Молчание в ответ
+            // на нажатие клавиши читается как «программа сломалась»: на настольной
+            // машине с одним монитором без DDC/CI не происходило ровно ничего,
+            // включая плашку «этот монитор яркость не меняет».
+            Action<IntPtr, string, int> h = ChangedOn;
+            if (h != null) h(shown >= 0 ? shownOn : cursorScreen, shownName, shown);
         }
 
         private static int Percent(Panel p)

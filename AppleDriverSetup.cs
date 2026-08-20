@@ -288,20 +288,26 @@ namespace MagicKeys
         {
             try
             {
-                var leaf = new X509Certificate2(X509Certificate.CreateFromSignedFile(path));
-                var chain = new X509Chain();
-                chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
-                if (!chain.Build(leaf)) return false;
-                if (chain.ChainElements.Count == 0) return false;
-                string rootThumb = chain.ChainElements[chain.ChainElements.Count - 1].Certificate.Thumbprint;
-
-                var store = new X509Store(StoreName.Root, StoreLocation.LocalMachine);
-                try
+                using (var leaf = new X509Certificate2(X509Certificate.CreateFromSignedFile(path)))
                 {
-                    store.Open(OpenFlags.ReadOnly);
-                    return store.Certificates.Find(X509FindType.FindByThumbprint, rootThumb, false).Count > 0;
+                    var chain = new X509Chain();
+                    try
+                    {
+                        chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+                        if (!chain.Build(leaf)) return false;
+                        if (chain.ChainElements.Count == 0) return false;
+                        string rootThumb = chain.ChainElements[chain.ChainElements.Count - 1].Certificate.Thumbprint;
+
+                        var store = new X509Store(StoreName.Root, StoreLocation.LocalMachine);
+                        try
+                        {
+                            store.Open(OpenFlags.ReadOnly);
+                            return store.Certificates.Find(X509FindType.FindByThumbprint, rootThumb, false).Count > 0;
+                        }
+                        finally { store.Close(); }
+                    }
+                    finally { chain.Reset(); }
                 }
-                finally { store.Close(); }
             }
             catch (Exception e)
             {
@@ -678,6 +684,21 @@ namespace MagicKeys
         private static bool Run7z(string sevenZip, string args, out string error)
         {
             error = null;
+
+            // Проверяем перед КАЖДЫМ запуском, а не только тот, что скачали сами.
+            // Своя копия лежит в папке пользователя, писать в неё может любой его
+            // процесс, и подложенный туда 7z.exe обходил всю проверку скачанного:
+            // FetchSevenZip до него просто не доходил. А решает этот файл, какое дерево
+            // окажется распаковано и какой .inf уйдёт в pnputil с правами администратора.
+            string signer;
+            if (!SignatureValid(sevenZip, out signer) || !SignedBy7Zip(signer)
+                || !RootedInMachineStore(sevenZip))
+            {
+                Diag.Log("7z.exe не прошёл проверку подписи: " + (signer == null ? "не подписан" : signer));
+                error = "7-Zip на этом компьютере подписан не тем, кем должен, — запускать его нельзя";
+                return false;
+            }
+
             try
             {
                 var psi = new ProcessStartInfo(sevenZip, args);

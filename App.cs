@@ -51,19 +51,15 @@ namespace MagicKeys
 
         private int Run(string[] args)
         {
-            bool startHidden = false, dev = false;
+            bool startHidden = false;
             foreach (string a in args)
                 if (String.Equals(a, "--tray", StringComparison.OrdinalIgnoreCase)) startHidden = true;
                 else if (String.Equals(a, "--log", StringComparison.OrdinalIgnoreCase)) Diag.Enable();
-                else if (String.Equals(a, "--dev", StringComparison.OrdinalIgnoreCase)) dev = true;
 
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
             Resources.MergedDictionaries.Add(Theme.Initial());
 
             _settings = Settings.Load();
-            // Ключ включает режим на этот запуск, а первый же Save() от любой галочки
-            // делал его постоянным. Человек просил на один раз — в файл он не идёт.
-            if (dev && !_settings.DeveloperMode) { _settings.DeveloperMode = true; _devOnce = true; }
             if (_settings.StartMinimized) startHidden = true;
 
             _engine = new Engine();
@@ -388,20 +384,10 @@ namespace MagicKeys
             _window.RefreshDevices();
         }
 
-        /// <summary>Режим разработчика включён ключом на один запуск — в файл он не идёт.</summary>
-        private bool _devOnce;
-
         private void ApplyAndSave()
         {
             _engine.Apply(_settings);
-            if (_devOnce)
-            {
-                bool was = _settings.DeveloperMode;
-                _settings.DeveloperMode = false;
-                _settings.Save();
-                _settings.DeveloperMode = was;
-            }
-            else _settings.Save();
+            _settings.Save();
             UpdateTrayText();
         }
 

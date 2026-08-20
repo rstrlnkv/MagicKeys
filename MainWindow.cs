@@ -353,11 +353,14 @@ namespace MagicKeys
             stack.Children.Add(Card("Заменитель Fn", null,
                 Row("Клавиша", "С ней режим временно переворачивается", fnBox),
                 Toggle("Навигация как в macOS: Fn со стрелками, Backspace и Enter",
-                    _s.FnNavigation, delegate(bool v) { _s.FnNavigation = v; Save(); }),
+                    _s.FnNavigation, delegate(bool v) { _s.FnNavigation = v; Save(); BuildPage(); }),
                 // Заменитель и ⌥ бывают одной клавишей, и тогда три сочетания из шести
                 // достаются таблице macOS. Перечислять всё, а следом оговариваться — значит
                 // сперва пообещать, потом отобрать: список сразу называет то, что работает.
-                Note(_s.MacShortcuts && _s.FnSubstitute == ModKey.RAlt
+                Note(_s.FnSubstitute == ModKey.None
+                        ? "Пока заменителя нет, нажать эти сочетания нечем: настоящая Fn " +
+                          "до Windows не доходит."
+                    : _s.MacShortcuts && _s.FnSubstitute == ModKey.RAlt
                         ? "Fn+↑↓ листают страницу, Fn+Enter — это Insert. Fn+←→ и Fn+Backspace " +
                           "достаются сочетаниям macOS: там ⌥ ходит по словам, а начало и конец " +
                           "строки — на ⌘←→."
@@ -1080,10 +1083,10 @@ namespace MagicKeys
             // Без сырого ввода программа перестаёт узнавать клавиатуру и, что хуже,
             // сторожить собственный перехват — сравнивать его показания становится не с чем.
             if (!String.IsNullOrEmpty(KeyWatch.Failure))
-                lines.Children.Add(Note("Программа не видит, с какой клавиатуры приходят нажатия, — " +
-                                        "Windows отказала в подписке на ввод. Переназначения работают, " +
-                                        "но выбор «только с Magic Keyboard» и определение модели — нет. " +
-                                        "Помогает перезапуск программы."));
+                lines.Children.Add(Note("Windows отказала программе в подписке на ввод. Переназначения " +
+                                        "работают, модель клавиатуры известна, а вот всё, что узнаётся " +
+                                        "по нажатиям, — нет: исполнение клавиатуры, верхние F-клавиши, " +
+                                        "клавиша ⏏ и страница «Диагностика». Помогает перезапуск программы."));
 
             return Card(null, null, lines);
         }
@@ -1154,7 +1157,9 @@ namespace MagicKeys
             stack.Children.Add(Card("Как это читать", null,
                 Note("Нажимайте клавиши по одной — ниже появится, что именно дошло до Windows. " +
                      "Проверка слушает сырой ввод, поэтому видит клавиатуру напрямую и не зависит " +
-                     "ни от переназначений программы, ни от того, какое окно сейчас впереди.\n\n" +
+                     "ни от переназначений программы — но только пока это окно впереди. " +
+                     "Уходя из-под фокуса, оно перестаёт слушать и стирает набранное: " +
+                     "в спрятанном окне не должно копиться то, что вы печатаете в другом.\n\n" +
                      "Если нажатие не даёт строки совсем — значит до Windows не дошло ничего. " +
                      "Это не поломка: так ведут себя клавиши, которые обрабатываются внутри " +
                      "клавиатуры или внутри драйвера и наружу не выходят." +
@@ -1402,6 +1407,21 @@ namespace MagicKeys
             get.Click += delegate { StartSetup(true, null); };
             buttons.Children.Add(get);
 
+            _setupStop = new Button
+            {
+                Content = "Остановить",
+                Margin = new Thickness(0, 0, 8, 8),
+                Visibility = Visibility.Collapsed
+            };
+            _setupStop.SetResourceReference(StyleProperty, "Btn");
+            _setupStop.Click += delegate
+            {
+                ManualResetEvent c = _setupCancel;
+                if (c != null) c.Set();
+                _setupStop.IsEnabled = false;
+            };
+            buttons.Children.Add(_setupStop);
+
             var pick = new Button { Content = "Указать распакованную папку…", Margin = new Thickness(0, 0, 8, 8) };
             pick.SetResourceReference(StyleProperty, "Btn");
             pick.Click += delegate
@@ -1498,6 +1518,13 @@ namespace MagicKeys
         private TextBlock _setupLog;
         private Thread _setupThread;
 
+        /// <summary>
+        /// Просьба остановить скачивание. Семьсот мегабайт человеку надо уметь
+        /// прервать: проверка стояла на каждом куске, а способа её подать не было.
+        /// </summary>
+        private ManualResetEvent _setupCancel;
+        private Button _setupStop;
+
         private void SetupSay(string text)
         {
             Dispatcher.BeginInvoke((Action)delegate
@@ -1513,6 +1540,9 @@ namespace MagicKeys
         private void StartSetup(bool install, string readyFolder)
         {
             if (_setupThread != null && _setupThread.IsAlive) { SetupSay("Уже идёт работа, дождитесь конца."); return; }
+
+            _setupCancel = new ManualResetEvent(false);
+            if (_setupStop != null) _setupStop.Visibility = Visibility.Visible;
 
             _setupThread = new Thread(delegate()
             {
@@ -1555,9 +1585,12 @@ namespace MagicKeys
                         }
 
                         string package = System.IO.Path.Combine(AppleDriverSetup.CacheFolder, "BootCampESD.pkg");
+                        // Семьсот мегабайт человеку надо уметь остановить. Просьба об отмене
+                        // и так проверяется на каждом куске — не хватало только способа
+                        // её подать; кнопка «Отменить» появляется рядом с ходом загрузки.
                         if (!AppleDriverSetup.Download(url, package,
                                 delegate(double part, string what) { SetupSay(head + "\n\n" + what); },
-                                null, out error))
+                                _setupCancel, out error))
                         { SetupSay(head + "\n\nСкачать не вышло: " + error); return; }
 
                         SetupSay(head + "\n\nРаспаковываю…");
@@ -1598,6 +1631,19 @@ namespace MagicKeys
             });
             _setupThread.IsBackground = true;
             _setupThread.Start();
+
+            // Кнопка «Остановить» живёт ровно столько, сколько идёт работа.
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                Thread t = _setupThread;
+                if (t != null) t.Join();
+                Dispatcher.BeginInvoke((Action)delegate
+                {
+                    if (_setupStop == null) return;
+                    _setupStop.Visibility = Visibility.Collapsed;
+                    _setupStop.IsEnabled = true;
+                });
+            });
         }
 
         /// <summary>

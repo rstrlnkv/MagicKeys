@@ -467,6 +467,17 @@ namespace MagicKeys
             Check("⌘ отпустили — Alt тоже отпущен", Sent().Contains(N(Vk.LMenu) + "^"), Sent());
             Clear();
 
+            // Отпустили вторую ⌘ — переключатель окон не закрывается.
+            s = Fresh();
+            Use(s);
+            Down(Vk.LWin); Down(Vk.Tab); Up(Vk.Tab);
+            DownE(Vk.RWin); Clear();
+            UpE(Vk.RWin);
+            Check("вторую ⌘ отпустили — переключатель окон остался открыт",
+                  Sent().IndexOf(N(Vk.LMenu) + "^") < 0, Sent());
+            Clear();
+            Up(Vk.LWin); Clear();
+
             s = Fresh(); s.CmdTabSwitchesWindows = false;
             Use(s);
             Down(Vk.LWin); Clear();
@@ -806,6 +817,19 @@ namespace MagicKeys
                   !sw0 && !sw1, "нажатие=" + sw0 + ", отпускание=" + sw1);
             Clear();
 
+            // Выключенная клавиша не должна вернуться нажатой: снять её потом нечем.
+            s = Fresh();
+            s.MapLCtrl = ModKey.None;
+            s.SpaceSearch = Settings.SpaceCtrl;
+            Use(s);
+            Down(Vk.LControl); Clear();
+            Down(Vk.Space);
+            string ctrlName = N(Vk.LControl);
+            Check("выключенный control не возвращается нажатым",
+                  Sent().IndexOf(ctrlName) < 0, Sent());
+            Clear();
+            Up(Vk.Space); Up(Vk.LControl); Clear();
+
             // Control, подставленный вместо Caps Lock, виден сочетаниям.
             s = Fresh();
             s.MapCapsLock = ModKey.LCtrl;
@@ -813,7 +837,7 @@ namespace MagicKeys
             Down(Vk.Capital); Clear();
             bool swc = Down(Vk.Space);
             Seq("⌃Space работает, когда control висит на Caps Lock", swc,
-                N(Vk.LWin) + "v", N(Vk.Space) + "v");
+                N(Vk.LControl) + "^", N(Vk.LWin) + "v", N(Vk.Space) + "v");
             Up(Vk.Space); Up(Vk.Capital); Clear();
 
             // И общее правило ⌘ тоже не повторяется: про клавишу вне таблицы мы не знаем,

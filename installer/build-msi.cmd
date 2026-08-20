@@ -15,7 +15,7 @@ set ROOT=%HERE%..
 
 set VERSION=%1
 if not defined VERSION set VERSION=%MAGICKEYS_VERSION%
-if not defined VERSION set VERSION=1.0.0
+if not defined VERSION set VERSION=0.1.0
 
 if not exist "%ROOT%\MagicKeys.exe" (
   echo Нет MagicKeys.exe — сначала соберите программу: build.cmd

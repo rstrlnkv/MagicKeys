@@ -23,10 +23,14 @@ namespace MagicKeys
     /// </summary>
     internal static class Iconography
     {
-        // Плитка в духе Fluent: синий с уходом в глубину, свет сверху.
-        private static readonly Color TileLight = Color.FromArgb(0x66, 0xCB, 0xFF);
-        private static readonly Color TileMid = Color.FromArgb(0x1E, 0x88, 0xF0);
-        private static readonly Color TileDeep = Color.FromArgb(0x0B, 0x46, 0xBC);
+        // Плитка Fluent. Синий взят от системного акцента Windows 11 (#0078D4), а не
+        // подобран на глаз: значок должен стоять в одном ряду с системными, а не спорить
+        // с ними. Ход градиента короткий и сверху вниз — у Fluent глубина обозначается,
+        // а не изображается; длинный диагональный переход с уходом в тёмно-синий читался
+        // как значок iOS, чего мы как раз не хотим.
+        private static readonly Color TileLight = Color.FromArgb(0x3A, 0x96, 0xDD);
+        private static readonly Color TileMid = Color.FromArgb(0x00, 0x78, 0xD4);
+        private static readonly Color TileDeep = Color.FromArgb(0x00, 0x5A, 0x9E);
 
         /// <summary>Размеры, которые кладутся в MagicKeys.ico.</summary>
         public static readonly int[] AppIconSizes = { 16, 20, 24, 32, 40, 48, 64, 96, 128, 256 };
@@ -108,13 +112,18 @@ namespace MagicKeys
                 float margin = size * (detailed ? 0.055f : 0.025f);
                 var rect = new RectangleF(margin, margin, size - 2 * margin, size - 2 * margin);
 
-                using (GraphicsPath tile = Squircle(rect, 5.0))
+                // Показатель суперэллипса: 2 — круг, бесконечность — квадрат. 4,6 даёт
+                // ту самую форму, по которой узнаются значки iOS и macOS: угол круглее,
+                // чем у плиток Windows, но переход в сторону всё ещё плавный.
+                using (GraphicsPath tile = Squircle(rect, 4.6))
                 {
                     if (size >= 48) SoftShadow(g, tile, size, size * 0.020f, size * 0.028f, 96);
 
+                    // Сверху вниз, а не по диагонали: диагональный переход — язык iOS,
+                    // у плиток Windows свет падает вертикально.
                     using (var fill = new LinearGradientBrush(
                                new PointF(rect.Left, rect.Top),
-                               new PointF(rect.Right, rect.Bottom), TileLight, TileDeep))
+                               new PointF(rect.Left, rect.Bottom), TileLight, TileDeep))
                     {
                         var blend = new ColorBlend(3);
                         blend.Colors = new Color[] { TileLight, TileMid, TileDeep };
@@ -126,20 +135,11 @@ namespace MagicKeys
 
                     if (detailed)
                     {
-                        // Свет сверху — то, что отличает плитку Fluent от плоского квадрата.
-                        g.SetClip(tile);
-                        float glossH = rect.Height * 0.62f;
-                        using (var gloss = new LinearGradientBrush(
-                                   new PointF(rect.Left, rect.Top - 1f),
-                                   new PointF(rect.Left, rect.Top + glossH),
-                                   Color.FromArgb(58, 255, 255, 255), Color.FromArgb(0, 255, 255, 255)))
-                        {
-                            gloss.WrapMode = WrapMode.TileFlipXY;
-                            g.FillRectangle(gloss, rect.Left, rect.Top, rect.Width, glossH);
-                        }
-                        g.ResetClip();
-
-                        using (var rim = new Pen(Color.FromArgb(66, 255, 255, 255), Math.Max(1f, size / 150f)))
+                        // Только тонкая светлая кромка по верхнему краю — у Fluent это всё,
+                        // что осталось от объёма. Глянцевый блик на верхней половине убран
+                        // нарочно: он и есть главный признак значка iOS, а форму мы взяли
+                        // оттуда сознательно, подачу — нет.
+                        using (var rim = new Pen(Color.FromArgb(52, 255, 255, 255), Math.Max(1f, size / 128f)))
                             g.DrawPath(rim, tile);
                     }
                 }
@@ -149,22 +149,19 @@ namespace MagicKeys
                 float share = size <= 20 ? 0.74f
                             : size <= 24 ? 0.68f
                             : size <= 32 ? 0.61f
-                            : size <= 48 ? 0.56f : 0.53f;
+                            : size <= 48 ? 0.56f : 0.52f;
+                // Линия тоньше прежней: у Fluent знаки лёгкие, толстая обводка — это
+                // опять же язык iOS. На мелких размерах тонкая линия пропадает, поэтому
+                // облегчение идёт только там, где есть чему пропадать.
                 float k = size <= 20 ? 0.140f
-                        : size <= 24 ? 0.125f
-                        : size <= 32 ? 0.108f
-                        : size <= 48 ? 0.090f : 0.076f;
+                        : size <= 24 ? 0.122f
+                        : size <= 32 ? 0.100f
+                        : size <= 48 ? 0.080f : 0.066f;
                 float box = rect.Width * share;
                 float stroke = box * k;
                 float cx = size / 2f, cy = size / 2f;
 
-                if (detailed)
-                {
-                    using (GraphicsPath shade = CommandPath(cx, cy + size * 0.014f, box, stroke))
-                    using (Pen pen = Stroke(Color.FromArgb(46, 4, 32, 84), stroke))
-                        g.DrawPath(pen, shade);
-                }
-
+                // Тени под знаком нет: в Fluent знак лежит на плитке, а не парит над ней.
                 using (GraphicsPath cmd = CommandPath(cx, cy, box, stroke))
                 using (Pen pen = Stroke(Color.White, stroke))
                     g.DrawPath(pen, cmd);
@@ -188,8 +185,12 @@ namespace MagicKeys
                 g.PixelOffsetMode = PixelOffsetMode.HighQuality;
                 g.Clear(Color.Transparent);
 
-                float box = size * 0.88f;
-                float k = size <= 16 ? 0.115f : (size <= 24 ? 0.102f : 0.092f);
+                // Меньше прежнего: 0,88 распирало знак до самых краёв, и в ряду системных
+                // значков он выглядел крупнее всех. У Fluent значки в трее занимают
+                // примерно три четверти площадки и оставляют воздух по краю.
+                float box = size * 0.74f;
+                // И тоньше: системные значки Windows 11 рисуются лёгкой линией.
+                float k = size <= 16 ? 0.110f : (size <= 24 ? 0.094f : 0.084f);
                 float stroke = box * k;
                 Color c = Color.FromArgb(dim ? 115 : 255, color.R, color.G, color.B);
 

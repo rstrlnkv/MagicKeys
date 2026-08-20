@@ -189,6 +189,9 @@ namespace MagicKeys
 
         public static void ThisThreadTakesOnlyReady() { _noLoad = true; }
 
+        /// <summary>Прогрев закончен: «такой раскладки нет» теперь окончательный ответ.</summary>
+        public static bool Ready { get { return _loaded; } }
+
         private static void EnsureLoaded()
         {
             if (_loaded || _noLoad) return;

@@ -80,6 +80,14 @@ namespace MagicKeys
             }
         }
 
+        /// <summary>Наш счёт регистра — тот, по которому раскладка Apple выбирает букву.</summary>
+        static bool CapsOn()
+        {
+            return (bool)typeof(Engine)
+                .GetField("_capsOn", BindingFlags.NonPublic | BindingFlags.Instance)
+                .GetValue(_eng);
+        }
+
         static Settings Fresh()
         {
             Settings s = new Settings();
@@ -121,6 +129,12 @@ namespace MagicKeys
         static bool UpE(int vk) { return Send(vk, false, true); }
 
         static string N(int vk) { return Vk.Name(vk); }
+        static int Count(string where, string what)
+        {
+            int n = 0, at = 0;
+            while ((at = where.IndexOf(what, at)) >= 0) { n++; at += what.Length; }
+            return n;
+        }
         static string Sent() { return String.Join(" ", _log.ToArray()); }
         static void Clear() { _log.Clear(); }
 
@@ -771,6 +785,60 @@ namespace MagicKeys
                   Sent().Contains(N(Vk.Delete) + "^"), Sent());
             Clear();
             Up(Vk.LWin); Clear();
+
+            // Ветка верхнего ряда защёлкивается на ПЕРВОМ нажатии, чем бы оно ни
+            // кончилось. Иначе нажатие уходит в приложение настоящей F-клавишей,
+            // а отпускание съедает наш слой — и клавиша остаётся зажатой там навсегда.
+            s = Fresh();
+            s.MediaFirst = false;               // «сначала F-клавиши»
+            s.FnSubstitute = ModKey.RAlt;
+            s.FKeys[6] = "media.prev";
+            Use(s);
+            bool passDown = Down(Vk.F1 + 6);    // F7 ушла насквозь: Fn никто не держит
+            Clear();
+            DownE(Vk.RMenu);                    // заменитель Fn нажали, не отпуская F7
+            Down(Vk.F1 + 6);                    // автоповтор F7
+            Up(Vk.F1 + 6);
+            Check("F-клавиша, ушедшая насквозь, не превращается в медиадействие",
+                  !passDown && Sent().IndexOf(N(Vk.MediaPrev)) < 0,
+                  "нажатие=" + passDown + ", пришло «" + Sent() + "»");
+            Check("после этого F7 не остаётся нажатой",
+                  Count(Sent(), N(Vk.F1 + 6) + "v") <= Count(Sent(), N(Vk.F1 + 6) + "^"),
+                  Sent());
+            Clear();
+            UpE(Vk.RMenu); Clear();
+
+            // Та же клавиша, ушедшая насквозь, не достаётся и слою аккордов: иначе
+            // он съест отпускание, и в приложении F7 останется зажатой.
+            s = Fresh();
+            s.MediaFirst = false;
+            s.FnSubstitute = ModKey.RAlt;
+            Use(s);
+            Down(Vk.F1 + 6);
+            Down(Vk.LWin);
+            Down(Vk.F1 + 6);
+            Clear();
+            bool chordUp = Up(Vk.F1 + 6);
+            Check("F-клавишу, ушедшую насквозь, не отнимает слой аккордов",
+                  !chordUp, "отпускание=" + chordUp + ", пришло «" + Sent() + "»");
+            Clear();
+            Up(Vk.LWin); Clear();
+
+            // Вторая клавиша на Caps Lock жмёт уже нажатый Caps Lock: для Windows это
+            // повтор, переключателем он не считается. Наш счёт регистра не должен
+            // расходиться с лампочкой.
+            s = Fresh();
+            s.MapRAlt = ModKey.CapsLock;        // и сам Caps Lock остаётся Caps Lock
+            Use(s);
+            bool caps0 = CapsOn();
+            Down(Vk.Capital);
+            bool caps1 = CapsOn();
+            DownE(Vk.RMenu);
+            bool caps2 = CapsOn();
+            Check("вторая клавиша на Caps Lock не переворачивает регистр второй раз",
+                  caps1 != caps0 && caps2 == caps1,
+                  "было=" + caps0 + ", после Caps Lock=" + caps1 + ", после ⌥=" + caps2);
+            UpE(Vk.RMenu); Up(Vk.Capital); Clear();
 
             // Верхний ряд взят — аккорд его не отнимает.
             s = Fresh();

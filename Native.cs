@@ -147,7 +147,6 @@ namespace MagicKeys
         [DllImport("user32.dll")]
         public static extern int GetSystemMetrics(int index);
 
-        // С индексом −1 возвращает число значков в файле, ничего не загружая.
         // ---------- низкоуровневый хук клавиатуры ----------
 
         public const int WH_KEYBOARD_LL = 13;
@@ -156,12 +155,8 @@ namespace MagicKeys
         public const int WM_KEYDOWN = 0x0100;
         public const int WM_KEYUP = 0x0101;
         public const int WM_SYSKEYDOWN = 0x0104;
-        public const int WM_SYSKEYUP = 0x0105;
 
         public const uint LLKHF_EXTENDED = 0x01;
-        public const uint LLKHF_INJECTED = 0x10;
-        public const uint LLKHF_ALTDOWN = 0x20;
-        public const uint LLKHF_UP = 0x80;
 
         [StructLayout(LayoutKind.Sequential)]
         public struct KBDLLHOOKSTRUCT
@@ -500,8 +495,6 @@ namespace MagicKeys
 
         [DllImport("user32.dll")]
         public static extern uint MapVirtualKeyExW(uint code, uint mapType, IntPtr hkl);
-
-        public const uint MAPVK_VSC_TO_VK_EX = 3;
 
         // ---------- прочее ----------
 

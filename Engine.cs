@@ -23,7 +23,6 @@ namespace MagicKeys
     /// </summary>
     internal sealed class Engine
     {
-        // Скан-коды, которых нет на клавиатуре ANSI.
         private Thread _thread;
         private volatile uint _threadId;
         private IntPtr _hook;
@@ -37,6 +36,13 @@ namespace MagicKeys
         // Какой веткой пошло нажатие — медиа или настоящая F-клавиша — и что было
         // на клавишу назначено. Запоминается, потому что к отпусканию и заменитель
         // Fn, и настройки успевают стать другими.
+        // «Ветка на это нажатие выбрана» — не то же самое, что «мы держим клавишу».
+        // Раньше это было одно поле, и три выхода выбирали ветку, не выставив его:
+        // уступленный драйверу ряд, «нужна настоящая F-клавиша, а Fn не держат»
+        // и действие «оставить как есть». На следующем автоповторе ветка выбиралась
+        // заново — уже с другим _fnHeld, — и отпускание съедал наш слой, тогда как
+        // нажатие ушло в приложение настоящей F-клавишей. Клавиша оставалась зажатой.
+        private readonly bool[] _fkeyLatched = new bool[Settings.MaxFKeys];
         private readonly bool[] _fkeyMedia = new bool[Settings.MaxFKeys];
         private readonly bool[] _fkeyYield = new bool[Settings.MaxFKeys];
         private readonly string[] _fkeyAction = new string[Settings.MaxFKeys];
@@ -550,7 +556,16 @@ namespace MagicKeys
                 bool toCaps = TargetFor(s, phys) == ModKey.CapsLock;
                 if (toCaps)
                 {
-                    if (down) { if (_capsSources.Add(phys)) _capsOn = !_capsOn; }
+                    // Переворачиваем, только когда Caps Lock не держала ни одна другая
+                    // клавиша. Вторая клавиша жмёт уже нажатый Caps Lock, а повторное
+                    // нажатие Windows переключателем не считает — лампочка остаётся как
+                    // была, и наш счёт расходился с ней: раскладка Apple печатала
+                    // строчными при горящей лампочке.
+                    if (down)
+                    {
+                        bool first = _capsSources.Count == 0;
+                        if (_capsSources.Add(phys) && first) _capsOn = !_capsOn;
+                    }
                     else _capsSources.Remove(phys);
                 }
                 return HandleModifier(s, phys, down);
@@ -797,10 +812,16 @@ namespace MagicKeys
         {
             IntPtr hkl = ForegroundLayout();
             if (hkl == _layHkl && _layFor == s) return _layFile;
+            AppleLayoutFile file = Layouts.ById(s.LayoutFor((int)(hkl.ToInt64() & 0xFFFF)));
+            // «Раскладки ещё нет» до конца прогрева не запоминаем. Поток перехвата берёт
+            // только готовое, а прогрев идёт в своём потоке: первое же нажатие в первые
+            // миллисекунды после запуска запоминало «нет» — и раскладки Apple молча
+            // не работали до смены языка окна.
+            if (file == null && !Layouts.Ready) return null;
             _layHkl = hkl;
             _layFor = s;
-            _layFile = Layouts.ById(s.LayoutFor((int)(hkl.ToInt64() & 0xFFFF)));
-            return _layFile;
+            _layFile = file;
+            return file;
         }
 
         /// <summary>Выпустить висящий знак ударения, пока для него ещё есть раскладка.</summary>
@@ -887,7 +908,15 @@ namespace MagicKeys
             if (!_swallowed.Contains(k.scanCode) && Busy((int)k.vkCode, k.scanCode)) return -1;
 
             string text = key.Text(ShiftHeld, optWanted);
-            if (text == null) return -1;
+            if (text == null)
+            {
+                // Строка в таблице есть, но на этом уровне пусто — в CLDR это обычное
+                // дело. Для висящего знака ударения случай тот же, что и «клавиши нет
+                // в таблице»: выпустить его надо здесь, иначе он всплывёт получасом
+                // позже поверх чужой буквы.
+                if (_deadPrefix != null) FlushDead(lay, false);
+                return -1;
+            }
             bool dead = key.Dead(ShiftHeld, optWanted);
 
             if (_capsOn && text.Length == 1 && Char.IsLetter(text[0]))
@@ -1182,7 +1211,6 @@ namespace MagicKeys
             }
         }
 
-        /// <summary>Одиночная клавиша со своим назначением. false — оставить как есть.</summary>
         /// <summary>
         /// Клавиша с одним назначением: ⌧, «=» цифрового блока, японские.
         ///
@@ -1245,8 +1273,9 @@ namespace MagicKeys
             // достаточно было сменить настройки под удержанием: первые нажатия ушли
             // насквозь, ветка сменилась, и отпускание съедал уже наш слой — а клавиша
             // оставалась зажатой в приложении.
-            if (down && !_fkeyDown[index])
+            if (down && !_fkeyLatched[index])
             {
+                _fkeyLatched[index] = true;
                 _fkeyMedia[index] = s.MediaFirst ^ _fnHeld;
                 _fkeyAction[index] = s.FKey(index);
 
@@ -1264,10 +1293,13 @@ namespace MagicKeys
                 // и уступать некому: ряд просто умрёт.
                 _fkeyYield[index] = YieldsRow(s, index);
             }
-            else if (!_fkeyDown[index])
+            else if (!down)
             {
-                // Отпускание клавиши, которую мы не брали, — не наше дело.
-                return false;
+                // Отпускание клавиши, нажатия которой мы не видели, — не наше дело.
+                if (!_fkeyLatched[index]) return false;
+                // Защёлку снимаем здесь, до всех отступлений ниже: иначе ветка,
+                // ушедшая в приложение, оставалась бы выбранной навсегда.
+                _fkeyLatched[index] = false;
             }
 
             if (_fkeyYield[index]) return false;
@@ -1284,6 +1316,11 @@ namespace MagicKeys
                 }
                 else
                 {
+                    // Нажатия не брали — значит настоящая F-клавиша ушла в приложение
+                    // своим ходом, и отпускание обязано уйти туда же. Защёлка сама по
+                    // себе этого не значит: она ставится и на том нажатии, что ушло
+                    // насквозь, — чтобы клавишу не отобрал посреди удержания чужой слой.
+                    if (!_fkeyDown[index]) return false;
                     Input.Key(vk, false);
                     _fkeyDown[index] = false;
                     SubstituteRestore();
@@ -1340,7 +1377,11 @@ namespace MagicKeys
                 || _swallowed.Contains(scan)
                 || _isoSwapped.Contains(scan)
                 || _singleAction.ContainsKey(vk)
-                || (vk >= Vk.F1 && vk <= Vk.F24 && _fkeyDown[vk - Vk.F1]);
+                // Верхний ряд спрашиваем по защёлке, а не по «мы держим». Клавиша,
+                // ушедшая в приложение настоящей F-клавишей, всё равно наша до конца
+                // нажатия: отдав её посреди удержания слою аккордов, мы съели бы
+                // отпускание, и в приложении она осталась бы зажатой.
+                || (vk >= Vk.F1 && vk <= Vk.F24 && _fkeyLatched[vk - Vk.F1]);
         }
 
         private static bool TryPhysical(int vk, bool ext, out ModKey key)
@@ -1379,6 +1420,10 @@ namespace MagicKeys
                 }
         }
 
+        // Незанятый виртуальный код: ни одна клавиша его не выдаёт, ни одно сочетание
+        // на нём не висит. Нужен как безобидная «затычка» — см. ниже.
+        private const int VkNoop = 0xE8;
+
         /// <summary>
         /// Отправляет то, во что переводится сочетание macOS.
         ///
@@ -1389,10 +1434,6 @@ namespace MagicKeys
         /// ⇧ и control безобидны, их возвращаем — иначе после ⇧⌘Z следующая буква
         /// вышла бы строчной.
         /// </summary>
-        // Незанятый виртуальный код: ни одна клавиша его не выдаёт, ни одно сочетание
-        // на нём не висит. Нужен как безобидная «затычка» — см. ниже.
-        private const int VkNoop = 0xE8;
-
         private void MacSend(MacShortcut sc)
         {
             // Снимаем то, что Windows держит СЕЙЧАС, а не то, какие физические клавиши
@@ -1435,11 +1476,15 @@ namespace MagicKeys
                     Input.Key(p.Value, true);
         }
 
-        // Отпускаем и нажимаем именно то, что реально ушло в Windows: у переназначенной
-        // клавиши это не её собственный код, а код замены.
-        /// <summary>Отпустить всё, что мы могли зажать: иначе после смены настроек модификатор «залипнет».</summary>
+        /// <summary>Держит ли Windows этот код прямо сейчас.</summary>
         private static bool Held(int vk) { return (Native.GetKeyState(vk) & 0x8000) != 0; }
 
+        /// <summary>
+        /// Отпустить всё, что мы могли зажать: иначе после смены настроек, паузы или
+        /// пробуждения клавиатуры подставленный модификатор «залипнет». Отпускаем именно
+        /// то, что реально ушло в Windows: у переназначенной клавиши это не её
+        /// собственный код, а код замены.
+        /// </summary>
         private void ReleaseEverything()
         {
             try
@@ -1504,6 +1549,7 @@ namespace MagicKeys
                         try { Actions.End(Actions.Get(_fkeyAction[i])); }
                         catch (Exception e) { Diag.Log("не удалось отпустить действие", e); }
                     }
+                    _fkeyLatched[i] = false;
                     _fkeyDown[i] = false;
                     _fkeyMedia[i] = false;
                     _fkeyYield[i] = false;

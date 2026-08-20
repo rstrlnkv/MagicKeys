@@ -35,8 +35,7 @@ namespace MagicKeys
         private static Thread _worker;
 
 
-        /// <summary>Сообщает новый уровень в процентах — для экранного индикатора.</summary>
-
+        /// <summary>Просит изменить яркость на заданный шаг в процентах.</summary>
         // Зовётся из обработчика хука, поэтому здесь только атомарная прибавка и побудка
         // рабочего потока. Запись в журнал открывает и закрывает файл на каждой строке —
         // в хуке этого хватает, чтобы Windows сняла перехват по таймауту.
@@ -186,10 +185,6 @@ namespace MagicKeys
             return (int)Math.Round((p.Cur - p.Min) * 100.0 / range);
         }
 
-        /// <summary>
-        /// Имя экрана вида \\.\DISPLAY2 — мониторы часто зовутся одинаково
-        /// («Generic PnP Monitor»), и по названию их в журнале не различить.
-        /// </summary>
         // Значения VideoOutputTechnology, означающие «панель внутри корпуса»:
         // LVDS, встроенный DisplayPort, встроенный UDI и собственно INTERNAL.
         private static readonly int[] InternalTech =
@@ -255,6 +250,10 @@ namespace MagicKeys
             return found;
         }
 
+        /// <summary>
+        /// Имя экрана вида \\.\DISPLAY2 — мониторы часто зовутся одинаково
+        /// («Generic PnP Monitor»), и по названию их в журнале не различить.
+        /// </summary>
         private static string ScreenName(IntPtr screen)
         {
             if (screen == IntPtr.Zero) return "?";

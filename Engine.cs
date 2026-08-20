@@ -25,7 +25,7 @@ namespace MagicKeys
     {
         // Скан-коды, которых нет на клавиатуре ANSI.
         private Thread _thread;
-        private uint _threadId;
+        private volatile uint _threadId;
         private IntPtr _hook;
         private Native.HookProc _proc;
         private Timer _watch;
@@ -139,14 +139,21 @@ namespace MagicKeys
             // Снимок, а не сам объект: окно продолжит править свой экземпляр по полю
             // за раз, а поток перехвата должен видеть настройки целыми — либо прежние,
             // либо новые, но не половину одних и половину других.
-            // Просьба отпустить — ДО подмены настроек. Иначе между ними остаётся окно,
-            // в котором нажатие разбирается новыми настройками против старого состояния:
-            // подставленный модификатор перезаписывался, не отпустившись, а взятое
-            // нажатие оставалось за нами навсегда.
-            //
-            // Через сообщение: Apply зовут с потока окна, а состояние принадлежит потоку хука.
-            PostRelease();
-            _cfg = s == null ? new Settings() : s.Snapshot();
+            // Снимок кладём рядом и просим поток хука забрать его самому. Только так
+            // «отпустить старое» и «начать слушаться нового» становятся одним шагом:
+            // порядок двух присваиваний с этого потока окна не закрывает ничего — между
+            // ними всё равно проходят нажатия, и разбираются они то новыми настройками
+            // против старого состояния, то наоборот.
+            Settings shot = s == null ? new Settings() : s.Snapshot();
+            _pendingCfg = shot;
+
+            uint id = _threadId;
+            if (id == 0 || !Native.PostThreadMessageW(id, WmApply, IntPtr.Zero, IntPtr.Zero))
+            {
+                // Потока нет — применяем сами, здесь и сейчас.
+                if (!_threadAlive) ReleaseEverything();
+                _cfg = shot;
+            }
             EnsureNumLock(_cfg);
         }
 
@@ -243,6 +250,10 @@ namespace MagicKeys
 
         // WM_APP + 1 и + 2: свои сообщения потоку хука, чужим кодом не заняты.
         private const uint WmRelease = 0x8000 + 1;
+        private const uint WmApply = 0x8000 + 3;
+
+        /// <summary>Снимок, который поток хука должен забрать себе вместе со сбросом.</summary>
+        private volatile Settings _pendingCfg;
         private const uint WmCheck = 0x8000 + 2;
 
         private volatile uint _lastHookTick;
@@ -372,6 +383,14 @@ namespace MagicKeys
                     // случае обработчик зацикливается: Windows снимает перехват, а всё
                     // зажатое так и остаётся зажатым.
                     if (msg.hwnd == IntPtr.Zero && msg.message == WmRelease) { ReleaseEverything(); continue; }
+                    if (msg.hwnd == IntPtr.Zero && msg.message == WmApply)
+                    {
+                        // Отпустить старое и взять новое — одним шагом и на своём потоке.
+                        ReleaseEverything();
+                        Settings shot = _pendingCfg;
+                        if (shot != null) _cfg = shot;
+                        continue;
+                    }
                     if (msg.hwnd == IntPtr.Zero && msg.message == WmCheck) { CheckHookAlive(); continue; }
                     Native.TranslateMessage(ref msg);
                     Native.DispatchMessageW(ref msg);
@@ -861,17 +880,16 @@ namespace MagicKeys
 
         private void Release(ModKey phys, List<int> released)
         {
-            int vk = EffectiveVk(phys);
+            // Тот же вопрос, что у аккорда: не «какая клавиша нажата», а «что она держит
+            // в Windows». Прежний ответ не знал про взятые нажатия, и «выключенная»
+            // клавиша возвращалась нажатой — а снять её было уже нечем.
+            int vk = WindowsHolds(phys);
             if (vk == 0) return;
+            // Alt, отпущенный и нажатый вхолостую, открывает строку меню — тот же щит,
+            // что и везде. Без него на каждом ⌥-символе дважды всплывали подсказки клавиш.
+            if (IsMenuKey(vk)) Input.Tap(VkNoop);
             Input.Key(vk, false);
             released.Add(vk);
-        }
-
-        private int EffectiveVk(ModKey phys)
-        {
-            int vk;
-            if (_injected.TryGetValue(phys, out vk)) return vk;
-            return ModNames.VirtualKey(phys);
         }
 
         /// <summary>
@@ -1318,24 +1336,16 @@ namespace MagicKeys
             // Windows и Alt не возвращаем: сами по себе они открывают «Пуск» и строку
             // меню, а пока они зажаты физически, следующее сочетание всё равно опознается
             // по своему состоянию.
+            // Возвращаем только настоящие модификаторы. Caps Lock, нажатый второй раз,
+            // зажигает лампочку и разводит наш счёт регистра с Windows; Escape доезжает
+            // до приложения настоящим нажатием и закрывает диалог.
             foreach (KeyValuePair<ModKey, int> p in held)
-                if (!IsMenuKey(p.Value) && _modsDown.Contains(p.Key)) Input.Key(p.Value, true);
+                if (IsModifierKey(p.Value) && !IsMenuKey(p.Value) && _modsDown.Contains(p.Key))
+                    Input.Key(p.Value, true);
         }
 
         // Отпускаем и нажимаем именно то, что реально ушло в Windows: у переназначенной
         // клавиши это не её собственный код, а код замены.
-        private void ModRelease(ModKey phys)
-        {
-            int vk = EffectiveVk(phys);
-            if (vk != 0) Input.Key(vk, false);
-        }
-
-        private void ModPress(ModKey phys)
-        {
-            int vk = EffectiveVk(phys);
-            if (vk != 0) Input.Key(vk, true);
-        }
-
         /// <summary>Отпустить всё, что мы могли зажать: иначе после смены настроек модификатор «залипнет».</summary>
         private static bool Held(int vk) { return (Native.GetKeyState(vk) & 0x8000) != 0; }
 
@@ -1343,6 +1353,16 @@ namespace MagicKeys
         {
             try
             {
+                // Щит перед отпусканием подставленной Win или Alt. Без него достаточно
+                // было держать ⌘ в тот миг, когда случился любой сброс — а он случается
+                // сам: пробуждение клавиатуры, движение галочки в окне, возврат с чужого
+                // рабочего стола. Windows видела Win нажатой и отпущенной без ничего
+                // между ними, то есть одиночное нажатие, и выкидывала «Пуск» поверх работы.
+                bool menu = false;
+                foreach (KeyValuePair<ModKey, int> pair in _injected)
+                    if (IsMenuKey(pair.Value)) menu = true;
+                if (menu) Input.Tap(VkNoop);
+
                 foreach (KeyValuePair<ModKey, int> pair in new List<KeyValuePair<ModKey, int>>(_injected))
                     Input.Key(pair.Value, false);
                 _injected.Clear();

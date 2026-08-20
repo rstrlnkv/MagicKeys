@@ -179,6 +179,9 @@ namespace MagicKeys
 
         private static int Percent(Panel p)
         {
+            // Cur ниже Min монитор отдавать не должен, но отдаёт: вычитание беззнаковых
+            // тогда уходит в переполнение, и в плашке появляется бессмыслица.
+            if (p.Cur < p.Min) return 0;
             uint range = p.Max > p.Min ? p.Max - p.Min : 1;
             return (int)Math.Round((p.Cur - p.Min) * 100.0 / range);
         }

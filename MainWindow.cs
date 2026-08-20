@@ -1581,6 +1581,10 @@ namespace MagicKeys
         {
             if (_setupThread != null && _setupThread.IsAlive) { SetupSay("Уже идёт работа, дождитесь конца."); return; }
 
+            // Прежний освобождаем: дескриптор ожидания — вещь неуправляемая,
+            // и копить их по одному на каждое нажатие кнопки незачем.
+            ManualResetEvent old = _setupCancel;
+            if (old != null) try { old.Close(); } catch { }
             _setupCancel = new ManualResetEvent(false);
             if (_setupStop != null) _setupStop.Visibility = Visibility.Visible;
 

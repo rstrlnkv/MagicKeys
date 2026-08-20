@@ -840,6 +840,30 @@ namespace MagicKeys
                 N(Vk.LControl) + "^", N(Vk.LWin) + "v", N(Vk.Space) + "v");
             Up(Vk.Space); Up(Vk.Capital); Clear();
 
+            // Сброс зажатого не должен открывать «Пуск»: Windows считает командой
+            // клавишу Win, нажатую и отпущенную без ничего между ними.
+            s = Fresh();
+            Use(s);
+            Down(Vk.LWin);
+            Clear();
+            _release.Invoke(_eng, null);
+            Check("сброс зажатого не открывает «Пуск»",
+                  Sent().StartsWith("щитv щит^"), Sent());
+            Clear();
+
+            // Аккорд не возвращает нажатым переключатель: второе нажатие Caps Lock
+            // зажигает лампочку, а Escape закрывает диалог.
+            s = Fresh();
+            s.MapCapsLock = ModKey.Escape;
+            Use(s);
+            Down(Vk.Capital);
+            Down(Vk.LWin); Clear();
+            Down(0x43);                     // ⌘C при зажатом Caps Lock
+            Check("аккорд не возвращает Escape нажатым",
+                  Sent().IndexOf(N(Vk.Escape) + "v") < 0, Sent());
+            Clear();
+            Up(0x43); Up(Vk.LWin); Up(Vk.Capital); Clear();
+
             // И общее правило ⌘ тоже не повторяется: про клавишу вне таблицы мы не знаем,
             // осмыслен ли для неё повтор.
             s = Fresh();

@@ -150,6 +150,7 @@ namespace MagicKeys
                 var psi = new ProcessStartInfo(
                     Path.Combine(Environment.SystemDirectory, "msiexec.exe"),
                     "/a \"" + msi + "\" TARGETDIR=\"" + target + "\" /qn");
+                psi.WorkingDirectory = Environment.SystemDirectory;
                 psi.UseShellExecute = false;
                 psi.CreateNoWindow = true;
                 using (Process p = Process.Start(psi))
@@ -169,7 +170,17 @@ namespace MagicKeys
                 try { File.Delete(msi); } catch { }
                 try { File.Delete(StatePath(msi)); } catch { }
                 string found = SevenZip();
-                if (found == null) error = "7-Zip развернулся, но 7z.exe не нашёлся";
+                if (found == null) { error = "7-Zip развернулся, но 7z.exe не нашёлся"; return null; }
+
+                // Запоминаем, каким он был сразу после распаковки из установщика
+                // с проверенной подписью. Дальше перед каждым запуском сверяем: папка
+                // доступна на запись любому процессу этого пользователя.
+                try
+                {
+                    using (FileStream f = Open(found))
+                        if (f != null) File.WriteAllText(SevenZipHashPath, HashOf(f));
+                }
+                catch (Exception e) { Diag.Log("не удалось запомнить сумму 7z.exe", e); }
                 return found;
             }
             catch (Exception e) { error = e.Message; return null; }
@@ -685,25 +696,87 @@ namespace MagicKeys
         {
             error = null;
 
-            // Проверяем перед КАЖДЫМ запуском, а не только тот, что скачали сами.
-            // Своя копия лежит в папке пользователя, писать в неё может любой его
-            // процесс, и подложенный туда 7z.exe обходил всю проверку скачанного:
-            // FetchSevenZip до него просто не доходил. А решает этот файл, какое дерево
-            // окажется распаковано и какой .inf уйдёт в pnputil с правами администратора.
-            string signer;
-            if (!SignatureValid(sevenZip, out signer) || !SignedBy7Zip(signer)
-                || !RootedInMachineStore(sevenZip))
+            // Проверяем перед КАЖДЫМ запуском — но суммой, а не подписью. Замерено:
+            // сам 7z.exe подписи Authenticode не имеет вовсе, её носит только установщик.
+            // Требовать её значило бы отказывать всегда и убить добычу драйвера целиком.
+            //
+            // Своя копия лежит в папке пользователя, писать в неё может любой его процесс,
+            // и подложенный туда файл обходил проверку скачанного: FetchSevenZip до неё
+            // просто не доходил. Поэтому у своей копии запомнена сумма — та, что была
+            // при распаковке из установщика с проверенной подписью. Копию из Program Files
+            // или из ветки HKLM так не проверяем: туда без прав администратора не записать,
+            // а если они есть, защищать уже нечего.
+            using (FileStream keep = Open(sevenZip))
             {
-                Diag.Log("7z.exe не прошёл проверку подписи: " + (signer == null ? "не подписан" : signer));
-                error = "7-Zip на этом компьютере подписан не тем, кем должен, — запускать его нельзя";
+                if (keep == null)
+                {
+                    error = "7-Zip занят другой программой";
+                    return false;
+                }
+                if (!TrustedSevenZip(sevenZip, keep, out error)) return false;
+                return Run7zHeld(sevenZip, args, out error);
+            }
+        }
+
+        /// <summary>
+        /// Можно ли верить этому 7z.exe. Файл уже открыт без права записи, и сумма
+        /// считается по открытому — подменить его между проверкой и запуском нельзя.
+        /// </summary>
+        private static bool TrustedSevenZip(string path, FileStream open, out string error)
+        {
+            error = null;
+            string mine = Path.GetFullPath(ToolsFolder);
+            if (!Path.GetFullPath(path).StartsWith(mine, StringComparison.OrdinalIgnoreCase))
+                return true;   // не наша копия — значит из места, куда пишет администратор
+
+            string want = null;
+            try { want = File.ReadAllText(SevenZipHashPath).Trim(); }
+            catch { }
+            if (String.IsNullOrEmpty(want))
+            {
+                error = "не записано, каким 7-Zip был при распаковке, — уберите скачанное и повторите";
                 return false;
             }
 
+            string now = HashOf(open);
+            if (!String.Equals(now, want, StringComparison.OrdinalIgnoreCase))
+            {
+                Diag.Log("7z.exe изменился: было " + want + ", стало " + now);
+                error = "7-Zip на этом компьютере изменился с тех пор, как программа его развернула — "
+                      + "уберите скачанное и повторите";
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>Куда записана сумма своей копии 7-Zip.</summary>
+        private static string SevenZipHashPath
+        {
+            get { return Path.Combine(ToolsFolder, "7z.sha256"); }
+        }
+
+        /// <summary>Сумма уже открытого файла — без второго открытия и без окна для подмены.</summary>
+        private static string HashOf(FileStream open)
+        {
+            open.Position = 0;
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(open);
+                var sb = new StringBuilder(hash.Length * 2);
+                foreach (byte b in hash) sb.Append(b.ToString("x2"));
+                return sb.ToString();
+            }
+        }
+
+        private static bool Run7zHeld(string sevenZip, string args, out string error)
+        {
+            error = null;
             try
             {
                 var psi = new ProcessStartInfo(sevenZip, args);
                 psi.UseShellExecute = false;
                 psi.CreateNoWindow = true;
+                psi.WorkingDirectory = Path.GetDirectoryName(sevenZip);
                 psi.RedirectStandardOutput = true;
                 psi.RedirectStandardError = true;
                 using (Process p = Process.Start(psi))
@@ -876,9 +949,13 @@ namespace MagicKeys
                 }
                 using (Process p = started)
                 {
-                    if (!p.WaitForExit(120000))
+                    if (!p.WaitForExit(300000))
                     {
-                        output = "Установка драйвера не уложилась в срок.";
+                        // Не убиваем: установщик драйверов на медленной машине бывает
+                        // долгим, а прерванная установка хуже долгой. Но и успехом
+                        // не называем — говорим то, что есть.
+                        output = "Установка идёт дольше обычного. Она продолжается сама; "
+                               + "загляните сюда позже или переподключите клавиатуру.";
                         return false;
                     }
                     return Verdict(p.ExitCode, out output);

@@ -444,7 +444,20 @@ namespace MagicKeys
                     }
                 }
             }
-            catch { }
+            catch (Exception e)
+            {
+                // Молча подсунуть заводские и затереть файл первой же галочкой — значит
+                // потерять настройки без единого слова. Испорченное откладываем рядом:
+                // разобрать его потом можно, а восстановить из ниоткуда — нет.
+                Diag.Log("файл настроек не прочитался", e);
+                try
+                {
+                    string bad = FilePath + ".bad";
+                    if (File.Exists(bad)) File.Delete(bad);
+                    if (File.Exists(FilePath)) File.Move(FilePath, bad);
+                }
+                catch { }
+            }
             return new Settings();
         }
 

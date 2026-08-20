@@ -52,6 +52,9 @@ namespace MagicKeys
             SnapshotIndependence();
             LayoutGuess();
             OtherSettings();
+            Tables();
+            SnapshotByReflection();
+            BrokenFile();
 
             Console.WriteLine();
             Console.WriteLine("прошло " + _pass + ", провалено " + _fail);
@@ -483,6 +486,17 @@ namespace MagicKeys
             Seq("⌘← → Home", sw, N(Vk.Home) + "v", N(Vk.Home) + "^");
             Up(Vk.Left); Up(Vk.LWin); Clear();
 
+            // Удержание двух аккордов разом: отпустив второй, автоповтор первого
+            // не должен сработать заново.
+            Down(Vk.LWin); Clear();
+            Down(0x43);                 // ⌘C — сработало
+            Down(0x56); Up(0x56);       // ⌘V нажали и отпустили
+            Clear();
+            Down(0x43);                 // автоповтор ⌘C
+            Check("автоповтор ⌘C не оживает от чужого отпускания", Sent() == "", Sent());
+            Clear();
+            Up(0x43); Up(Vk.LWin); Clear();
+
             Down(Vk.LWin); Clear();
             sw = Down(0x51); Down(0x51); Down(0x51);   // ⌘Q трижды
             int n = Sent().Split(new string[] { N(Vk.F4) + "v" }, StringSplitOptions.None).Length - 1;
@@ -728,7 +742,155 @@ namespace MagicKeys
             Check("выбор руками запоминается", th.LayoutFor(0x0419) == "de", "«" + th.LayoutFor(0x0419) + "»");
         }
 
+        /// <summary>
+        /// Целостность таблиц. Промах здесь ничего не роняет — он просто делает строку
+        /// недостижимой, и заметить это можно, только нажав ту самую клавишу.
+        /// </summary>
+        static void Tables()
+        {
+            Head("Таблицы");
+
+            var ids = new Dictionary<string, int>();
+            foreach (KeyAction a in Actions.All)
+            {
+                int n;
+                ids[a.Id] = ids.TryGetValue(a.Id, out n) ? n + 1 : 1;
+            }
+            var twice = new List<string>();
+            foreach (KeyValuePair<string, int> kv in ids) if (kv.Value > 1) twice.Add(kv.Key);
+            Check("у действий нет повторяющихся кодов", twice.Count == 0, String.Join(", ", twice.ToArray()));
+
+            var mids = new Dictionary<string, int>();
+            var pairs = new Dictionary<string, string>();
+            var clash = new List<string>();
+            foreach (MacShortcut s in MacKeys.All)
+            {
+                int n;
+                mids[s.Id] = mids.TryGetValue(s.Id, out n) ? n + 1 : 1;
+                string key = s.Vk + "/" + (int)s.Mods;
+                string had;
+                if (pairs.TryGetValue(key, out had)) clash.Add(had + " и " + s.Id);
+                else pairs[key] = s.Id;
+            }
+            twice = new List<string>();
+            foreach (KeyValuePair<string, int> kv in mids) if (kv.Value > 1) twice.Add(kv.Key);
+            Check("у сочетаний нет повторяющихся кодов", twice.Count == 0, String.Join(", ", twice.ToArray()));
+            Check("нет двух сочетаний на одну клавишу с теми же модификаторами",
+                  clash.Count == 0, String.Join("; ", clash.ToArray()));
+
+            // Заводские назначения верхнего ряда обязаны существовать в списке действий:
+            // иначе клавиша с завода не делает ничего, а в окне против неё пусто.
+            var missing = new List<string>();
+            CheckIds(Settings.DefaultFKeys(), missing, "общие");
+            foreach (AppleGen g in Enum.GetValues(typeof(AppleGen)))
+                CheckIds(Models.DefaultFKeys(g), missing, Models.GenName(g));
+            var s0 = new Settings();
+            if (Actions.Get(s0.NumpadClear) == null) missing.Add("для ⌧: " + s0.NumpadClear);
+            if (Actions.Get(s0.EjectKey) == null) missing.Add("для ⏏: " + s0.EjectKey);
+            Check("все заводские назначения существуют", missing.Count == 0,
+                  String.Join(", ", missing.ToArray()));
+        }
+
+        static void CheckIds(string[] list, List<string> missing, string whose)
+        {
+            if (list == null) return;
+            for (int i = 0; i < list.Length; i++)
+                if (!String.IsNullOrEmpty(list[i]) && Actions.Get(list[i]) == null)
+                    missing.Add(whose + " F" + (i + 1) + ": " + list[i]);
+        }
+
+        /// <summary>
+        /// Снимок обязан быть независим по КАЖДОМУ полю, а не по двум, которые вспомнили.
+        /// Правим поля живого объекта отражением и смотрим, не сдвинулся ли снимок.
+        /// </summary>
+        static void SnapshotByReflection()
+        {
+            Head("Снимок: каждое поле");
+            Settings live = new Settings();
+            Settings shot = live.Snapshot();
+            var moved = new List<string>();
+            const string Mark = "СЛЕД";
+
+            foreach (FieldInfo f in typeof(Settings).GetFields(BindingFlags.Public | BindingFlags.Instance))
+            {
+                var arr = f.GetValue(live) as Array;
+                if (arr != null && arr.Length > 0)
+                {
+                    // Правим ЭЛЕМЕНТ живого массива: если снимок скопировал только сам
+                    // массив, элементы у них общие и правка проступит.
+                    object first = arr.GetValue(0);
+                    var b = first as LayoutBinding;
+                    if (b != null) b.Layout = Mark;
+                    else if (first is string) arr.SetValue(Mark, 0);
+                    else continue;
+
+                    var mirrorArr = (Array)f.GetValue(shot);
+                    object mirror = mirrorArr.Length > 0 ? mirrorArr.GetValue(0) : null;
+                    var mb = mirror as LayoutBinding;
+                    string seen = mb != null ? mb.Layout : ("" + mirror);
+                    if (seen == Mark) moved.Add(f.Name);
+                }
+                else if (f.FieldType == typeof(string))
+                {
+                    object before = f.GetValue(live);
+                    f.SetValue(live, Mark);
+                    if (Mark.Equals(f.GetValue(shot))) moved.Add(f.Name);
+                    f.SetValue(live, before);
+                }
+            }
+
+            // Массив привязок с завода пуст — заполним и проверим отдельно.
+            Settings bound = new Settings();
+            bound.SetLayoutFor(0x0419, "ru");
+            Settings copy = bound.Snapshot();
+            bound.LayoutBindings[0].Layout = "de";
+            if (copy.LayoutBindings[0].Layout != "ru") moved.Add("LayoutBindings");
+
+            Check("правка живых настроек не проступает в снимке", moved.Count == 0,
+                  "проступило: " + String.Join(", ", moved.ToArray()));
+        }
+
+        /// <summary>Что приходит из файла, может быть каким угодно.</summary>
+        static void BrokenFile()
+        {
+            Head("Битый файл настроек");
+            MethodInfo norm = typeof(Settings).GetMethod("Normalize",
+                                  BindingFlags.NonPublic | BindingFlags.Instance);
+            if (norm == null) { Check("Normalize на месте", false, "метода нет"); return; }
+
+            Settings s = new Settings();
+            s.FKeys = null;
+            norm.Invoke(s, null);
+            Check("пропавший список клавиш восстанавливается",
+                  s.FKeys != null && s.FKeys.Length == Settings.MaxFKeys, "не восстановился");
+
+            s = new Settings();
+            s.FKeys = new string[] { "media.play", null, "чепуха" };
+            norm.Invoke(s, null);
+            Check("короткий список дополняется до полного",
+                  s.FKeys.Length == Settings.MaxFKeys && s.FKeys[0] == "media.play", "не дополнился");
+            Check("дырка в списке заполняется заводским", s.FKeys[1] != null, "осталась пустой");
+
+            s = new Settings();
+            s.LayoutBindings = null;
+            norm.Invoke(s, null);
+            Check("пропавшие привязки восстанавливаются", s.LayoutBindings != null, "остались пустыми");
+
+            // Неизвестное действие не должно ронять ничего: его просто нет.
+            s = Fresh();
+            s.MediaFirst = true;
+            s.FKeys[0] = "такого.действия.нет";
+            Use(s);
+            bool sw = Down(Vk.F1); Up(Vk.F1);
+            Untouched("неизвестное действие просто ничего не делает", sw);
+
+            s = new Settings();
+            s.MacShortcutsOff = null;
+            Check("пустой список выключенных не роняет проверку", s.MacEnabled("copy"), "уронил");
+        }
+
         static void OtherSettings()
+
         {
             Head("Настройки вне перехвата");
             Settings d = new Settings();

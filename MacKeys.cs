@@ -135,8 +135,11 @@ namespace MagicKeys
                 MacMod.Cmd | MacMod.Shift, Vk.D3, new int[0], Vk.Snapshot);
             Add("screenarea", GroupSystem, "Снимок области", "⇧⌘4", "Win+Shift+S",
                 MacMod.Cmd | MacMod.Shift, Vk.D4, new int[] { Vk.LWin, Vk.LShift }, Vk.S);
-            Add("settings", GroupSystem, "Параметры", "⌘,", "Win+I",
-                MacMod.Cmd, Vk.OemComma, new int[] { Vk.LWin }, Vk.I);
+            // ⌘, на маке открывает настройки ТЕКУЩЕЙ программы, а не системы. Win+I
+            // открывал «Параметры Windows» и заодно съедал родное сочетание там, где
+            // оно есть, — в редакторах кода это Ctrl+, ровно с тем же смыслом.
+            Add("settings", GroupSystem, "Настройки программы", "⌘,", "Ctrl+,",
+                MacMod.Cmd, Vk.OemComma, new int[] { Vk.LControl }, Vk.OemComma);
             Add("screenrec", GroupSystem, "Запись экрана", "⇧⌘5", "Win+Alt+R",
                 MacMod.Cmd | MacMod.Shift, Vk.D5, new int[] { Vk.LWin, Vk.LMenu }, Vk.R);
             // На маке ⌘` листает окна текущей программы; в Windows такого сочетания нет,

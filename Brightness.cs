@@ -305,6 +305,11 @@ namespace MagicKeys
             List<Panel> found = new List<Panel>();
             List<Native.PHYSICAL_MONITOR> owned = new List<Native.PHYSICAL_MONITOR>();
 
+            // Полученные дескрипторы кладём в поле сразу, а не в конце: сбой посреди
+            // опроса (монитор отключили, dxva2 не отозвалась) терял всё, что уже взяли,
+            // и освободить их потом было некому — они утекали порциями, на каждое нажатие.
+            try
+            {
             foreach (IntPtr screen in screens)
             {
                 uint count = 0;
@@ -326,11 +331,14 @@ namespace MagicKeys
                 }
             }
 
-            lock (Sync)
+            }
+            finally
             {
-                _panels = found;
-                _owned = owned.ToArray();
-
+                lock (Sync)
+                {
+                    _panels = found;
+                    _owned = owned.ToArray();
+                }
             }
         }
 

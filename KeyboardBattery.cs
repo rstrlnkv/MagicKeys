@@ -100,7 +100,14 @@ namespace MagicKeys
             string path = Devices.AppleStatusPath;
             if (!String.IsNullOrEmpty(path)) Ask(path, out percent, out flags);
 
-            lock (Sync) { _percent = percent; _flags = flags; }
+            // Промах не стирает известного. По Bluetooth клавиатура отвечает не всегда,
+            // и от одного неудачного вопроса заряд пропадал из подсказки значка на минуту,
+            // хотя минуту назад был известен. Пустой ответ признаём, только если самой
+            // клавиатуры больше нет.
+            lock (Sync)
+            {
+                if (percent >= 0 || String.IsNullOrEmpty(path)) { _percent = percent; _flags = flags; }
+            }
             if (percent >= 0) Diag.Log("заряд клавиатуры: " + percent + " % (состояние " + flags + ")");
         }
 

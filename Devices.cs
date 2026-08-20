@@ -120,11 +120,20 @@ namespace MagicKeys
             // Читают этот ответ трое: сброс догадки об исполнении, подстановка заводских
             // назначений и обновление окна, и всем троим важна замена одной клавиатуры
             // на другую — а прежнее условие её не замечало.
+            // Всё под одним замком: раньше _cache писался под ним, а _mark
+            // и _appleConnected рядом, снаружи. Два опроса разом — из окна и со
+            // сторожевого таймера — могли оставить список от одного прохода, а признак
+            // «Apple на месте» от другого, и оба объявляли, что набор изменился.
             string mark = Mark(found);
-            bool changed = mark != _mark;
-            lock (Sync) { _cache = found; _appleModel = model; }
-            _appleConnected = apple;
-            _mark = mark;
+            bool changed;
+            lock (Sync)
+            {
+                changed = mark != _mark;
+                _cache = found;
+                _appleModel = model;
+                _appleConnected = apple;
+                _mark = mark;
+            }
             return changed;
         }
 

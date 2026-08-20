@@ -118,7 +118,13 @@ namespace MagicKeys
         /// </summary>
         static void Restore(Settings from)
         {
-            foreach (FieldInfo f in Fields) f.SetValue(_s, f.GetValue(from));
+            // Снимок снимка. Класть обратно поля исходного слепка нельзя: массивы легли бы
+            // по ссылке, и живые настройки снова делили бы их со слепком. Обработчик списка
+            // действий пишет в массив на месте — после первого же пункта восстанавливать
+            // было нечем, а проверка «показанный пункт совпадает с настройками» для FKeys
+            // сравнивала массив сам с собой и не могла провалиться никогда.
+            Settings fresh = from.Snapshot();
+            foreach (FieldInfo f in Fields) f.SetValue(_s, f.GetValue(fresh));
             _eng.Apply(_s);
         }
 
@@ -246,19 +252,6 @@ namespace MagicKeys
 
         // Пункты списка — приватный тип окна; его ToString уже возвращает подпись.
         static string Text(ComboBox box, int i) { return "" + box.Items[i]; }
-
-        /// <summary>Чем настройки отличаются от заводских — чтобы видеть, с чего начался случай.</summary>
-        static string Drift()
-        {
-            Settings fresh = new Settings();
-            Settings was = _s;
-            var mine = Snap();
-            _s = fresh;
-            var factory = Snap();
-            _s = was;
-            string d = Diff(factory, mine);
-            return d == "" ? "заводские" : d;
-        }
 
         static string Field(string diff)
         {

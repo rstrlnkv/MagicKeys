@@ -127,13 +127,16 @@ namespace MagicKeys
         public static void Begin(KeyAction a, bool repeat, int brightnessStep)
         {
             if (a == null) return;
+            // Повтор спрашиваем один раз и для всех: раньше флаг читался только у клавиш,
+            // а Text печатал на удержании независимо от того, что о себе объявил.
+            if (repeat && !a.Repeats) return;
             switch (a.Kind)
             {
                 case ActionKind.Key:
-                    if (!repeat || a.Repeats) Input.Key(a.Vk, true);
+                    Input.Key(a.Vk, true);
                     break;
                 case ActionKind.Chord:
-                    if (!repeat) Input.Chord(a.Mods == null ? new int[0] : a.Mods, a.Vk);
+                    Input.Chord(a.Mods == null ? new int[0] : a.Mods, a.Vk);
                     break;
                 case ActionKind.BrightnessDown:
                     Brightness.Nudge(-brightnessStep);
@@ -142,13 +145,13 @@ namespace MagicKeys
                     Brightness.Nudge(brightnessStep);
                     break;
                 case ActionKind.Launch:
-                    if (!repeat) Spawn(a.Target);
+                    Spawn(a.Target);
                     break;
                 case ActionKind.Text:
                     Input.Text(a.Target);
                     break;
                 case ActionKind.EjectTray:
-                    if (!repeat) EjectTray();
+                    EjectTray();
                     break;
             }
         }

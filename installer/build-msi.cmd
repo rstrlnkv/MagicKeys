@@ -42,6 +42,15 @@ if not exist "%NUGET%" (
   powershell -NoProfile -Command "Invoke-WebRequest https://dist.nuget.org/win-x86-commandline/latest/nuget.exe -OutFile '%NUGET%' -UseBasicParsing" || exit /b 1
 )
 
+rem Скачанным отсюда собирается всё, что потом подписывается настоящим ключом.
+rem TLS защищает дорогу, но не отвечает за то, что лежит на другом её конце,
+rem — а проверить подпись Microsoft стоит одной строки.
+powershell -NoProfile -Command "$s = Get-AuthenticodeSignature '%NUGET%'; exit [int](($s.Status -ne 'Valid') -or ($s.SignerCertificate.Subject -notlike '*Microsoft*'))"
+if errorlevel 1 (
+  echo nuget.exe подписан не Microsoft — сборка остановлена.
+  exit /b 1
+)
+
 set WIX=%HERE%wix\wix\tools
 if not exist "%WIX%\candle.exe" (
   echo === Набор WiX ===

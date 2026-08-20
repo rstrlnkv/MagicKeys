@@ -50,11 +50,6 @@ namespace MagicKeys
         private readonly HashSet<ModKey> _winSources = new HashSet<ModKey>();
         private bool _capsHeld;
 
-        // На каком нажатии аккорд macOS уже сработал. Нужно против автоповтора:
-        // он приходит теми же нажатиями, а закрывать окно за окном при удержании ⌘Q
-        // никто не просил.
-        private int _macFiredVk;
-
         // Чьё нажатие взял на себя слой аккордов: сочетания macOS, ⌘+Tab, ⌘+пробел
         // и промах мимо таблицы при зажатой ⌘.
         //
@@ -439,11 +434,7 @@ namespace MagicKeys
 
             // Отпускание идёт туда же, куда ушло нажатие. Всё, что слой аккордов взял
             // себе, он же и отпускает — не спрашивая, какие модификаторы зажаты сейчас.
-            if (!down && _chordTaken.Remove(vk))
-            {
-                if (_macFiredVk == vk) _macFiredVk = 0;
-                return true;
-            }
+            if (!down && _chordTaken.Remove(vk)) return true;
 
             // ⌘+Tab ведёт себя как Alt+Tab.
             if (s.CmdTabSwitchesWindows && vk == Vk.Tab && _cmdHeld)
@@ -508,8 +499,12 @@ namespace MagicKeys
                         // Отпускание сюда не доходит: если нажатие взяли, его разобрали
                         // выше; а если не взяли — оно и не наше.
                         if (!down) return false;
-                        if (sc.Repeats || _macFiredVk != vk) { _macFiredVk = vk; MacSend(sc); }
-                        _chordTaken.Add(vk);
+                        // Автоповтор виден по тому же множеству: Add возвращает false,
+                        // если нажатие этой клавиши мы уже взяли. Отдельная ячейка «какой
+                        // аккорд сработал последним» держала только одну клавишу за раз —
+                        // отпустив вторую, автоповтор первой срабатывал заново.
+                        bool firstPress = _chordTaken.Add(vk);
+                        if (sc.Repeats || firstPress) MacSend(sc);
                         return true;
                     }
 
@@ -1101,10 +1096,18 @@ namespace MagicKeys
             }
         }
 
+        /// <summary>
+        /// Отпустить подставленный модификатор и забыть о нём. Забыть обязательно:
+        /// иначе отпускание уходило вторым разом — при настоящем отпускании клавиши
+        /// и потом ещё раз при общем сбросе, — а EffectiveVk продолжал уверять,
+        /// что клавиша зажата.
+        /// </summary>
         private void ReleaseInjected(ModKey phys)
         {
             int vk;
-            if (_injected.TryGetValue(phys, out vk)) Input.Key(vk, false);
+            if (!_injected.TryGetValue(phys, out vk)) return;
+            Input.Key(vk, false);
+            _injected.Remove(phys);
         }
 
         /// <summary>
@@ -1182,7 +1185,6 @@ namespace MagicKeys
                 _subReleased = 0;
                 _phantomCtrl = false;
                 _cmdHeld = false;
-                _macFiredVk = 0;
                 _chordTaken.Clear();
                 // Настройки могли смениться — запомненную раскладку окна забываем.
                 _layHkl = IntPtr.Zero; _layFor = null; _layFile = null;

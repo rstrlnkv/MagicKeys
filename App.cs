@@ -68,7 +68,7 @@ namespace MagicKeys
             _engine = new Engine();
             _engine.DevicesChanged += delegate
             {
-                Dispatcher.BeginInvoke((Action)delegate
+                ToWindow(delegate
                 {
                     if (AdoptModelDefaults()) _engine.Apply(_settings);
                     UpdateTrayText();
@@ -81,7 +81,7 @@ namespace MagicKeys
             // Перепись клавиш идёт через сырой ввод: он, в отличие от хука, знает устройство.
             KeyWatch.Discovered += delegate
             {
-                Dispatcher.BeginInvoke((Action)delegate
+                ToWindow(delegate
                 {
                     if (_window != null) _window.RefreshDevices();
                 });
@@ -123,7 +123,7 @@ namespace MagicKeys
             // Заряд читается в пуле потоков; когда ответ придёт, обновляем страницу.
             KeyboardBattery.Updated += delegate
             {
-                Dispatcher.BeginInvoke((Action)delegate { if (_window != null) _window.RefreshDevices(); });
+                ToWindow(delegate { if (_window != null) _window.RefreshDevices(); });
             };
 
             KeyWatch.Start();
@@ -131,7 +131,7 @@ namespace MagicKeys
             // Индикатор показываем на том мониторе, яркость которого изменилась.
             Brightness.ChangedOn += delegate(IntPtr screen, string name, int percent)
             {
-                Dispatcher.BeginInvoke((Action)delegate
+                ToWindow(delegate
                 {
                     Diag.Log("индикатор яркости: " + percent + "% на " + (name ?? "?"));
                     // Плашка показывается всегда: системной для внешних мониторов
@@ -256,7 +256,7 @@ namespace MagicKeys
 
             // Windows шлёт это уведомление щедро и не по одному разу, поэтому Reapply
             // сам решает, изменилось ли что-то на самом деле, и молчит, если нет.
-            Dispatcher.BeginInvoke((Action)delegate
+            ToWindow(delegate
             {
                 ApplyTrayIcon();
                 try
@@ -352,7 +352,7 @@ namespace MagicKeys
                     while (true)
                     {
                         _showEvent.WaitOne();
-                        Dispatcher.BeginInvoke((Action)ShowWindow);
+                        ToWindow(ShowWindow);
                     }
                 });
                 t.IsBackground = true;
@@ -388,8 +388,12 @@ namespace MagicKeys
             UpdateTrayText();
         }
 
+        /// <summary>Уходим. С этой секунды фоновым потокам к окну обращаться не к чему.</summary>
+        private volatile bool _leaving;
+
         private void Quit()
         {
+            _leaving = true;
             try { Osd.Teardown(); } catch { }
             try { if (_engine != null) _engine.Stop(); } catch { }
             try { Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged; } catch { }
@@ -407,6 +411,22 @@ namespace MagicKeys
             }
             catch { }
             Shutdown();
+        }
+
+        /// <summary>
+        /// Отдать работу потоку окна — но только пока оно есть.
+        ///
+        /// Перепись клавиш, яркость и сторож второго запуска живут своими потоками
+        /// и не знают, что программа уходит. После Shutdown диспетчер завершён,
+        /// и BeginInvoke бросает исключение прямо на их потоке, где его никто не ловит:
+        /// пришедшее в эту секунду событие устройства превращало спокойный выход
+        /// в падение.
+        /// </summary>
+        private void ToWindow(Action what)
+        {
+            if (_leaving) return;
+            try { Dispatcher.BeginInvoke(what); }
+            catch (Exception e) { Diag.Log("не удалось передать работу окну", e); }
         }
     }
 }

@@ -840,6 +840,22 @@ namespace MagicKeys
                 N(Vk.LControl) + "^", N(Vk.LWin) + "v", N(Vk.Space) + "v");
             Up(Vk.Space); Up(Vk.Capital); Clear();
 
+            // Заменитель Fn на левой ⌘: после ⌘Tab и F-клавиши Windows не должна
+            // остаться зажатой — снять её было бы нечем.
+            s = Fresh();
+            s.FnSubstitute = ModKey.LWin;
+            s.MediaFirst = true;
+            Use(s);
+            Down(Vk.LWin);
+            Down(Vk.Tab); Up(Vk.Tab);
+            Down(Vk.F1); Up(Vk.F1);
+            Clear();
+            Up(Vk.LWin);
+            int downs = Sent().Split(new string[] { N(Vk.LWin) + "v" }, StringSplitOptions.None).Length - 1;
+            int ups = Sent().Split(new string[] { N(Vk.LWin) + "^" }, StringSplitOptions.None).Length - 1;
+            Check("⌘ в роли Fn не остаётся зажатой после ⌘Tab", downs <= ups, Sent());
+            Clear();
+
             // Сброс зажатого не должен открывать «Пуск»: Windows считает командой
             // клавишу Win, нажатую и отпущенную без ничего между ними.
             s = Fresh();
@@ -986,8 +1002,11 @@ namespace MagicKeys
             foreach (AppleGen g in Enum.GetValues(typeof(AppleGen)))
                 CheckIds(Models.DefaultFKeys(g), missing, Models.GenName(g));
             var s0 = new Settings();
-            if (Actions.Get(s0.NumpadClear) == null) missing.Add("для ⌧: " + s0.NumpadClear);
-            if (Actions.Get(s0.EjectKey) == null) missing.Add("для ⏏: " + s0.EjectKey);
+            // Сверяем по коду, а не по null: Get неизвестный код не возвращает пустотой.
+            // Прежняя форма не могла сработать никогда, и опечатка в заводских
+            // назначениях прошла бы мимо всех проверок.
+            if (Actions.Get(s0.NumpadClear).Id != s0.NumpadClear) missing.Add("для ⌧: " + s0.NumpadClear);
+            if (Actions.Get(s0.EjectKey).Id != s0.EjectKey) missing.Add("для ⏏: " + s0.EjectKey);
             Check("все заводские назначения существуют", missing.Count == 0,
                   String.Join(", ", missing.ToArray()));
         }
@@ -996,7 +1015,7 @@ namespace MagicKeys
         {
             if (list == null) return;
             for (int i = 0; i < list.Length; i++)
-                if (!String.IsNullOrEmpty(list[i]) && Actions.Get(list[i]) == null)
+                if (!String.IsNullOrEmpty(list[i]) && Actions.Get(list[i]).Id != list[i])
                     missing.Add(whose + " F" + (i + 1) + ": " + list[i]);
         }
 

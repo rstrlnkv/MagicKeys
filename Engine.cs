@@ -48,6 +48,9 @@ namespace MagicKeys
         // клавише этого не видно: у пришедших с мака control обычно висит на Caps Lock.
         private readonly HashSet<ModKey> _ctrlSources = new HashSet<ModKey>();
         private readonly HashSet<ModKey> _winSources = new HashSet<ModKey>();
+
+        /// <summary>Что Windows видит как ⇧ — то же множество, что у control и Win.</summary>
+        private readonly HashSet<ModKey> _shiftSources = new HashSet<ModKey>();
         /// <summary>Чьи нажатия взял на себя разбор модификаторов.</summary>
         private readonly HashSet<ModKey> _modTaken = new HashSet<ModKey>();
 
@@ -88,7 +91,16 @@ namespace MagicKeys
         private readonly HashSet<uint> _swallowed = new HashSet<uint>();
         private readonly HashSet<int> _navActive = new HashSet<int>();
         private bool _fnHeld;
-        private int _fnEffectiveVk;
+        /// <summary>
+        /// Какая физическая клавиша сейчас работает заменителем Fn, или None.
+        ///
+        /// Запоминаем клавишу, а не код, который она держит в Windows: код меняется
+        /// под руками. Ветка ⌘+Tab снимает подставленную Win прямо посреди удержания,
+        /// и запомненный код превращался в обещание нажать то, чего никто не держит:
+        /// заменитель на левой ⌘ после ⌘+Tab и F-клавиши оставлял Win зажатой навсегда,
+        /// причём без единой записи об этом — снять её не мог даже общий сброс.
+        /// </summary>
+        private ModKey _fnPhys;
         private int _subReleased;
         private bool _cmdTabAlt;
         // Стороны различаются нарочно. Один флаг на обе давал залипание: сочетание
@@ -110,7 +122,13 @@ namespace MagicKeys
 
         private readonly HashSet<ModKey> _cmdSources = new HashSet<ModKey>();
         private bool ShiftDown { get { return _shiftLeft || _shiftRight; } }
-        private bool CtrlDown { get { return _ctrlLeft || _ctrlRight; } }
+
+        /// <summary>
+        /// Держит ли Windows ⇧ — от своей клавиши или от переназначенной. Раскладке
+        /// нужен именно этот ответ: символ выбирается по тому, что видит система,
+        /// а не по тому, какую клавишу нажал человек.
+        /// </summary>
+        private bool ShiftHeld { get { return ShiftDown || _shiftSources.Count > 0; } }
         private bool _phantomCtrl;
         private bool _capsOn;
         private string _deadPrefix;
@@ -154,7 +172,10 @@ namespace MagicKeys
                 if (!_threadAlive) ReleaseEverything();
                 _cfg = shot;
             }
-            EnsureNumLock(_cfg);
+            // У своего снимка, а не у поля: поле меняет поток хука, и здесь оно ещё
+            // старое. Из-за этого переход «⌧ уводят с Num Lock» читался по прежнему
+            // значению, блок оставался навигационным, а переключить его было нечем.
+            EnsureNumLock(shot);
         }
 
         /// <summary>
@@ -562,8 +583,8 @@ namespace MagicKeys
                 // документа вместо начала строки.
                 if (CmdHeld) mm |= MacMod.Cmd;
                 if (_altLeft || _altRight) mm |= MacMod.Opt;
-                if (ShiftDown) mm |= MacMod.Shift;
-                if ((CtrlDown || _ctrlSources.Count > 0) && !_phantomCtrl) mm |= MacMod.Ctrl;
+                if (ShiftHeld) mm |= MacMod.Shift;
+                if (_ctrlSources.Count > 0 && !_phantomCtrl) mm |= MacMod.Ctrl;
 
                 // Пробел разбирается отдельно: у ⌘Space и ⌃Space роль задаёт человек.
                 if (vk == Vk.Space && (mm == MacMod.Cmd || mm == MacMod.Ctrl))
@@ -819,16 +840,16 @@ namespace MagicKeys
             // зажатым навсегда, потому что снять его было уже некому.
             if (!_swallowed.Contains(k.scanCode) && Busy((int)k.vkCode, k.scanCode)) return -1;
 
-            string text = key.Text(ShiftDown, optWanted);
+            string text = key.Text(ShiftHeld, optWanted);
             if (text == null) return -1;
-            bool dead = key.Dead(ShiftDown, optWanted);
+            bool dead = key.Dead(ShiftHeld, optWanted);
 
             if (_capsOn && text.Length == 1 && Char.IsLetter(text[0]))
-                text = ShiftDown ? text.ToLowerInvariant() : text.ToUpperInvariant();
+                text = ShiftHeld ? text.ToLowerInvariant() : text.ToUpperInvariant();
 
             // Обычно подменяем только то, что отличается от раскладки Microsoft для этого языка:
             // остальные нажатия пусть идут своим ходом, без синтетического ввода.
-            if (_deadPrefix == null && !key.Differs(ShiftDown, optWanted)) return -1;
+            if (_deadPrefix == null && !key.Differs(ShiftHeld, optWanted)) return -1;
 
             _swallowed.Add(k.scanCode);
 
@@ -875,7 +896,14 @@ namespace MagicKeys
                 if (_phantomCtrl) { Input.Key(Vk.LControl, false); released.Add(Vk.LControl); }
             }
             Input.Text(text);
-            for (int i = released.Count - 1; i >= 0; i--) Input.Key(released[i], true);
+            for (int i = released.Count - 1; i >= 0; i--)
+            {
+                Input.Key(released[i], true);
+                // Щит с обеих сторон. Между нашим возвратом и настоящим отпусканием ⌥
+                // человеком не происходит ничего, и Windows считает это одиночным Alt —
+                // то есть строкой меню поверх набора. Снятие щит уже ставило, возврат нет.
+                if (IsMenuKey(released[i])) Input.Tap(VkNoop);
+            }
         }
 
         private void Release(ModKey phys, List<int> released)
@@ -930,6 +958,8 @@ namespace MagicKeys
             else _ctrlSources.Remove(phys);
             if (down && (target == ModKey.LWin || target == ModKey.RWin)) _winSources.Add(phys);
             else _winSources.Remove(phys);
+            if (down && (target == ModKey.LShift || target == ModKey.RShift)) _shiftSources.Add(phys);
+            else _shiftSources.Remove(phys);
 
             // А это — что нажал человек: по нему опознаются сочетания и заменитель Fn.
             if (down) _modsDown.Add(phys); else _modsDown.Remove(phys);
@@ -979,7 +1009,7 @@ namespace MagicKeys
                 // зажечь лампочку, и заменитель на нём переключал регистр через нажатие;
                 // Escape вернулся бы вторым нажатием и закрыл бы диалог.
                 int mod = down && target != ModKey.None ? ModNames.VirtualKey(target) : 0;
-                _fnEffectiveVk = IsModifierKey(mod) ? mod : 0;
+                _fnPhys = IsModifierKey(mod) ? phys : ModKey.None;
                 if (!down) _subReleased = 0;
             }
 
@@ -1057,6 +1087,12 @@ namespace MagicKeys
             return vk == Vk.LMenu || vk == Vk.RMenu || vk == Vk.LWin || vk == Vk.RWin;
         }
 
+        /// <summary>Что заменитель Fn держит в Windows прямо сейчас, или 0.</summary>
+        private int FnHoldsVk
+        {
+            get { return _fnPhys == ModKey.None ? 0 : WindowsHolds(_fnPhys); }
+        }
+
         /// <summary>Клавиша, которая меняет смысл других, пока её держат.</summary>
         private static bool IsModifierKey(int vk)
         {
@@ -1077,10 +1113,11 @@ namespace MagicKeys
         /// </summary>
         private void SubstituteRelease()
         {
-            if (_subReleased++ == 0 && _fnEffectiveVk != 0)
+            int vk = FnHoldsVk;
+            if (_subReleased++ == 0 && vk != 0)
             {
-                if (IsMenuKey(_fnEffectiveVk)) Input.Tap(VkNoop);
-                Input.Key(_fnEffectiveVk, false);
+                if (IsMenuKey(vk)) Input.Tap(VkNoop);
+                Input.Key(vk, false);
             }
         }
 
@@ -1089,10 +1126,11 @@ namespace MagicKeys
             if (--_subReleased <= 0)
             {
                 _subReleased = 0;
-                if (_fnHeld && _fnEffectiveVk != 0)
+                int vk = FnHoldsVk;
+                if (_fnHeld && vk != 0)
                 {
-                    Input.Key(_fnEffectiveVk, true);
-                    if (IsMenuKey(_fnEffectiveVk)) Input.Tap(VkNoop);
+                    Input.Key(vk, true);
+                    if (IsMenuKey(vk)) Input.Tap(VkNoop);
                 }
             }
         }
@@ -1156,6 +1194,10 @@ namespace MagicKeys
             // окна в любой момент. Любая из трёх давала одно и то же: отпускание уходило
             // в другую ветку, синтетическая F4 оставалась нажатой навсегда, а следующее
             // ⌥+F4 давало Alt+F4 — закрытие окна вместо F4.
+            // Ветку защёлкиваем на первом нажатии, чем бы оно ни кончилось. Иначе
+            // достаточно было сменить настройки под удержанием: первые нажатия ушли
+            // насквозь, ветка сменилась, и отпускание съедал уже наш слой — а клавиша
+            // оставалась зажатой в приложении.
             if (down && !_fkeyDown[index])
             {
                 _fkeyMedia[index] = s.MediaFirst ^ _fnHeld;
@@ -1189,7 +1231,7 @@ namespace MagicKeys
                 // с него модификатор, иначе получится Alt+F4 вместо F4.
                 if (down)
                 {
-                    if (!_fnHeld || _fnEffectiveVk == 0) return false;
+                    if (!_fnHeld || FnHoldsVk == 0) return false;
                     if (!_fkeyDown[index]) { _fkeyDown[index] = true; SubstituteRelease(); }
                     Input.Key(vk, true);
                 }
@@ -1368,7 +1410,7 @@ namespace MagicKeys
                 _injected.Clear();
                 if (_cmdTabAlt) { Input.Key(Vk.LMenu, false); _cmdTabAlt = false; }
                 _fnHeld = false;
-                _fnEffectiveVk = 0;
+                _fnPhys = ModKey.None;
                 _subReleased = 0;
                 _phantomCtrl = false;
                 _cmdSources.Clear();
@@ -1380,6 +1422,7 @@ namespace MagicKeys
                 _swallowed.Clear();
                 _ctrlSources.Clear();
                 _winSources.Clear();
+                _shiftSources.Clear();
                 _capsSources.Clear();
                 _modTaken.Clear();
                 _modsDown.Clear();
@@ -1433,6 +1476,26 @@ namespace MagicKeys
                 _winRight = Held(Vk.RWin);
                 _altLeft = Held(Vk.LMenu); _altRight = Held(Vk.RMenu);
                 _capsOn = (Native.GetKeyState(Vk.Capital) & 1) != 0;
+
+                // И множества тоже. Обнулить их и перечитать одни флаги значило забыть
+                // половину состояния, пока человек держит модификатор: после сброса
+                // ⌥+← уходило как Ctrl+Alt+← (на видеокартах Intel это ещё и поворот
+                // экрана), зажатая ⌘ переставала узнаваться, а раскладка Apple переставала
+                // отступать при зажатой Win. Всё, что мы подставляли, к этому мигу уже
+                // отпущено, — значит Windows держит ровно то, что человек нажал сам.
+                foreach (ModKey phys in new[]
+                {
+                    ModKey.LCtrl, ModKey.RCtrl, ModKey.LWin, ModKey.RWin,
+                    ModKey.LAlt, ModKey.RAlt, ModKey.LShift, ModKey.RShift, ModKey.CapsLock
+                })
+                {
+                    int own = ModNames.VirtualKey(phys);
+                    if (own == 0 || !Held(own)) continue;
+                    _modsDown.Add(phys);
+                    if (own == Vk.LControl || own == Vk.RControl) _ctrlSources.Add(phys);
+                    if (own == Vk.LWin || own == Vk.RWin) { _winSources.Add(phys); _cmdSources.Add(phys); }
+                    if (own == Vk.LShift || own == Vk.RShift) _shiftSources.Add(phys);
+                }
             }
             catch { }
         }

@@ -264,13 +264,7 @@ namespace MagicKeys
 
             // Со страницы «О программе» уходим — обновление больше некому показывать.
             _updStatus = null;
-            // Отчёты о разовых действиях живут до перестройки страницы, не дольше:
-            // «заменитель Fn выключен» продолжало висеть и после того, как человек
-            // включил его обратно на соседней странице.
-            _fnNotice = null;
-            _tuneNotice = null;
             _updAction = null;
-            _updFound = null;
 
             try
             {
@@ -284,7 +278,17 @@ namespace MagicKeys
                     default: Head("О программе", "MagicKeys — свободная программа."); _host.Content = PageAbout(); break;
                 }
             }
-            finally { _building = false; }
+            finally
+            {
+                _building = false;
+                // Отчёты о разовых действиях живут ровно одну перестройку — ту, которую
+                // сами же и вызвали. Гасить их на входе было нельзя: их ставят прямо
+                // перед BuildPage, а читает их сама страница уже внутри — то есть ни
+                // «Записано», ни «Не вышло», ни список изменённого не показывались
+                // никогда, и отказ по правам выглядел точно как успех.
+                _fnNotice = null;
+                _tuneNotice = null;
+            }
         }
 
         private void Head(string title, string hint)
@@ -676,8 +680,9 @@ namespace MagicKeys
 
             AppleModel model = Devices.AppleModel;
             string physNote = "Сейчас программа считает клавиатуру: " + Models.PhysName(phys) +
-                              (KeyWatch.MaxFunctionKey == 0 && Devices.AppleModel == null
-                                  ? " (по умолчанию — нажатий ещё не было)" : "") + ".\n";
+                              (_s.Physical == PhysLayout.Auto && detected == PhysLayout.Ansi
+                                   && Devices.AppleModel == null
+                                  ? " (пока по умолчанию — по нажатиям ничего не распознано)" : "") + ".\n";
             if (model != null && model.Phys != PhysLayout.Auto)
                 physNote += "Исполнение закодировано в идентификаторе модели — " + Models.PhysName(model.Phys) + ".";
             else
@@ -1381,12 +1386,12 @@ namespace MagicKeys
 
             stack.Children.Add(Card("Уживание", null,
                 Note("Драйвер и программа делают одно и то же — переназначают F1–F12. Если работают " +
-                     "оба сразу, нажатие переназначается дважды и получается ерунда. С этой настройкой " +
+                     "оба сразу, нажатие переназначается дважды и получается ерунда. Поэтому " +
                      "программа отдаёт функциональный ряд драйверу, а всё остальное — модификаторы, " +
                      "раскладки, навигацию Fn, цифровой блок, яркость — продолжает делать сама.\n\n" +
                      "Уступает она с разбором: только когда драйвер ряд действительно забирает. " +
                      "В режиме «F-клавиши сразу» уступать нечего, и тогда F1–F12 переназначает " +
-                     "MagicKeys, даже если настройка включена.")));
+                     "MagicKeys.")));
 
             stack.Children.Add(Card("Что тут можно, а что нельзя", null,
                 Note("Вложить файлы Apple внутрь программы нельзя: они несвободные, а MagicKeys " +
@@ -1503,6 +1508,7 @@ namespace MagicKeys
                 {
                     string output;
                     bool ok = AppleDriverSetup.Uninstall("keymagic2.inf", out output);
+                    ToWindow(delegate { if (CurrentPage == "driver") BuildPage(); });
                     SetupSay((ok ? "Драйвер удалён."
                                  : "Удалить не вышло — возможно, отклонён запрос прав администратора.")
                              + "\n\n" + output);
@@ -1995,7 +2001,18 @@ namespace MagicKeys
             {
                 _updStatus.Text = _updBusyText;
                 _updStatus.SetResourceReference(TextBlock.ForegroundProperty, "TextSec");
+                _updAction.Content = _updFound != null ? "Обновить" : "Проверить";
                 _updAction.IsEnabled = false;
+            }
+            else if (_updFound != null)
+            {
+                // Найденный выпуск переживает перестройку: она случается сама по себе —
+                // от первой же впервые нажатой клавиши, — и человек, нажавший «Проверить»
+                // и получивший «Есть новый выпуск», терял и надпись, и кнопку.
+                _updStatus.Text = "Есть новый выпуск " + _updFound.Tag;
+                _updStatus.SetResourceReference(TextBlock.ForegroundProperty, "TextSec");
+                _updAction.Content = "Обновить";
+                _updAction.IsEnabled = true;
             }
             else ShowIdle();
 
@@ -2064,8 +2081,11 @@ namespace MagicKeys
                     // Отметку о проверке ставим здесь, на потоке окна: настройки правит
                     // только он, и Save() отсюда ни с чем не столкнётся.
                     if (Updater.Checked) { _s.Checked = DateTime.UtcNow; Save(); }
-                    if (_updStatus == null) return;   // ушли со страницы
+                    // Признак занятости снимаем ДО выхода: уйдя со страницы во время
+                    // проверки, человек возвращался к вечному «Проверяю…» и мёртвой
+                    // кнопке — снять флаг было больше нечем.
                     _updBusy = false;
+                    if (_updStatus == null) return;   // ушли со страницы
                     _updAction.IsEnabled = true;
                     _updFound = found;
                     if (found != null)

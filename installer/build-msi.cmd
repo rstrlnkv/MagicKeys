@@ -84,7 +84,11 @@ rem подписываемый нашим ключом пакет, приход�
 rem Подпись пакета не ловит подмену того, что из него распаковано: пакет лежит
 rem нетронутым, а файлы правит кто угодно с правами того же пользователя. Поэтому
 rem у них закреплены суммы — как отпечаток у сертификата обновления.
-powershell -NoProfile -Command "$ok=$true; foreach ($l in Get-Content '%HERE%wix.sha256') { $n,$h = $l -split ' '; $a=(Get-FileHash (Join-Path '%WIX%' $n) -Algorithm SHA256).Hash; if ($a -ne $h) { $ok=$false } }; exit [int](-not $ok)"
+if not exist "%HERE%wix.sha256" (
+  echo Нет файла с закреплёнными суммами WiX — сборка остановлена.
+  exit /b 1
+)
+powershell -NoProfile -Command "$l = @(Get-Content '%HERE%wix.sha256' | Where-Object { $_.Trim() }); if ($l.Count -lt 40) { exit 1 }; foreach ($x in $l) { $n,$h = $x -split ' '; $f = Join-Path '%WIX%' $n; if (-not (Test-Path $f)) { exit 1 }; if ((Get-FileHash $f -Algorithm SHA256).Hash -ne $h) { exit 1 } }; exit 0"
 if errorlevel 1 (
   echo Файлы WiX не совпали с закреплёнными суммами — сборка остановлена.
   exit /b 1

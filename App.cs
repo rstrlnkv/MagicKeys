@@ -67,7 +67,7 @@ namespace MagicKeys
             {
                 ToWindow(delegate
                 {
-                    if (AdoptModelDefaults()) _engine.Apply(_settings);
+                    AdoptModelDefaults();   // сам применит и сохранит, если было что менять
                     UpdateTrayText();
                     if (_window != null) _window.RefreshDevices();
                 });

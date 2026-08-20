@@ -117,9 +117,11 @@ namespace MagicKeys
             Color accent = Accent();
             if (_current != null && dark == _appliedDark && accent == _appliedAccent) return false;
 
-            ResourceDictionary fresh = Build();
+            // Сначала выясняем, есть ли куда применять: Build помечает тему применённой,
+            // и выход после него оставлял помеченным то, чего не применяли.
             var app = Application.Current;
             if (app == null) return false;
+            ResourceDictionary fresh = Build();
 
             if (_current != null) app.Resources.MergedDictionaries.Remove(_current);
             app.Resources.MergedDictionaries.Add(fresh);

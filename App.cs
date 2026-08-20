@@ -223,11 +223,15 @@ namespace MagicKeys
         private void UpdateTrayText()
         {
             if (_tray == null) return;
-            string state = !_settings.Enabled
-                ? "переназначения выключены"
-                : (_settings.PauseWhenAppleAbsent && !Devices.AppleConnected
-                    ? "ожидание Magic Keyboard"
-                    : "работает");
+            // Сорванный перехват важнее всего остального: без него не работает ничего,
+            // а подсказка «работает» отправила бы искать причину не там.
+            string state = _engine != null && !String.IsNullOrEmpty(_engine.Failure)
+                ? "перехват не установлен"
+                : (!_settings.Enabled
+                    ? "переназначения выключены"
+                    : (_settings.PauseWhenAppleAbsent && !Devices.AppleConnected
+                        ? "ожидание Magic Keyboard"
+                        : "работает"));
             // NotifyIcon.Text не принимает больше 63 символов.
             string text = "MagicKeys — " + state;
             _tray.Text = text.Length > 62 ? text.Substring(0, 62) : text;

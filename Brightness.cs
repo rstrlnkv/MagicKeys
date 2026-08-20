@@ -38,9 +38,11 @@ namespace MagicKeys
         /// <summary>Сообщает новый уровень в процентах — для экранного индикатора.</summary>
         public static event Action<int> Changed;
 
+        // Зовётся из обработчика хука, поэтому здесь только атомарная прибавка и побудка
+        // рабочего потока. Запись в журнал открывает и закрывает файл на каждой строке —
+        // в хуке этого хватает, чтобы Windows сняла перехват по таймауту.
         public static void Nudge(int deltaPercent)
         {
-            Diag.Log("яркость: запрос " + deltaPercent + "%");
             Interlocked.Add(ref _pending, deltaPercent);
             EnsureWorker();
             Wake.Set();
@@ -72,6 +74,7 @@ namespace MagicKeys
                 Wake.WaitOne();
                 int delta = Interlocked.Exchange(ref _pending, 0);
                 if (delta == 0) continue;
+                Diag.Log("яркость: запрос " + delta + "%");
                 try { Apply(delta); }
                 catch (Exception e) { Diag.Log("яркость: сбой", e); Invalidate(); }
             }

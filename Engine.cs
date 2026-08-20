@@ -37,6 +37,11 @@ namespace MagicKeys
 
         // Состояние — только для потока хука.
         private readonly bool[] _fkeyDown = new bool[Settings.MaxFKeys];
+        // Какой веткой пошло нажатие — медиа или настоящая F-клавиша — и что было
+        // на клавишу назначено. Запоминается, потому что к отпусканию и заменитель
+        // Fn, и настройки успевают стать другими.
+        private readonly bool[] _fkeyMedia = new bool[Settings.MaxFKeys];
+        private readonly string[] _fkeyAction = new string[Settings.MaxFKeys];
         private readonly Dictionary<ModKey, int> _injected = new Dictionary<ModKey, int>();
         private readonly HashSet<uint> _swallowed = new HashSet<uint>();
         private readonly HashSet<int> _navActive = new HashSet<int>();
@@ -45,7 +50,13 @@ namespace MagicKeys
         private int _subReleased;
         private bool _cmdHeld;
         private bool _cmdTabAlt;
-        private bool _shiftDown, _ctrlDown, _winDown, _altLeft, _altRight;
+        // Стороны различаются нарочно. Один флаг на обе давал залипание: сочетание
+        // macOS отпускало оба ⇧, а возвращало всегда левый — и после ⇧⌘Z, набранного
+        // правым ⇧, в Windows навсегда оставался нажатым тот, которого не нажимали.
+        private bool _shiftLeft, _shiftRight, _ctrlLeft, _ctrlRight;
+        private bool _winDown, _altLeft, _altRight;
+        private bool ShiftDown { get { return _shiftLeft || _shiftRight; } }
+        private bool CtrlDown { get { return _ctrlLeft || _ctrlRight; } }
         private bool _phantomCtrl;
         private bool _capsOn;
         private string _deadPrefix;
@@ -68,7 +79,8 @@ namespace MagicKeys
         public void Apply(Settings s)
         {
             _cfg = s;
-            ReleaseEverything();
+            // Через сообщение: Apply зовут с потока окна, а состояние принадлежит потоку хука.
+            PostRelease();
             EnsureNumLock(s);
         }
 
@@ -102,15 +114,24 @@ namespace MagicKeys
             {
                 try
                 {
+                    // Сведения о драйвере обновляем здесь, а не в хуке: внутри Refresh
+                    // свой тридцатисекундный срок, так что работы почти нет, — но реестр
+                    // читается на этом потоке, а не на пути нажатия клавиши.
+                    AppleDriver.Refresh(false);
+
                     if (Devices.Rescan())
                     {
-                        ReleaseEverything();
+                        PostRelease();
                         Action h = DevicesChanged;
                         if (h != null) h();
                     }
                 }
                 catch { }
             }, null, 2000, 2000);
+
+            // Прогреваем раскладки заранее. Иначе первое же нажатие грузило бы 33 файла
+            // XML прямо в хуке — сотни миллисекунд там, где их отпущено 300.
+            ThreadPool.QueueUserWorkItem(delegate { try { Layouts.Warm(); } catch { } });
 
             _thread = new Thread(Run);
             _thread.IsBackground = true;
@@ -125,6 +146,17 @@ namespace MagicKeys
             _thread = null;
         }
 
+        // WM_APP + 1: своё сообщение потоку хука, чужим кодом не занято.
+        private const uint WmRelease = 0x8000 + 1;
+
+        /// <summary>Попросить поток хука отпустить всё зажатое — с любого потока.</summary>
+        private void PostRelease()
+        {
+            uint id = _threadId;
+            if (id != 0) Native.PostThreadMessageW(id, WmRelease, IntPtr.Zero, IntPtr.Zero);
+            else ReleaseEverything();
+        }
+
         private void Run()
         {
             try
@@ -134,14 +166,24 @@ namespace MagicKeys
                 _hook = Native.SetWindowsHookExW(Native.WH_KEYBOARD_LL, _proc, Native.GetModuleHandleW(null), 0);
                 if (_hook == IntPtr.Zero)
                 {
-                    Failure = "Windows не дала установить перехват клавиатуры (ошибка " +
-                              System.Runtime.InteropServices.Marshal.GetLastWin32Error() + ").";
+                    Failure = "Windows не дала установить перехват клавиатуры — без него не работает " +
+                              "ни одно переназначение. Обычно это значит, что перехват запрещён " +
+                              "политикой безопасности или его уже занял другой перехватчик. " +
+                              "Попробуйте перезапустить программу. Код отказа Windows: " +
+                              System.Runtime.InteropServices.Marshal.GetLastWin32Error() + ".";
                     return;
                 }
 
                 Native.MSG msg;
                 while (Native.GetMessageW(out msg, IntPtr.Zero, 0, 0) > 0)
                 {
+                    // Просьба снять всё зажатое приходит сюда сообщением, а не вызовом.
+                    // Раньше её звали прямо из потока окна и из потока таймера — они
+                    // писали в те же Dictionary и HashSet, которые в этот момент читал
+                    // хук. Одновременная запись портит их внутренние цепочки, и в худшем
+                    // случае обработчик зацикливается: Windows снимает перехват, а всё
+                    // зажатое так и остаётся зажатым.
+                    if (msg.hwnd == IntPtr.Zero && msg.message == WmRelease) { ReleaseEverything(); continue; }
                     Native.TranslateMessage(ref msg);
                     Native.DispatchMessageW(ref msg);
                 }
@@ -153,6 +195,10 @@ namespace MagicKeys
             }
             finally
             {
+                // Отпускаем своё до снятия перехвата и обязательно на этом потоке.
+                // Синтетический control от переназначенного Caps Lock, оставшийся после
+                // выхода, снять уже нечем: программы, которая его нажала, больше нет.
+                try { ReleaseEverything(); } catch { }
                 if (_hook != IntPtr.Zero)
                 {
                     Native.UnhookWindowsHookEx(_hook);
@@ -209,12 +255,20 @@ namespace MagicKeys
             if (TryPhysical(vk, ext, out phys))
             {
                 if (!phantomCtrl) TrackModifier(phys, down);
-                if (phys == ModKey.CapsLock && down) _capsOn = !_capsOn;
+                // Считаем только настоящий Caps Lock. Если он переназначен — а у тех,
+                // кто пришёл с мака, это обычно control или «выключить клавишу», —
+                // Windows свой индикатор не трогает, и перевёрнутый флаг заставил бы
+                // раскладку Apple печатать заглавными при погашенном Caps Lock.
+                if (phys == ModKey.CapsLock && down && TargetFor(s, phys) == ModKey.CapsLock)
+                    _capsOn = !_capsOn;
                 return HandleModifier(s, phys, down);
             }
 
             // Навигация как в macOS: Fn+стрелки и Fn+Backspace.
-            if (_fnHeld && s.FnNavigation)
+            // Ветку выбираем на нажатии, а на отпускании идём по запомненной. Заменитель
+            // Fn отпускают раньше самой клавиши сплошь и рядом; проверяй мы _fnHeld ещё
+            // и на отпускании, синтетическая Home осталась бы нажатой навсегда.
+            if ((down && _fnHeld && s.FnNavigation) || (!down && _navActive.Contains(vk)))
             {
                 int target = FnNavTarget(vk);
                 if (target != 0) return HandleNav(vk, target, down);
@@ -244,8 +298,8 @@ namespace MagicKeys
                 MacMod mm = MacMod.None;
                 if (_cmdHeld) mm |= MacMod.Cmd;
                 if (_altLeft || _altRight) mm |= MacMod.Opt;
-                if (_shiftDown) mm |= MacMod.Shift;
-                if (_ctrlDown && !_phantomCtrl) mm |= MacMod.Ctrl;
+                if (ShiftDown) mm |= MacMod.Shift;
+                if (CtrlDown && !_phantomCtrl) mm |= MacMod.Ctrl;
 
                 // Пробел разбирается отдельно: у ⌘Space и ⌃Space роль задаёт человек.
                 if (vk == Vk.Space && (mm == MacMod.Cmd || mm == MacMod.Ctrl))
@@ -350,7 +404,7 @@ namespace MagicKeys
         /// <summary>-1 — не наше дело; 0 — пропустить; 1 — проглотить.</summary>
         private int HandleLayout(Settings s, Native.KBDLLHOOKSTRUCT k, bool down)
         {
-            if (_ctrlDown || _winDown) return -1;
+            if (CtrlDown || _winDown) return -1;
 
             AppleLayoutFile lay = CurrentLayout(s);
             if (lay == null) return -1;
@@ -387,16 +441,16 @@ namespace MagicKeys
                 return -1;
             }
 
-            string text = key.Text(_shiftDown, optWanted);
+            string text = key.Text(ShiftDown, optWanted);
             if (text == null) return -1;
-            bool dead = key.Dead(_shiftDown, optWanted);
+            bool dead = key.Dead(ShiftDown, optWanted);
 
             if (_capsOn && text.Length == 1 && Char.IsLetter(text[0]))
-                text = _shiftDown ? text.ToLowerInvariant() : text.ToUpperInvariant();
+                text = ShiftDown ? text.ToLowerInvariant() : text.ToUpperInvariant();
 
             // Обычно подменяем только то, что отличается от раскладки Microsoft для этого языка:
             // остальные нажатия пусть идут своим ходом, без синтетического ввода.
-            if (_deadPrefix == null && !s.AppleLayoutAll && !key.Differs(_shiftDown, optWanted)) return -1;
+            if (_deadPrefix == null && !s.AppleLayoutAll && !key.Differs(ShiftDown, optWanted)) return -1;
 
             _swallowed.Add(k.scanCode);
 
@@ -469,8 +523,10 @@ namespace MagicKeys
         {
             switch (phys)
             {
-                case ModKey.LShift: case ModKey.RShift: _shiftDown = down; break;
-                case ModKey.LCtrl: case ModKey.RCtrl: _ctrlDown = down; break;
+                case ModKey.LShift: _shiftLeft = down; break;
+                case ModKey.RShift: _shiftRight = down; break;
+                case ModKey.LCtrl: _ctrlLeft = down; break;
+                case ModKey.RCtrl: _ctrlRight = down; break;
                 case ModKey.LWin: case ModKey.RWin: _winDown = down; break;
                 case ModKey.LAlt: _altLeft = down; break;
                 case ModKey.RAlt: _altRight = down; break;
@@ -574,22 +630,30 @@ namespace MagicKeys
 
         private bool HandleFunctionKey(Settings s, int index, int vk, bool down)
         {
-            bool media = s.MediaFirst ^ _fnHeld;
+            // То же и здесь. Иначе достаточно отпустить заменитель Fn раньше F-клавиши,
+            // чтобы отпускание ушло в другую ветку: настоящая F4 осталась бы нажатой,
+            // заменитель — не снятым, и следующее ⌥+F4 дало бы Alt+F4, то есть закрытие
+            // окна вместо F4.
+            bool media;
+            if (down) { media = s.MediaFirst ^ _fnHeld; _fkeyMedia[index] = media; }
+            else media = _fkeyMedia[index];
 
             if (!media)
             {
                 // Нужна настоящая F-клавиша. Если её вызвали заменителем Fn, снимаем
                 // с него модификатор, иначе получится Alt+F4 вместо F4.
-                if (!_fnHeld || _fnEffectiveVk == 0) return false;
                 if (down)
                 {
+                    if (!_fnHeld || _fnEffectiveVk == 0) return false;
                     if (!_fkeyDown[index]) { _fkeyDown[index] = true; SubstituteRelease(); }
                     Input.Key(vk, true);
                 }
                 else
                 {
+                    if (!_fkeyDown[index]) return false;
                     Input.Key(vk, false);
-                    if (_fkeyDown[index]) { _fkeyDown[index] = false; SubstituteRestore(); }
+                    _fkeyDown[index] = false;
+                    SubstituteRestore();
                 }
                 return true;
             }
@@ -609,18 +673,24 @@ namespace MagicKeys
             if (index < 12 && s.YieldToAppleDriver && AppleDriver.TakesFunctionRow && KeyWatch.MediaSeen)
                 return false;
 
-            KeyAction a = Actions.Get(s.FKey(index));
+            // Действие берём то, что было назначено на нажатии: настройки меняются
+            // из окна в любой момент, и с зажатой клавишей отпускалось бы уже другое —
+            // а нажатое так и осталось бы нажатым.
+            string id = down ? s.FKey(index) : (_fkeyAction[index] != null ? _fkeyAction[index] : s.FKey(index));
+            KeyAction a = Actions.Get(id);
             if (a.Kind == ActionKind.PassThrough) return false;
 
             if (down)
             {
                 bool repeat = _fkeyDown[index];
                 _fkeyDown[index] = true;
+                _fkeyAction[index] = id;
                 Actions.Begin(a, repeat, s.BrightnessStep);
             }
             else
             {
                 _fkeyDown[index] = false;
+                _fkeyAction[index] = null;
                 Actions.End(a);
             }
             return true;
@@ -682,8 +752,8 @@ namespace MagicKeys
 
         private void MacSend(MacShortcut sc)
         {
-            bool shift = _shiftDown;
-            bool ctrl = _ctrlDown && !_phantomCtrl;
+            bool shiftL = _shiftLeft, shiftR = _shiftRight;
+            bool ctrlL = _ctrlLeft && !_phantomCtrl, ctrlR = _ctrlRight && !_phantomCtrl;
 
             // Windows открывает «Пуск», если клавишу Win нажали и отпустили, ничего
             // между ними не нажав. У нас выходит именно так: саму букву мы съели,
@@ -695,13 +765,20 @@ namespace MagicKeys
 
             ModRelease(ModKey.LWin); ModRelease(ModKey.RWin);
             ModRelease(ModKey.LAlt); ModRelease(ModKey.RAlt);
-            if (shift) { ModRelease(ModKey.LShift); ModRelease(ModKey.RShift); }
-            if (ctrl) { ModRelease(ModKey.LCtrl); ModRelease(ModKey.RCtrl); }
+            if (shiftL) ModRelease(ModKey.LShift);
+            if (shiftR) ModRelease(ModKey.RShift);
+            if (ctrlL) ModRelease(ModKey.LCtrl);
+            if (ctrlR) ModRelease(ModKey.RCtrl);
 
             MacKeys.Send(sc);
 
-            if (shift) { if (_shiftDown) ModPress(ModKey.LShift); }
-            if (ctrl) { if (_ctrlDown) ModPress(ModKey.LCtrl); }
+            // Возвращаем ровно те стороны, что держали. Вернуть «любую» — значит
+            // оставить в Windows нажатой клавишу, которой никто не нажимал: снять
+            // её потом нечем, отпускание другой стороны пройдёт мимо.
+            if (shiftL && _shiftLeft) ModPress(ModKey.LShift);
+            if (shiftR && _shiftRight) ModPress(ModKey.RShift);
+            if (ctrlL && _ctrlLeft) ModPress(ModKey.LCtrl);
+            if (ctrlR && _ctrlRight) ModPress(ModKey.RCtrl);
         }
 
         // Отпускаем и нажимаем именно то, что реально ушло в Windows: у переназначенной
@@ -719,6 +796,8 @@ namespace MagicKeys
         }
 
         /// <summary>Отпустить всё, что мы могли зажать: иначе после смены настроек модификатор «залипнет».</summary>
+        private static bool Held(int vk) { return (Native.GetKeyState(vk) & 0x8000) != 0; }
+
         private void ReleaseEverything()
         {
             try
@@ -735,7 +814,23 @@ namespace MagicKeys
                 _deadPrefix = null;
                 _swallowed.Clear();
                 _navActive.Clear();
-                for (int i = 0; i < _fkeyDown.Length; i++) _fkeyDown[i] = false;
+                for (int i = 0; i < _fkeyDown.Length; i++)
+                {
+                    _fkeyDown[i] = false;
+                    _fkeyMedia[i] = false;
+                    _fkeyAction[i] = null;
+                }
+
+                // Модификаторы не обнуляем, а перечитываем у Windows. Пока перехват стоял
+                // на паузе — выключен галочкой, клавиатура отключена, человек ушёл на
+                // защищённый рабочий стол по Ctrl+Alt+Del — отпускания прошли мимо нас.
+                // «Зажатый» ⇧ после этого ломал опознание любого сочетания macOS: Find
+                // требует точного совпадения набора модификаторов.
+                _shiftLeft = Held(Vk.LShift); _shiftRight = Held(Vk.RShift);
+                _ctrlLeft = Held(Vk.LControl); _ctrlRight = Held(Vk.RControl);
+                _winDown = Held(Vk.LWin) || Held(Vk.RWin);
+                _altLeft = Held(Vk.LMenu); _altRight = Held(Vk.RMenu);
+                _capsOn = (Native.GetKeyState(Vk.Capital) & 1) != 0;
             }
             catch { }
         }

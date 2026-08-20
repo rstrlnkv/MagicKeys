@@ -116,7 +116,7 @@ namespace MagicKeys
             Add("text.comma", "Знаки", "Печатать «,»", ActionKind.Text, 0, null, true, ",");
             Add("text.period", "Знаки", "Печатать «.»", ActionKind.Text, 0, null, true, ".");
 
-            Add("ime.kana", "Ввод иероглифов", "Кана / カナ (VK_KANA)", ActionKind.Key, Vk.Kana, null, false, null);
+            Add("ime.kana", "Ввод иероглифов", "Кана / カナ", ActionKind.Key, Vk.Kana, null, false, null);
             Add("ime.on", "Ввод иероглифов", "Включить редактор метода ввода", ActionKind.Key, Vk.ImeOn, null, false, null);
             Add("ime.off", "Ввод иероглифов", "Выключить редактор метода ввода", ActionKind.Key, Vk.ImeOff, null, false, null);
             Add("ime.convert", "Ввод иероглифов", "Преобразовать / 変換", ActionKind.Key, Vk.Convert, null, false, null);

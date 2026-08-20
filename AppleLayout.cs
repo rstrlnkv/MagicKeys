@@ -149,7 +149,7 @@ namespace MagicKeys
         private static readonly object Sync = new object();
         private static List<AppleLayoutFile> _all = new List<AppleLayoutFile>();
         private static Dictionary<string, AppleLayoutFile> _byId = new Dictionary<string, AppleLayoutFile>();
-        private static bool _loaded;
+        private static volatile bool _loaded;
 
         public static string AppFolder
         {
@@ -176,6 +176,9 @@ namespace MagicKeys
                 return _byId.TryGetValue(id, out f) ? f : null;
             }
         }
+
+        /// <summary>Загрузить заранее, чтобы это не случилось внутри обработчика хука.</summary>
+        public static void Warm() { EnsureLoaded(); }
 
         private static void EnsureLoaded()
         {

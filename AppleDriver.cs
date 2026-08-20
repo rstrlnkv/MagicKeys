@@ -59,10 +59,14 @@ namespace MagicKeys
         /// и переназначать его должны мы. Значение −1 (не нашлось) считаем за 1:
         /// у Apple это поведение по умолчанию.
         /// </summary>
-        public static bool TakesFunctionRow
-        {
-            get { Refresh(false); lock (Sync) return _installed && _enabled && _fnBehavior != 0; }
-        }
+        // Читается из обработчика хука, поэтому здесь не должно быть ничего медленного.
+        // Раньше геттер звал Refresh, а тот раз в 30 секунд перебирал подключи класса
+        // клавиатур — десятки открытий ключа HKLM прямо в хуке. На холодном кэше или
+        // под антивирусом это укладывается в сотни миллисекунд, а после 300 Windows
+        // снимает перехват молча. Теперь значение обновляет сторожевой таймер Engine.
+        private static volatile bool _takesRow;
+
+        public static bool TakesFunctionRow { get { return _takesRow; } }
 
         /// <summary>
         /// Меняет OSXFnBehavior. Значение лежит в HKLM, поэтому нужны права
@@ -94,8 +98,8 @@ namespace MagicKeys
                 using (System.Diagnostics.Process p = System.Diagnostics.Process.Start(psi))
                 {
                     p.WaitForExit(30000);
-                    if (!p.HasExited) { error = "reg.exe не ответил"; return false; }
-                    if (p.ExitCode != 0) { error = "reg.exe вернул " + p.ExitCode; return false; }
+                    if (!p.HasExited) { error = "Windows не ответила на запрос записи"; return false; }
+                    if (p.ExitCode != 0) { error = "Windows отказалась записать значение (код " + p.ExitCode + ")"; return false; }
                 }
                 Refresh(true);
                 return true;
@@ -150,6 +154,7 @@ namespace MagicKeys
                 _fnBehavior = behavior;
                 _fnBehaviorPath = where;
             }
+            _takesRow = installed && enabled && behavior != 0;
         }
 
 

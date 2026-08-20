@@ -264,6 +264,11 @@ namespace MagicKeys
 
             // Со страницы «О программе» уходим — обновление больше некому показывать.
             _updStatus = null;
+            // Отчёты о разовых действиях живут до перестройки страницы, не дольше:
+            // «заменитель Fn выключен» продолжало висеть и после того, как человек
+            // включил его обратно на соседней странице.
+            _fnNotice = null;
+            _tuneNotice = null;
             _updAction = null;
             _updFound = null;
 
@@ -546,6 +551,10 @@ namespace MagicKeys
             }));
             presets.Children.Add(PresetButton("Без изменений", "Как приходит от клавиатуры", delegate
             {
+                // И Caps Lock тоже: он стоит первой строкой прямо под этими кнопками
+                // и меняется чаще остальных вместе взятых. Не возвращать его — значит
+                // обещать «как приходит от клавиатуры» и оставить Escape.
+                _s.MapCapsLock = ModKey.CapsLock;
                 _s.MapLCtrl = ModKey.LCtrl;
                 _s.MapLWin = ModKey.LWin;
                 _s.MapLAlt = ModKey.LAlt;
@@ -900,7 +909,8 @@ namespace MagicKeys
                 brows.Children.Add(KeyValue("Заряд", battery + " %"));
                 stack.Children.Add(Card("Заряд батареи", null, brows,
                     Note("Windows этот уровень не показывает: клавиатура его сама не присылает. " +
-                         "Программа спрашивает его у клавиатуры напрямую, раз в минуту.")));
+                         "Программа спрашивает его у клавиатуры напрямую — не чаще раза в минуту " +
+                         "и только когда значение кому-то понадобилось.")));
             }
             else
             {
@@ -921,7 +931,7 @@ namespace MagicKeys
                 {
                     try { Devices.Rescan(); }
                     catch (Exception e) { Diag.Log("не удалось опросить устройства", e); }
-                    Dispatcher.BeginInvoke((Action)delegate
+                    ToWindow(delegate
                     {
                         refresh.IsEnabled = true;
                         RefreshDevices();
@@ -1133,6 +1143,10 @@ namespace MagicKeys
         /// </summary>
         private void DetachSelfTest()
         {
+            // Стираем и то, что уже нарисовано. Подписку снять мало: окно может остаться
+            // видимым на другом мониторе, и последние два десятка нажатий висели бы
+            // на экране сколько угодно — при том что текст карточки обещает обратное.
+            if (_selfTestLog != null) _selfTestLog.Text = "";
             if (_selfTest != null)
             {
                 KeyWatch.Activity -= _selfTest;
@@ -1157,7 +1171,7 @@ namespace MagicKeys
             stack.Children.Add(Card("Как это читать", null,
                 Note("Нажимайте клавиши по одной — ниже появится, что именно дошло до Windows. " +
                      "Проверка слушает сырой ввод, поэтому видит клавиатуру напрямую и не зависит " +
-                     "ни от переназначений программы — но только пока это окно впереди. " +
+                     "от переназначений программы — но только пока это окно впереди. " +
                      "Уходя из-под фокуса, оно перестаёт слушать и стирает набранное: " +
                      "в спрятанном окне не должно копиться то, что вы печатаете в другом.\n\n" +
                      "Если нажатие не даёт строки совсем — значит до Windows не дошло ничего. " +
@@ -1190,7 +1204,7 @@ namespace MagicKeys
             _selfTest = delegate(KeyWatch.KeyEvent e)
             {
                 // Событие приходит из потока переписи — рисовать можно только из своего.
-                Dispatcher.BeginInvoke((Action)delegate { OnSelfTestEvent(e); });
+                ToWindow(delegate { OnSelfTestEvent(e); });
             };
             KeyWatch.Activity += _selfTest;
 
@@ -1388,7 +1402,8 @@ namespace MagicKeys
             string sevenZip = AppleDriverSetup.SevenZip();
             _setupLog = new TextBlock { TextWrapping = TextWrapping.Wrap, LineHeight = 19 };
             _setupLog.SetResourceReference(StyleProperty, "Caption");
-            _setupLog.Text = sevenZip != null
+            _setupLog.Text = _setupText != null ? _setupText
+                : sevenZip != null
                 ? "7-Zip найден: " + sevenZip
                 : "7-Zip не найден. Он нужен для распаковки: внутри пакета Apple лежит образ DMG, "
                   + "а его встроенные средства Windows читать не умеют. В программу он не вложен, "
@@ -1407,11 +1422,15 @@ namespace MagicKeys
             get.Click += delegate { StartSetup(true, null); };
             buttons.Children.Add(get);
 
+            // Видимость — из состояния, а не из памяти о нажатии. Страница пересобирается
+            // сама по себе: пришла новая клавиатура, обновился заряд, сменилась тема, —
+            // и кнопка пропадала посреди семисотмегабайтной закачки, а остановить работу
+            // становилось нечем.
             _setupStop = new Button
             {
                 Content = "Остановить",
                 Margin = new Thickness(0, 0, 8, 8),
-                Visibility = Visibility.Collapsed
+                Visibility = SetupBusy ? Visibility.Visible : Visibility.Collapsed
             };
             _setupStop.SetResourceReference(StyleProperty, "Btn");
             _setupStop.Click += delegate
@@ -1525,12 +1544,33 @@ namespace MagicKeys
         private ManualResetEvent _setupCancel;
         private Button _setupStop;
 
+        /// <summary>Просили ли остановиться. Спрашивается между шагами длинной работы.</summary>
+        private bool Cancelled
+        {
+            get { ManualResetEvent c = _setupCancel; return c != null && c.WaitOne(0); }
+        }
+
+        /// <summary>Последнее сказанное о ходе работы — чтобы пережить перестройку страницы.</summary>
+        private volatile string _setupText;
+
+        /// <summary>Идёт ли сейчас работа с драйвером.</summary>
+        private bool SetupBusy { get { return _setupThread != null && _setupThread.IsAlive; } }
+
         private void SetupSay(string text)
         {
-            Dispatcher.BeginInvoke((Action)delegate
-            {
-                if (_setupLog != null) _setupLog.Text = text;
-            });
+            _setupText = text;
+            ToWindow(delegate { if (_setupLog != null) _setupLog.Text = text; });
+        }
+
+        /// <summary>
+        /// Отдать работу потоку окна — но только пока оно есть. После выхода диспетчер
+        /// завершён, и BeginInvoke бросает исключение прямо на фоновом потоке, где его
+        /// никто не ловит: «Выход» посреди закачки почти наверняка попадал в эту секунду.
+        /// </summary>
+        private void ToWindow(Action what)
+        {
+            try { Dispatcher.BeginInvoke(what); }
+            catch (Exception e) { Diag.Log("окно уже закрыто, работа не передана", e); }
         }
 
         /// <summary>
@@ -1591,7 +1631,14 @@ namespace MagicKeys
                         if (!AppleDriverSetup.Download(url, package,
                                 delegate(double part, string what) { SetupSay(head + "\n\n" + what); },
                                 _setupCancel, out error))
-                        { SetupSay(head + "\n\nСкачать не вышло: " + error); return; }
+                        {
+                            SetupSay(head + (error == "отменено"
+                                ? "\n\nОстановлено."
+                                : "\n\nСкачать не вышло: " + error));
+                            return;
+                        }
+
+                        if (Cancelled) { SetupSay(head + "\n\nОстановлено."); return; }
 
                         SetupSay(head + "\n\nРаспаковываю…");
                         inf = AppleDriverSetup.ExtractUntilInf(sevenZip, package,
@@ -1619,7 +1666,7 @@ namespace MagicKeys
                     // и после появления режима разработчика указывал уже на другую
                     // страницу — так что после установки драйвера она не обновлялась
                     // никогда, и человек видел прежнее «не установлен».
-                    Dispatcher.BeginInvoke((Action)delegate { if (CurrentPage == "driver") BuildPage(); });
+                    ToWindow(delegate { if (CurrentPage == "driver") BuildPage(); });
                 }
                 catch (Exception e)
                 {
@@ -1628,22 +1675,20 @@ namespace MagicKeys
                              "Можно скачать пакет Boot Camp самостоятельно и указать " +
                              "распакованную папку кнопкой выше.");
                 }
+                finally
+                {
+                    // Кончили — убираем кнопку остановки. Отдельный сторож на пуле
+                    // потоков для этого не нужен: поток сам знает, когда он кончил.
+                    ToWindow(delegate
+                    {
+                        if (_setupStop == null) return;
+                        _setupStop.Visibility = Visibility.Collapsed;
+                        _setupStop.IsEnabled = true;
+                    });
+                }
             });
             _setupThread.IsBackground = true;
             _setupThread.Start();
-
-            // Кнопка «Остановить» живёт ровно столько, сколько идёт работа.
-            ThreadPool.QueueUserWorkItem(delegate
-            {
-                Thread t = _setupThread;
-                if (t != null) t.Join();
-                Dispatcher.BeginInvoke((Action)delegate
-                {
-                    if (_setupStop == null) return;
-                    _setupStop.Visibility = Visibility.Collapsed;
-                    _setupStop.IsEnabled = true;
-                });
-            });
         }
 
         /// <summary>
@@ -1877,6 +1922,8 @@ namespace MagicKeys
         private TextBlock _updHint;
         private Updater.Release _updFound;
         private bool _updBusy;
+        /// <summary>Что показывать, пока идёт проверка или загрузка, — переживает перестройку.</summary>
+        private string _updBusyText = "Проверяю…";
 
         /// <summary>Проверка обновлений и выбор канала — одной карточкой, как у соседей.</summary>
         private UIElement AboutUpdate()
@@ -1936,7 +1983,17 @@ namespace MagicKeys
             stack.Children.Add(_updHint);
 
             ShowChannel();
-            ShowIdle();
+            // Перестройка страницы не должна отменять начатое: она случается сама
+            // по себе — пришла клавиатура, обновился заряд, сменилась тема. Раньше
+            // «Проверяю…» превращалось обратно в «Проверено N минут назад», кнопка
+            // оживала, и можно было запустить вторую проверку поверх первой.
+            if (_updBusy)
+            {
+                _updStatus.Text = _updBusyText;
+                _updStatus.SetResourceReference(TextBlock.ForegroundProperty, "TextSec");
+                _updAction.IsEnabled = false;
+            }
+            else ShowIdle();
 
             return new Border
             {
@@ -1989,7 +2046,8 @@ namespace MagicKeys
         {
             _updBusy = true;
             _updAction.IsEnabled = false;
-            _updStatus.Text = "Проверяю…";
+            _updBusyText = "Проверяю…";
+            _updStatus.Text = _updBusyText;
 
             string channel = _s.UpdateChannel;
             ThreadPool.QueueUserWorkItem(delegate
@@ -1997,7 +2055,7 @@ namespace MagicKeys
                 string error;
                 Updater.Checked = false;
                 Updater.Release found = Updater.Check(channel, out error);
-                Dispatcher.BeginInvoke((Action)delegate
+                ToWindow(delegate
                 {
                     // Отметку о проверке ставим здесь, на потоке окна: настройки правит
                     // только он, и Save() отсюда ни с чем не столкнётся.
@@ -2028,7 +2086,8 @@ namespace MagicKeys
 
             _updBusy = true;
             _updAction.IsEnabled = false;
-            _updStatus.Text = "Скачиваю…";
+            _updBusyText = "Скачиваю…";
+            _updStatus.Text = _updBusyText;
 
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -2036,7 +2095,7 @@ namespace MagicKeys
                 string path = Updater.Download(release, out error);
                 if (path != null) Updater.Install(path, out error);
 
-                Dispatcher.BeginInvoke((Action)delegate
+                ToWindow(delegate
                 {
                     if (_updStatus == null) return;
                     _updBusy = false;

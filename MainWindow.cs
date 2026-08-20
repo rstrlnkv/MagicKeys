@@ -195,7 +195,11 @@ namespace MagicKeys
             else
                 _deviceLine.Text = "Клавиатура Apple не найдена. Клавиатур в системе: " + all.Count + ".";
 
-            if (CurrentPage == "diag") BuildPage();
+            // Перестраиваем любую страницу, а не только «Диагностику»: приход другой
+            // клавиатуры переписывает заводские назначения верхнего ряда и подписи
+            // клавиш, и страница «Клавиши» оставалась с прежними — на экране одно,
+            // в настройках другое.
+            BuildPage();
         }
 
         // ------------------------------------------------------------------
@@ -358,7 +362,7 @@ namespace MagicKeys
                 // Заменитель и ⌥ бывают одной клавишей, и тогда три сочетания из шести
                 // достаются таблице macOS. Перечислять всё, а следом оговариваться — значит
                 // сперва пообещать, потом отобрать: список сразу называет то, что работает.
-                Note(_s.MacShortcuts && (_s.FnSubstitute == ModKey.RAlt || _s.FnSubstitute == ModKey.LAlt)
+                Note(_s.MacShortcuts && _s.FnSubstitute == ModKey.RAlt
                         ? "Fn+↑↓ листают страницу, Fn+Enter — это Insert. Fn+←→ и Fn+Backspace " +
                           "достаются сочетаниям macOS: там ⌥ ходит по словам, а начало и конец " +
                           "строки — на ⌘←→."
@@ -455,26 +459,6 @@ namespace MagicKeys
                     _s.NumpadClear, delegate(string id) { _s.NumpadClear = id; Save(); });
 
 
-                // Только если клавиша правда есть: при неопознанной модели человеку
-                // показывали настройку клавиши, которой у него нет, вместе с четырьмя
-                // абзацами о том, почему она не работает.
-                if (KeyWatch.EjectSeen || (fm != null && fm.Eject))
-                {
-                    var ejGrid = new Grid();
-                    ejGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                    ejGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });
-                    AddSingleRow(ejGrid, 0, "Eject", "Верхний правый угол, со значком извлечения",
-                        _s.EjectKey, delegate(string id) { _s.EjectKey = id; Save(); });
-
-                    string ejNote = KeyWatch.EjectSeen
-                        ? "Эта клавиша с вашей клавиатуры приходит — назначение работает."
-                        : "Magic Keyboard эту клавишу в Windows не отправляет: её обрабатывает сама " +
-                          "клавиатура, и драйвер тут не помогает. Настройка сработает на алюминиевых " +
-                          "моделях по USB — они Eject присылают.";
-
-                    stack.Children.Add(Card("Клавиша Eject", null, ejGrid, Note(ejNote)));
-                }
-
                 stack.Children.Add(Card("Цифровой блок", null, padGrid,
                     Note("Две клавиши цифрового блока в Windows ведут себя не так, как напечатано.\n\n" +
                          "Clear отдаёт Num Lock — то есть попадание по ней молча превращает " +
@@ -484,6 +468,27 @@ namespace MagicKeys
                          "было бы нечем.\n\n" +
                          "Клавиша «=» приходит кодом «очистить», которого почти никто не понимает, — " +
                          "программа печатает «=» сама.")));
+            }
+
+            // Клавиша ⏏ — своей карточкой, а не внутри цифрового блока. Внутри она
+            // доставалась только клавиатурам с блоком, то есть ровно тем, у которых
+            // её нет: ⏏ бывает у алюминиевых компактных, а они без блока. Настройка
+            // при этом живая — её применяет перепись клавиш.
+            if (KeyWatch.EjectSeen || (fm != null && fm.Eject) || fm == null)
+            {
+                var ejGrid = new Grid();
+                ejGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                ejGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });
+                AddSingleRow(ejGrid, 0, "Eject", "Верхний правый угол, со значком извлечения",
+                    _s.EjectKey, delegate(string id) { _s.EjectKey = id; Save(); });
+
+                string ejNote = KeyWatch.EjectSeen
+                    ? "Эта клавиша с вашей клавиатуры приходит — назначение работает."
+                    : "Magic Keyboard эту клавишу в Windows не отправляет: её обрабатывает сама " +
+                      "клавиатура, и драйвер тут не помогает. Настройка сработает на алюминиевых " +
+                      "моделях по USB — они Eject присылают.";
+
+                stack.Children.Add(Card("Клавиша Eject", null, ejGrid, Note(ejNote)));
             }
 
             // Правый ⌥ — одним вопросом, до модификаторов: он и есть самая спорная клавиша.
@@ -498,6 +503,17 @@ namespace MagicKeys
         /// Вопрос у человека один: что происходит, когда я жму вот эту клавишу; резать
         /// его надвое по устройству программы незачем.
         /// </summary>
+        /// <summary>
+        /// Забрать правый ⌥ у его особых ролей. Зовут схемы, которые уводят клавишу
+        /// в другую: заменителем Fn и третьим уровнем она после этого быть не может —
+        /// первому нечего временно снимать, второму нечем набирать.
+        /// </summary>
+        private void TakeRightOption()
+        {
+            if (_s.FnSubstitute == ModKey.RAlt) _s.FnSubstitute = ModKey.None;
+            _s.OptLevel = OptLevel.Off;
+        }
+
         private void AddModifierCards(StackPanel stack)
         {
             var presets = new WrapPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, -8, -8) };
@@ -520,6 +536,7 @@ namespace MagicKeys
                 _s.MapLWin = ModKey.LAlt;
                 _s.MapRWin = ModKey.RAlt;
                 _s.MapRAlt = ModKey.RWin;
+                TakeRightOption();
                 Save(); BuildPage();
             }));
             presets.Children.Add(PresetButton("Без изменений", "Как приходит от клавиатуры", delegate
@@ -532,6 +549,10 @@ namespace MagicKeys
                 Save(); BuildPage();
             }));
             stack.Children.Add(Card("Готовые схемы", null, presets));
+            // Схема, уводящая правый ⌥ в другую клавишу, забирает его себе целиком.
+            // Иначе карточка «Правый ⌥» продолжала уверять «набирает символы третьего
+            // уровня», а клавиша в этот момент приходила в Windows клавишей Win —
+            // и строки, которой это видно, в карточке нет: при роли «символы» её прячут.
 
             var grid = new Grid();
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -580,8 +601,11 @@ namespace MagicKeys
 
             string what =
                 now == "fn"
-                    ? "Переключает верхний ряд и даёт Fn+стрелки. Без драйвера Apple настоящая Fn " +
-                      "до Windows не доходит, поэтому нужна замена."
+                    ? (YieldingNow
+                        ? "Сейчас верхним рядом занимается драйвер Apple, и переключать нечего. " +
+                          (_s.FnNavigation ? "Fn+стрелки работают." : "Навигация Fn выключена выше.")
+                        : "Переключает верхний ряд" + (_s.FnNavigation ? " и даёт Fn+стрелки" : "") +
+                          ". Без драйвера Apple настоящая Fn до Windows не доходит, поэтому нужна замена.")
                 : now == "symbols"
                     ? "Набирает символы, напечатанные на клавише третьими. Работает, только когда " +
                       "включены раскладки Apple."
@@ -944,7 +968,9 @@ namespace MagicKeys
                     delegate(object v)
                     {
                         _s.SpaceSearch = (string)v;
-                        Save();
+                        // Перестраиваем: рядом стоит текст, который зависит от этого же
+                        // выбора, — без этого он обещал язык там, где пробел не трогают.
+                        Save(); BuildPage();
                     })),
                 Toggle("⌘+Tab переключает окна, как Alt+Tab", _s.CmdTabSwitchesWindows,
                     delegate(bool v) { _s.CmdTabSwitchesWindows = v; Save(); }),
@@ -1037,7 +1063,9 @@ namespace MagicKeys
                 string pick = (string)v;
                 _s.Enabled = pick != "off";
                 _s.PauseWhenAppleAbsent = pick != "always";
-                Save();
+                // Перестраиваем: предупреждение «правила действуют на весь ввод» нужно
+                // ровно тому, кто только что выбрал «на любой клавиатуре».
+                Save(); BuildPage();
             })));
 
             if (_s.Enabled && !_s.PauseWhenAppleAbsent)
@@ -1247,7 +1275,7 @@ namespace MagicKeys
                 int fb = AppleDriver.FnBehavior;
                 var modes = new StackPanel();
                 modes.Children.Add(PresetButton(
-                    "Медиа сразу — как на маке" + (fb != 0 ? "  ·  сейчас так" : ""),
+                    "Медиа сразу — как на маке" + (fb == 1 ? "  ·  сейчас так" : ""),
                     "F1–F12 сами дают громкость и перемотку, обычные F-клавиши — через Fn. " +
                     "Делает это драйвер; MagicKeys функциональный ряд не трогает. " +
                     "Яркость при этом пропадает: F1 и F2 драйвер съедает и наружу не отдаёт.",

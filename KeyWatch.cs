@@ -213,6 +213,7 @@ namespace MagicKeys
                 if (_window == IntPtr.Zero)
                 {
                     Fail("окно сырого ввода не создано, ошибка " + Marshal.GetLastWin32Error());
+                    _thread = null;   // иначе повторный запуск молча ничего не сделает
                     return;
                 }
 
@@ -228,6 +229,7 @@ namespace MagicKeys
                 if (!Native.RegisterRawInputDevices(rid, (uint)rid.Length, (uint)Marshal.SizeOf(typeof(Native.RAWINPUTDEVICE))))
                 {
                     Fail("подписка на сырой ввод отклонена, ошибка " + Marshal.GetLastWin32Error());
+                    _thread = null;
                     return;
                 }
 
@@ -293,7 +295,7 @@ namespace MagicKeys
                 }
                 else if (header.dwType == Native.RIM_TYPEHID)
                 {
-                    HandleHid(header.hDevice, buf, headerSize);
+                    HandleHid(header.hDevice, buf, headerSize, (int)size);
                 }
             }
             finally { Marshal.FreeHGlobal(buf); }
@@ -325,11 +327,11 @@ namespace MagicKeys
         /// объяснений. А вот подписчиков зовём, уже отпустив замок: держать под своим
         /// замком чужой код значит полагаться на его свойства, а не на свои.
         /// </summary>
-        private static void HandleHid(IntPtr device, IntPtr buf, int headerSize)
+        private static void HandleHid(IntPtr device, IntPtr buf, int headerSize, int size)
         {
             var seen = new List<int>();
             var isNew = new List<bool>();
-            lock (Sync) CollectHid(device, buf, headerSize, seen, isNew);
+            lock (Sync) CollectHid(device, buf, headerSize, size, seen, isNew);
 
             for (int i = 0; i < seen.Count; i++)
             {
@@ -344,7 +346,7 @@ namespace MagicKeys
             }
         }
 
-        private static void CollectHid(IntPtr device, IntPtr buf, int headerSize,
+        private static void CollectHid(IntPtr device, IntPtr buf, int headerSize, int size,
                                        List<int> seen, List<bool> isNew)
         {
             IntPtr preparsed = Preparsed(device);
@@ -352,7 +354,11 @@ namespace MagicKeys
 
             int sizeHid = Marshal.ReadInt32(buf, headerSize);
             int count = Marshal.ReadInt32(buf, headerSize + 4);
+            // Число отчётов и их размер приходят из ядра и должны быть согласованы
+            // с буфером. Проверить это стоит одной строки, а цена промаха — чтение
+            // за его пределами.
             if (sizeHid <= 0 || count <= 0) return;
+            if ((long)count * sizeHid > size - headerSize - 8) return;
             IntPtr data = new IntPtr(buf.ToInt64() + headerSize + 8);
 
             int max = Native.HidP_MaxUsageListLength(Native.HIDP_INPUT, Native.UsagePageConsumer, preparsed);
@@ -378,6 +384,12 @@ namespace MagicKeys
             }
         }
 
+        /// <summary>
+        /// Описание отчётов устройства. Добывается СНАРУЖИ общего замка, а кладётся
+        /// под ним: запрос уходит в стек устройства, и при подключении по Bluetooth
+        /// ответа можно ждать заметно. Держать на это время замок, за которым стоит
+        /// поток окна, значит замораживать окно на каждом пробуждении.
+        /// </summary>
         private static IntPtr Preparsed(IntPtr device)
         {
             IntPtr cached;

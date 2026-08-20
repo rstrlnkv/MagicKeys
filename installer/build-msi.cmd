@@ -67,7 +67,7 @@ call "%HERE%sign.cmd" "%HERE%obj\stage\MagicKeys.exe" || exit /b 1
 rem Раскладок тридцать три, и перечислять их в .wxs руками значило бы забыть
 rem новую при первом же добавлении. Список собирает heat.exe из самой папки.
 echo === Список раскладок ===
-"%WIX%\heat.exe" dir "%ROOT%\layouts" -nologo -cg LayoutFiles -dr INSTALLFOLDER ^
+"%WIX%\heat.exe" dir "%ROOT%\layouts" -nologo -cg LayoutFiles -dr LayoutsFolder ^
   -var var.SourceDir -ag -g1 -srd -sfrag -sreg -out "%HERE%obj\layouts.wxs" || exit /b 1
 rem heat пишет пути от корня дерева, а нам нужна подпапка layouts.
 powershell -NoProfile -Command "(Get-Content -Raw -Encoding UTF8 '%HERE%obj\layouts.wxs').Replace('$(var.SourceDir)\', '$(var.SourceDir)\layouts\') | Set-Content -NoNewline -Encoding UTF8 '%HERE%obj\layouts.wxs'" || exit /b 1

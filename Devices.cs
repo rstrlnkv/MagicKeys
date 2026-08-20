@@ -63,6 +63,8 @@ namespace MagicKeys
         }
         private static AppleModel _appleModel;
         private static string _appleStatusPath;
+        /// <summary>Путь, найденный текущим опросом, — кладётся вместе со всем прочим.</summary>
+        private static string _pendingStatusPath;
         private static List<KeyboardInfo> _cache = new List<KeyboardInfo>();
 
         public static bool AppleConnected { get { return _appleConnected; } }
@@ -132,6 +134,7 @@ namespace MagicKeys
                 _cache = found;
                 _appleModel = model;
                 _appleConnected = apple;
+                _appleStatusPath = _pendingStatusPath;
                 _mark = mark;
             }
             return changed;
@@ -160,7 +163,10 @@ namespace MagicKeys
                 statusPath = DeviceName(list[i].hDevice);
                 break;
             }
-            lock (Sync) _appleStatusPath = statusPath;
+            // Под тем же замком, что и остальное: раньше это поле писалось отдельным
+            // захватом, и два одновременных опроса могли оставить путь от одного прохода,
+            // а список устройств от другого.
+            _pendingStatusPath = statusPath;
 
             for (int i = 0; i < count; i++)
             {

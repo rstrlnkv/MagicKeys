@@ -49,6 +49,7 @@ namespace MagicKeys
             SpaceRoles();
             AppleLayout();
             ModifierChangedMidPress();
+            OneOwnerPerKey();
             SnapshotIndependence();
             LayoutGuess();
             OtherSettings();
@@ -101,9 +102,15 @@ namespace MagicKeys
 
         static bool Send(int vk, bool down, bool ext)
         {
+            return Send(vk, (int)Native.MapVirtualKeyW((uint)vk, Native.MAPVK_VK_TO_VSC), down, ext);
+        }
+
+        /// <summary>То же, но со своим скан-кодом: по нему разбираются перестановка ISO и «=».</summary>
+        static bool Send(int vk, int scan, bool down, bool ext)
+        {
             Native.KBDLLHOOKSTRUCT k = new Native.KBDLLHOOKSTRUCT();
             k.vkCode = (uint)vk;
-            k.scanCode = Native.MapVirtualKeyW((uint)vk, Native.MAPVK_VK_TO_VSC);
+            k.scanCode = (uint)scan;
             k.flags = ext ? Native.LLKHF_EXTENDED : 0u;
             return (bool)_handle.Invoke(_eng, new object[] { down ? Native.WM_KEYDOWN : Native.WM_KEYUP, k });
         }
@@ -676,7 +683,105 @@ namespace MagicKeys
             Clear();
         }
 
+        /// <summary>
+        /// У нажатой клавиши один хозяин.
+        ///
+        /// Слоёв, умеющих взять нажатие себе, шесть: навигация, аккорды, раскладка,
+        /// перестановка ISO, одиночные клавиши и верхний ряд. Каждый помнит взятое
+        /// по-своему, и если нажатие возьмёт один, а повтор — другой, то на отпускании
+        /// сработает первый попавшийся, а запись второго останется навсегда. Следующее
+        /// нажатие той же клавиши уйдёт в приложение, а отпускание съедим мы — и клавиша
+        /// останется зажатой. Проверяем, что второй слой чужого не берёт.
+        /// </summary>
+        static void OneOwnerPerKey()
+        {
+            Head("У клавиши один хозяин");
+
+            // Аккорд взял стрелку, а потом появился заменитель Fn: навигация её не отнимает.
+            Settings s = Fresh();
+            Use(s);
+            Down(Vk.LWin);
+            Down(Vk.Up);            // ⌘↑ — в начало документа, взял слой аккордов
+            Up(Vk.LWin);            // ⌘ отпустили, стрелку держим
+            DownE(Vk.RMenu);        // нажали заменитель Fn
+            Down(Vk.Up);            // автоповтор стрелки
+            Up(Vk.Up);              // отпустили
+            UpE(Vk.RMenu);
+            Clear();
+            bool swDown = Down(Vk.Up);
+            bool swUp = Up(Vk.Up);
+            Check("после ⌘↑ и Fn стрелка не остаётся за нами",
+                  !swDown && !swUp, "нажатие=" + swDown + ", отпускание=" + swUp);
+            Clear();
+
+            // Перестановка ISO взяла клавишу, а потом нажали ⌘: аккорд её не отнимает.
+            s = Fresh();
+            s.Physical = PhysLayout.Iso;
+            Use(s);
+            Send(Vk.Oem102, 0x56, true, false);    // клавиша слева от «Z»
+            Down(Vk.LWin);
+            Send(Vk.Oem102, 0x56, true, false);    // автоповтор при зажатой ⌘
+            Clear();
+            Send(Vk.Oem102, 0x56, false, false);   // отпустили
+            Check("подставленный скан-код отпускается, а не остаётся зажатым",
+                  Sent().Contains("scan29^"), Sent());
+            Clear();
+            Up(Vk.LWin); Clear();
+
+            // Одиночная клавиша взята — аккорд её не отнимает.
+            s = Fresh();
+            s.NumpadClear = "key.delete";
+            Use(s);
+            Down(Vk.NumLock);
+            Down(Vk.LWin);
+            Down(Vk.NumLock);       // автоповтор при зажатой ⌘
+            Clear();
+            Up(Vk.NumLock);
+            Check("одиночная клавиша отпускается своим слоем",
+                  Sent().Contains(N(Vk.Delete) + "^"), Sent());
+            Clear();
+            Up(Vk.LWin); Clear();
+
+            // Верхний ряд взят — аккорд его не отнимает.
+            s = Fresh();
+            s.MediaFirst = true;
+            s.FKeys[4] = "key.home";
+            Use(s);
+            Down(Vk.F1 + 4);
+            Down(Vk.LWin);
+            Down(Vk.F1 + 4);
+            Clear();
+            Up(Vk.F1 + 4);
+            Check("верхний ряд отпускается своим слоем",
+                  Sent().Contains(N(Vk.Home) + "^"), Sent());
+            Clear();
+            Up(Vk.LWin); Clear();
+
+            // Удержание ⌘+пробела не открывает поиск два десятка раз.
+            s = Fresh();
+            s.SpaceSearch = Settings.SpaceCmd;
+            Use(s);
+            Down(Vk.LWin); Clear();
+            Down(Vk.Space); Down(Vk.Space); Down(Vk.Space);
+            int n = Sent().Split(new string[] { "Sv" }, StringSplitOptions.None).Length - 1;
+            Check("удержание ⌘+пробела открывает поиск один раз", n == 1, "срабатываний " + n);
+            Clear();
+            Up(Vk.Space); Up(Vk.LWin); Clear();
+
+            // И общее правило ⌘ тоже не повторяется: про клавишу вне таблицы мы не знаем,
+            // осмыслен ли для неё повтор.
+            s = Fresh();
+            Use(s);
+            Down(Vk.LWin); Clear();
+            Down(0x4B); Down(0x4B); Down(0x4B);   // ⌘K трижды
+            n = Sent().Split(new string[] { "Kv" }, StringSplitOptions.None).Length - 1;
+            Check("удержание ⌘K срабатывает один раз", n == 1, "срабатываний " + n);
+            Clear();
+            Up(0x4B); Up(Vk.LWin); Clear();
+        }
+
         static void AppleLayout()
+
         {
             Head("Раскладки Apple");
             Settings s = Fresh();

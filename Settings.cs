@@ -500,6 +500,14 @@ namespace MagicKeys
             catch { }
         }
 
+        /// <summary>
+        /// Привести прочитанное к тому, что программа умеет.
+        ///
+        /// Файл — единственное место, откуда приходят значения, которых окно выбрать
+        /// не даёт: он остался от прежней версии, его правили руками, запись оборвалась.
+        /// Свести их можно только здесь: дальше файл никто не видит, а список в окне,
+        /// не найдя своего значения, молча показывает первый пункт — то есть врёт.
+        /// </summary>
         private void Normalize()
         {
             if (FKeys == null || FKeys.Length != MaxFKeys)
@@ -511,6 +519,33 @@ namespace MagicKeys
                 FKeys = fixedUp;
             }
             if (LayoutBindings == null) LayoutBindings = new LayoutBinding[0];
+            if (MacShortcutsOff == null) MacShortcutsOff = new string[0];
+
+            // Заменитель Fn — только то, что предлагает окно.
+            if (FnSubstitute != ModKey.None && FnSubstitute != ModKey.RAlt
+                && FnSubstitute != ModKey.RWin && FnSubstitute != ModKey.LWin
+                && FnSubstitute != ModKey.CapsLock)
+                FnSubstitute = ModKey.None;
+
+            if (SpaceSearch != SpaceCmd && SpaceSearch != SpaceCtrl && SpaceSearch != SpaceNone)
+                SpaceSearch = SpaceCmd;
+
+            if (UpdateChannel != ChannelStable && UpdateChannel != ChannelDev)
+                UpdateChannel = ChannelStable;
+
+            // Правый ⌥ делает одно дело. Прежняя версия сохраняла заменитель Fn вместе
+            // с третьим уровнем на той же клавише — и окно показывало «Клавиша Fn»,
+            // молча набирая при этом символы третьего уровня. Побеждает Fn: без драйвера
+            // до функционального ряда иначе не добраться вовсе.
+            if (FnSubstitute == ModKey.RAlt && OptLevel != OptLevel.Off) OptLevel = OptLevel.Off;
+
+            // А если правый ⌥ уведён в другую клавишу, особых ролей у него быть не может:
+            // заменителю нечего временно снимать, третьему уровню нечем набирать.
+            if (MapRAlt != ModKey.RAlt)
+            {
+                if (FnSubstitute == ModKey.RAlt) FnSubstitute = ModKey.None;
+                OptLevel = OptLevel.Off;
+            }
         }
     }
 

@@ -85,7 +85,16 @@
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
-        <Directory Id="INSTALLFOLDER" Name="MagicKeys" />
+        <Directory Id="INSTALLFOLDER" Name="MagicKeys">
+          <!--
+            Раскладки обязаны лечь в подпапку: программа ищет их в layouts рядом с собой
+            и больше нигде. Прежде heat складывал все тридцать три файла прямо в корень,
+            и установленная из пакета программа не находила ни одной раскладки. На машине
+            сборки этого не видно никогда — там она запускается из дерева исходников,
+            где layouts лежит рядом.
+          -->
+          <Directory Id="LayoutsFolder" Name="layouts" />
+        </Directory>
       </Directory>
       <Directory Id="ProgramMenuFolder" />
     </Directory>
@@ -115,6 +124,7 @@
         -->
         <RegistryValue Root="HKLM" Key="Software\MagicKeys" Name="ShortcutChoice"
                        Type="string" Value="[INSTALLSHORTCUT]" />
+        <util:RemoveFolderEx Id="RemoveCache" Property="MagicKeysCacheFolder" On="uninstall" />
       </Component>
     </DirectoryRef>
 
@@ -199,8 +209,24 @@
                   ExeCommand="delete &quot;HKCU\Software\Microsoft\Windows\CurrentVersion\Run&quot; /v MagicKeys /f"
                   Execute="immediate" Return="ignore" />
 
+    <!--
+      Загруженное для драйвера Apple — это архив под семьсот мегабайт, распакованное
+      дерево и своя копия 7-Zip. Настройки после удаления оставляем нарочно (переустановка
+      их найдёт), а кэш убираем: кнопка «очистить загруженное» в программе есть, но
+      после удаления её негде нажать.
+    -->
+    <SetProperty Id="MagicKeysCacheFolder" Value="[LocalAppDataFolder]MagicKeys"
+                 Before="CostFinalize" Sequence="both" />
+
     <InstallExecuteSequence>
-      <Custom Action="CleanAutoStart" Before="RemoveFiles">REMOVE="ALL"</Custom>
+      <!--
+        NOT UPGRADINGPRODUCTCODE обязателен. При обновлении установщик полностью
+        прогоняет последовательность удаления ПРЕЖНЕГО пакета, где REMOVE=ALL выставлен,
+        — и без этой оговорки обновление молча стирало запись автозапуска. Человек
+        включал её снова, следующее обновление снова стирало, а по журналу причину
+        не найти: запись убирало чужое действие чужого пакета.
+      -->
+      <Custom Action="CleanAutoStart" Before="RemoveFiles">REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE</Custom>
       <Custom Action="RelaunchInTray" After="InstallFinalize">MAGICKEYSRELAUNCH="1" AND NOT REMOVE="ALL"</Custom>
     </InstallExecuteSequence>
 

@@ -620,7 +620,7 @@ namespace MagicKeys
         [DllImport("user32.dll")]
         public static extern IntPtr DispatchMessageW(ref MSG msg);
 
-        [DllImport("user32.dll")]
+        [DllImport("user32.dll", SetLastError = true)]
         public static extern bool PostThreadMessageW(uint threadId, uint msg, IntPtr w, IntPtr l);
 
         public const uint WM_QUIT = 0x0012;

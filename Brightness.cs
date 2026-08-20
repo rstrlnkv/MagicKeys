@@ -287,11 +287,24 @@ namespace MagicKeys
 
         private static void Rescan()
         {
+            Native.PHYSICAL_MONITOR[] letGo;
             lock (Sync)
             {
                 if (_panels != null && (DateTime.UtcNow - _scanned) < TimeSpan.FromSeconds(20)) return;
-                Release();
+                letGo = _owned;
+                _owned = null;
+                _panels = null;
                 _scanned = DateTime.UtcNow;
+            }
+
+            // Освобождаем СНАРУЖИ замка: DestroyPhysicalMonitors говорит с монитором
+            // по DDC/CI, а спящий или отключённый отвечает сотнями миллисекунд. На этом
+            // же замке стоит поток системных уведомлений — и стоит он ровно тогда, когда
+            // мониторы переключают, то есть когда ответ хуже всего.
+            if (letGo != null && letGo.Length > 0)
+            {
+                try { Native.DestroyPhysicalMonitors((uint)letGo.Length, letGo); }
+                catch { }
             }
 
             List<IntPtr> screens = new List<IntPtr>();
@@ -340,17 +353,6 @@ namespace MagicKeys
                     _owned = owned.ToArray();
                 }
             }
-        }
-
-        private static void Release()
-        {
-            if (_owned != null && _owned.Length > 0)
-            {
-                try { Native.DestroyPhysicalMonitors((uint)_owned.Length, _owned); }
-                catch { }
-            }
-            _owned = null;
-            _panels = null;
         }
 
         // ---------- встроенная панель ----------

@@ -50,15 +50,16 @@ namespace MagicKeys
         private readonly HashSet<ModKey> _winSources = new HashSet<ModKey>();
         private bool _capsHeld;
 
-        // Чьё нажатие взял на себя слой аккордов: сочетания macOS, ⌘+Tab, ⌘+пробел
-        // и промах мимо таблицы при зажатой ⌘.
+        // Чьё нажатие взял на себя слой аккордов и что по нему сработало: сочетания
+        // macOS, ⌘+Tab (значение null — у него своя посылка), ⌘+пробел и промах мимо
+        // таблицы при зажатой ⌘.
         //
         // Без этого отпускание решалось по модификаторам, зажатым в этот миг, а не по
         // тому, как ушло нажатие. Достаточно нажать ⌥ уже ПОСЛЕ стрелки: нажатие ушло
         // в приложение обычной стрелкой, а отпускание вдруг оказывалось ⌥+← из таблицы
         // и проглатывалось. Стрелка оставалась зажатой навсегда — снять её нечем,
         // человек её уже отпустил. Тем же путём залипали буква после ⌘, Tab и пробел.
-        private readonly HashSet<int> _chordTaken = new HashSet<int>();
+        private readonly Dictionary<int, MacShortcut> _chordTaken = new Dictionary<int, MacShortcut>();
 
         // Что мы держим за человека помимо модификаторов: действие на одиночной клавише
         // и подставленный скан-код перестановки ISO. Без учёта их некому отпустить.
@@ -139,7 +140,14 @@ namespace MagicKeys
             _capsOn = (Native.GetKeyState(Vk.Capital) & 1) != 0;
             EnsureNumLock(_cfg);
 
-            Devices.Rescan();
+            // В стороне: опрос открывает каждую клавиатуру и тянет из неё три строки,
+            // а по Bluetooth это секунды. Start зовут с потока окна — окно не должно
+            // ждать спящую клавиатуру, чтобы появиться.
+            ThreadPool.QueueUserWorkItem(delegate
+            {
+                try { Devices.Rescan(); }
+                catch (Exception e) { Diag.Log("первый опрос устройств не удался", e); }
+            });
             _watch = new Timer(delegate
             {
                 try
@@ -274,12 +282,27 @@ namespace MagicKeys
         private void PostRelease()
         {
             uint id = _threadId;
-            if (id != 0) Native.PostThreadMessageW(id, WmRelease, IntPtr.Zero, IntPtr.Zero);
-            else ReleaseEverything();
+            if (id != 0)
+            {
+                if (!Native.PostThreadMessageW(id, WmRelease, IntPtr.Zero, IntPtr.Zero))
+                    Diag.Log("просьба отпустить не дошла до потока перехвата, ошибка "
+                             + System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+                return;
+            }
+
+            // Потока нет. Если он ещё доживает свой выход — а идентификатор снимается
+            // до того, как он отпустит своё, — лезть туда со стороны нельзя: писать
+            // в его состояние вдвоём и есть то, от чего заведена эта просьба.
+            if (_threadAlive) return;
+            ReleaseEverything();
         }
+
+        /// <summary>Жив ли поток перехвата. Снимается позже идентификатора — см. PostRelease.</summary>
+        private volatile bool _threadAlive;
 
         private void Run()
         {
+            _threadAlive = true;
             try
             {
                 _threadId = Native.GetCurrentThreadId();
@@ -342,6 +365,7 @@ namespace MagicKeys
                     Native.UnhookWindowsHookEx(_hook);
                     _hook = IntPtr.Zero;
                 }
+                _threadAlive = false;
             }
         }
 
@@ -432,15 +456,24 @@ namespace MagicKeys
                 if (t != 0) return HandleNav(vk, t, down);
             }
 
-            // Отпускание идёт туда же, куда ушло нажатие. Всё, что слой аккордов взял
-            // себе, он же и отпускает — не спрашивая, какие модификаторы зажаты сейчас.
-            if (!down && _chordTaken.Remove(vk)) return true;
+            // Продолжение начатого аккорда: и повтор, и отпускание идут туда же, куда
+            // ушло нажатие, — не спрашивая, какие модификаторы зажаты сейчас.
+            MacShortcut taken;
+            if (_chordTaken.TryGetValue(vk, out taken))
+            {
+                if (!down) { _chordTaken.Remove(vk); return true; }
+                // Повторяем только то, что объявило о себе, что умеет повторяться:
+                // ⌘Q, зажатая на полсекунды, не должна закрывать окно за окном.
+                if (taken == null) Input.Tap(Vk.Tab);          // ⌘+Tab листает дальше
+                else if (taken.Repeats) MacSend(taken);
+                return true;
+            }
 
             // ⌘+Tab ведёт себя как Alt+Tab.
-            if (s.CmdTabSwitchesWindows && vk == Vk.Tab && _cmdHeld)
+            if (s.CmdTabSwitchesWindows && vk == Vk.Tab && _cmdHeld && !Busy(vk, k.scanCode))
             {
-                if (!down) return false;   // отпускание уже разобрано выше
-                _chordTaken.Add(vk);
+                if (!down) return false;   // нажатия не брали — и отпускание не наше
+                _chordTaken[vk] = null;
                 {
                     if (!_cmdTabAlt)
                     {
@@ -474,15 +507,15 @@ namespace MagicKeys
                 if (vk == Vk.Space && (mm == MacMod.Cmd || mm == MacMod.Ctrl))
                 {
                     MacShortcut space = MacKeys.SpaceAction(mm == MacMod.Cmd ? s.CmdSpace : s.CtrlSpace);
-                    if (space != null && down)
+                    if (space != null && down && !Busy(vk, k.scanCode))
                     {
                         MacSend(space);
-                        _chordTaken.Add(vk);
+                        _chordTaken[vk] = space;
                         return true;
                     }
                 }
 
-                if (mm != MacMod.None)
+                if (mm != MacMod.None && !Busy(vk, k.scanCode))
                 {
                     MacShortcut sc = MacKeys.Find(vk, mm);
                     // Выключенное поимённо остаётся выключенным: подставлять вместо него
@@ -499,12 +532,10 @@ namespace MagicKeys
                         // Отпускание сюда не доходит: если нажатие взяли, его разобрали
                         // выше; а если не взяли — оно и не наше.
                         if (!down) return false;
-                        // Автоповтор виден по тому же множеству: Add возвращает false,
-                        // если нажатие этой клавиши мы уже взяли. Отдельная ячейка «какой
-                        // аккорд сработал последним» держала только одну клавишу за раз —
-                        // отпустив вторую, автоповтор первой срабатывал заново.
-                        bool firstPress = _chordTaken.Add(vk);
-                        if (sc.Repeats || firstPress) MacSend(sc);
+                        // Сюда доходит только первое нажатие: повторы разбирает продолжение
+                        // выше, и по нему же решается, повторять ли посылку.
+                        MacSend(sc);
+                        _chordTaken[vk] = sc;
                         return true;
                     }
 
@@ -520,7 +551,7 @@ namespace MagicKeys
             // по словам в тексте нужнее прыжка в начало строки. Раньше выигрывала
             // навигация, и левый ⌥ вёл себя не так, как правый: ⌥+Backspace слева
             // удалял слово, справа — стирал символ впереди.
-            if (down && _fnHeld && s.FnNavigation)
+            if (down && _fnHeld && s.FnNavigation && !Busy(vk, k.scanCode))
             {
                 int target = FnNavTarget(vk);
                 if (target != 0) return HandleNav(vk, target, down);
@@ -563,7 +594,7 @@ namespace MagicKeys
             // две клавиши на ISO-клавиатурах Apple подключены наоборот, и то же самое
             // безусловно правит квирк APPLE_ISO_TILDE_QUIRK в Linux. Желания оставить
             // клавиши перепутанными не бывает.
-            if (down && Physical(s) == PhysLayout.Iso
+            if (down && !Busy(vk, k.scanCode) && Physical(s) == PhysLayout.Iso
                 && (k.scanCode == 0x29 || k.scanCode == 0x56))
             {
                 _isoSwapped.Add(k.scanCode);
@@ -588,7 +619,7 @@ namespace MagicKeys
             {
                 if (!down) return false;   // нажатия не брали — и отпускание не наше
                 if (_winDown) Input.Tap(VkNoop);
-                _chordTaken.Add(vk);
+                _chordTaken[vk] = null;
                 return true;
             }
 
@@ -853,14 +884,28 @@ namespace MagicKeys
                         || (s.CmdTabSwitchesWindows && (phys == ModKey.LWin || phys == ModKey.RWin));
             if (!managed) return false;
 
+            // Отпускание всегда снимает то, что ушло в Windows на нажатии, а не то,
+            // что назначено сейчас. Назначение можно сменить, пока клавишу держат —
+            // и тогда нынешний код уходил вхолостую, а настоящий оставался нажатым.
+            // Снять его после этого было нечем: физическую клавишу человек уже отпустил.
+            if (!down)
+            {
+                int had;
+                if (_injected.TryGetValue(phys, out had))
+                {
+                    Input.Key(had, false);
+                    _injected.Remove(phys);
+                }
+                return true;
+            }
+
             if (target == ModKey.None) return true;
 
             int tvk = ModNames.VirtualKey(target);
             if (tvk == 0) return true;
 
-            Input.Key(tvk, down);
-            if (down) _injected[phys] = tvk;
-            else _injected.Remove(phys);
+            Input.Key(tvk, true);
+            _injected[phys] = tvk;
             return true;
         }
 
@@ -1074,6 +1119,26 @@ namespace MagicKeys
                 case ModKey.CapsLock: return s.MapCapsLock;
                 default: return phys;
             }
+        }
+
+        /// <summary>
+        /// Держит ли эту клавишу какой-нибудь слой.
+        ///
+        /// Слоёв, умеющих взять нажатие себе, шесть, и каждый помнит взятое по-своему:
+        /// навигация — по коду клавиши, раскладка и перестановка ISO — по скан-коду,
+        /// верхний ряд — по номеру. Пока нажатие держит один, второму брать его нельзя:
+        /// иначе на отпускании сработает тот, чья проверка стоит выше, а запись второго
+        /// останется навсегда — и следующее нажатие той же клавиши уйдёт в приложение,
+        /// а её отпускание съедим мы. Клавиша останется зажатой, и снять её будет нечем.
+        /// </summary>
+        private bool Busy(int vk, uint scan)
+        {
+            return _navActive.Contains(vk)
+                || _chordTaken.ContainsKey(vk)
+                || _swallowed.Contains(scan)
+                || _isoSwapped.Contains(scan)
+                || _singleAction.ContainsKey(vk)
+                || (vk >= Vk.F1 && vk <= Vk.F24 && _fkeyDown[vk - Vk.F1]);
         }
 
         private static bool TryPhysical(int vk, bool ext, out ModKey key)

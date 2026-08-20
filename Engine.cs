@@ -770,9 +770,13 @@ namespace MagicKeys
             if (s.FnSubstitute != ModKey.None && phys == s.FnSubstitute)
             {
                 _fnHeld = down;
-                _fnEffectiveVk = down
-                    ? (target == ModKey.None ? 0 : ModNames.VirtualKey(target))
-                    : 0;
+                // Запоминаем не всякое назначение, а только модификатор: снимать на время
+                // навигации нужно именно его, иначе Fn+← превратится в ⌥+Home. Всё
+                // остальное снимать нечего и нельзя. Caps Lock снять и вернуть — значит
+                // зажечь лампочку, и заменитель на нём переключал регистр через нажатие;
+                // Escape вернулся бы вторым нажатием и закрыл бы диалог.
+                int mod = down && target != ModKey.None ? ModNames.VirtualKey(target) : 0;
+                _fnEffectiveVk = IsModifierKey(mod) ? mod : 0;
                 if (!down) _subReleased = 0;
             }
 
@@ -826,6 +830,15 @@ namespace MagicKeys
         private static bool IsMenuKey(int vk)
         {
             return vk == Vk.LMenu || vk == Vk.RMenu || vk == Vk.LWin || vk == Vk.RWin;
+        }
+
+        /// <summary>Клавиша, которая меняет смысл других, пока её держат.</summary>
+        private static bool IsModifierKey(int vk)
+        {
+            return vk == Vk.LControl || vk == Vk.RControl
+                || vk == Vk.LShift || vk == Vk.RShift
+                || vk == Vk.LMenu || vk == Vk.RMenu
+                || vk == Vk.LWin || vk == Vk.RWin;
         }
 
         /// <summary>

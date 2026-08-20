@@ -214,9 +214,19 @@ namespace MagicKeys
             return i;
         }
 
+        /// <summary>
+        /// Куда уходит собранный ввод. Обычно — в Windows. Стенд подменяет его записью:
+        /// иначе решения перехвата не проверить, не рассылая нажатия по чужим окнам,
+        /// а проверять их надо — на глаз в этой части программы не видно ничего.
+        /// В самой программе не подменяется никогда.
+        /// </summary>
+        internal static Action<Native.INPUT[]> Sink { get; set; }
+
         private static void Send(Native.INPUT[] items)
         {
             if (items.Length == 0) return;
+            Action<Native.INPUT[]> sink = Sink;
+            if (sink != null) { sink(items); return; }
             lock (Sync) Native.SendInput((uint)items.Length, items, Marshal.SizeOf(typeof(Native.INPUT)));
         }
     }

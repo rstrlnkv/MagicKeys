@@ -33,7 +33,7 @@ namespace MagicKeys
         private static DateTime _scanned = DateTime.MinValue;
         private static int _pending;
         private static Thread _worker;
-        private static bool _wmiOnly;
+
 
         /// <summary>Сообщает новый уровень в процентах — для экранного индикатора.</summary>
         public static event Action<int> Changed;
@@ -102,17 +102,22 @@ namespace MagicKeys
             {
                 // Монитор под указателем есть, но яркостью не управляется — например,
                 // телевизор. Молча менять соседний было бы хуже, чем не делать ничего.
-                // Сначала пробуем средства Windows: так управляется встроенная панель
-                // ноутбука, и она как раз по DDC/CI не отвечает. Без этой попытки
+                // Средствами Windows управляется только встроенная панель, поэтому
+                // пробуем их, лишь когда под указателем именно она. Без этой попытки
                 // достаточно было подключить внешний монитор, чтобы яркость экрана
-                // ноутбука пропала: до общей ветки WMI ниже дело просто не доходило.
-                int wmi = ApplyWmi(delta);
-                if (wmi >= 0)
+                // ноутбука пропала совсем. А без проверки, что панель встроенная,
+                // выходило обратное: увёл указатель на телевизор — приглушилась панель
+                // ноутбука, и плашка с её процентом показалась на телевизоре.
+                if (IsInternal(cursorScreen))
                 {
-                    Diag.Log("яркость: итог " + wmi + "% на встроенной панели");
-                    Action<IntPtr, string, int> hw = ChangedOn;
-                    if (hw != null) hw(cursorScreen, null, wmi);
-                    return;
+                    int wmi = ApplyWmi(delta);
+                    if (wmi >= 0)
+                    {
+                        Diag.Log("яркость: итог " + wmi + "% на встроенной панели");
+                        Action<IntPtr, string, int> hw = ChangedOn;
+                        if (hw != null) hw(cursorScreen, null, wmi);
+                        return;
+                    }
                 }
 
                 Diag.Log("яркость: монитор под указателем (" + ScreenName(cursorScreen) +
@@ -161,6 +166,71 @@ namespace MagicKeys
         /// Имя экрана вида \\.\DISPLAY2 — мониторы часто зовутся одинаково
         /// («Generic PnP Monitor»), и по названию их в журнале не различить.
         /// </summary>
+        // Значения VideoOutputTechnology, означающие «панель внутри корпуса»:
+        // LVDS, встроенный DisplayPort, встроенный UDI и собственно INTERNAL.
+        private static readonly int[] InternalTech =
+            { 6, 11, 13, unchecked((int)0x80000000) };
+
+        /// <summary>
+        /// Встроенная ли это панель. Отличить нужно от внешнего монитора, который тоже
+        /// не отвечает на DDC/CI, — телевизора или дешёвой панели: средства Windows
+        /// управляют только встроенной, где бы ни стоял указатель.
+        ///
+        /// Windows сама такого вопроса не отвечает, поэтому сводим два источника: WMI
+        /// говорит, каким проводом подключён каждый монитор, а EnumDisplayDevices даёт
+        /// у экрана путь устройства. Пути записаны по-разному — в одном разделители
+        /// «\», в другом «#», — поэтому сравниваем приведённые к одному виду.
+        /// </summary>
+        private static bool IsInternal(IntPtr screen)
+        {
+            try
+            {
+                string device = ScreenName(screen);            // \\.\DISPLAY1
+                if (String.IsNullOrEmpty(device) || device == "?") return false;
+
+                var dd = new Native.DISPLAY_DEVICE();
+                dd.cb = System.Runtime.InteropServices.Marshal.SizeOf(typeof(Native.DISPLAY_DEVICE));
+                if (!Native.EnumDisplayDevicesW(device, 0, ref dd, Native.EDD_GET_DEVICE_INTERFACE_NAME))
+                    return false;
+                string id = dd.DeviceID;                       // \\?\DISPLAY#LGD05C0#4&…#{guid}
+                if (String.IsNullOrEmpty(id)) return false;
+
+                foreach (string instance in InternalInstances())
+                {
+                    string key = instance.Replace('\\', '#');   // DISPLAY\LGD05C0\4&…_0
+                    int tail = key.LastIndexOf("_", StringComparison.Ordinal);
+                    if (tail > 0) key = key.Substring(0, tail);
+                    if (key.Length > 0 && id.IndexOf(key, StringComparison.OrdinalIgnoreCase) >= 0)
+                        return true;
+                }
+            }
+            catch (Exception e) { Diag.Log("яркость: не удалось выяснить, встроенный ли экран", e); }
+            return false;
+        }
+
+        private static List<string> InternalInstances()
+        {
+            var found = new List<string>();
+            try
+            {
+                using (var searcher = new System.Management.ManagementObjectSearcher(
+                           "root\\WMI", "SELECT * FROM WmiMonitorConnectionParams"))
+                using (var all = searcher.Get())
+                    foreach (System.Management.ManagementObject o in all)
+                        using (o)
+                        {
+                            object tech = o["VideoOutputTechnology"];
+                            object name = o["InstanceName"];
+                            if (tech == null || name == null) continue;
+                            int t = unchecked((int)Convert.ToInt64(tech));
+                            for (int i = 0; i < InternalTech.Length; i++)
+                                if (t == InternalTech[i]) { found.Add(Convert.ToString(name)); break; }
+                        }
+            }
+            catch (Exception e) { Diag.Log("яркость: не удалось перечислить подключения мониторов", e); }
+            return found;
+        }
+
         private static string ScreenName(IntPtr screen)
         {
             if (screen == IntPtr.Zero) return "?";
@@ -246,7 +316,7 @@ namespace MagicKeys
             {
                 _panels = found;
                 _owned = owned.ToArray();
-                if (found.Count == 0) _wmiOnly = ProbeWmi();
+
             }
         }
 
@@ -262,12 +332,6 @@ namespace MagicKeys
         }
 
         // ---------- встроенная панель ----------
-
-        private static bool ProbeWmi()
-        {
-            try { return ReadWmiLevel() >= 0; }
-            catch { return false; }
-        }
 
         private static int ReadWmiLevel()
         {

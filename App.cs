@@ -236,7 +236,7 @@ namespace MagicKeys
             // Сорванный перехват важнее всего остального: без него не работает ничего,
             // а подсказка «работает» отправила бы искать причину не там.
             string state = _engine != null && !String.IsNullOrEmpty(_engine.Failure)
-                ? "перехват не установлен"
+                ? "клавиши не переназначаются"
                 : (!_settings.Enabled
                     ? "переназначения выключены"
                     : (_settings.PauseWhenAppleAbsent && !Devices.AppleConnected

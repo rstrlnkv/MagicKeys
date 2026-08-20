@@ -63,7 +63,21 @@ namespace MagicKeys
             // и в Alt+Tab система возьмёт подходящий размер, а не растянет один.
             if (!Fluent.HasEmbeddedIcon()) Icon = Fluent.MakeWindowIcon();
             SnapsToDevicePixels = true;
-            IsVisibleChanged += delegate { if (!IsVisible) DetachSelfTest(); };
+            // Прячут окно — снимаем подписку, показывают — собираем страницу заново.
+            // Без второй половины страница проверки после закрытия и открытия оставалась
+            // на месте, но не отзывалась ни на одно нажатие.
+            IsVisibleChanged += delegate
+            {
+                if (IsVisible) { if (CurrentPage == "selftest") BuildPage(); }
+                else DetachSelfTest();
+            };
+            // Сворачивание IsVisible не гасит, а окно при этом с глаз ушло: историю
+            // нажатий копить в нём так же ни к чему.
+            StateChanged += delegate
+            {
+                if (WindowState == WindowState.Minimized) DetachSelfTest();
+                else if (CurrentPage == "selftest" && _selfTest == null) BuildPage();
+            };
             UseLayoutRounding = true;
 
             var root = new Grid();
@@ -171,7 +185,7 @@ namespace MagicKeys
 
             string failure = _engine == null ? null : _engine.Failure;
             if (!String.IsNullOrEmpty(failure))
-                _deviceLine.Text = "Перехват клавиатуры не работает: " + failure;
+                _deviceLine.Text = "Перехват клавиатуры не работает — переназначения не действуют.";
             else if (apple > 0)
                 _deviceLine.Text = "Magic Keyboard подключена. Клавиатур в системе: " + all.Count + ".";
             else
@@ -315,7 +329,8 @@ namespace MagicKeys
                     ? "С родным драйвером Apple настоящая клавиша Fn работает: замерено, что Fn+F1 " +
                       "даёт настоящий F1. Заменитель при этом не нужен — его можно оставить " +
                       "выключенным, а переключать режим ряда настоящей клавишей Fn.\n\n" +
-                      "Навигацию как в macOS драйвер тоже берёт на себя, так что и её здесь " +
+                      "Навигацию Fn+стрелки драйвер, по-видимому, берёт на себя тоже — проверьте " +
+                      "Fn+←, — так что и её здесь " +
                       "включать не обязательно."
                     : "Без драйвера Apple настоящая клавиша Fn до Windows не доходит: она " +
                       "обрабатывается внутри клавиатуры и не отправляет ни одного события. " +
@@ -388,7 +403,7 @@ namespace MagicKeys
             if (fm != null && fm.FunctionKeys > 12)
                 howMany += "У этой модели есть ряд F13–F" + fm.FunctionKeys + " над цифровым блоком. ";
             howMany += "Если нажать клавишу, которой в списке нет, она добавится сама — " +
-                       "программа следит за этим через сырой ввод, который, в отличие от перехвата, " +
+                       "программа следит за этим сама, " +
                        "знает устройство.";
 
             stack.Children.Add(Card("Действия",
@@ -415,11 +430,12 @@ namespace MagicKeys
                         _s.EjectKey, delegate(string id) { _s.EjectKey = id; Save(); });
 
                     string ejNote =
-                        "Плохая новость, и её лучше знать заранее: на Magic Keyboard по Bluetooth эта " +
+                        "На Magic Keyboard по Bluetooth эта " +
                         "клавиша до Windows не доходит вообще. Проверено — пять нажатий подряд не дали " +
                         "ни одного события ни по одному из путей: ни как клавиша, ни на медиастранице, " +
                         "ни на системной, ни в вендорном отчёте Apple.\n\n" +
-                        "Причина та же, что у Fn и медиаклавиш: клавиатура заводит в Windows всего две " +
+                        "Причина в самой клавиатуре, и драйвер здесь не выручает — проверяли и с ним: " +
+                        "она заводит в Windows всего две " +
                         "коллекции HID — клавиатуру и вендорную Apple, — а Eject живёт на медиастранице, " +
                         "которой у неё просто нет.\n\n" +
                         "Настройка ниже рассчитана на клавиатуры, которые Eject всё-таки присылают " +
@@ -641,7 +657,7 @@ namespace MagicKeys
 
                 var left = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 6, 16, 6) };
                 left.Children.Add(new TextBlock { Text = lang.Value, TextWrapping = TextWrapping.Wrap });
-                var code = new TextBlock { Text = "LANGID " + lang.Key.ToString("X4"), Margin = new Thickness(0, 2, 0, 0) };
+                var code = new TextBlock { Text = _s.DeveloperMode ? "LANGID " + lang.Key.ToString("X4") : "", Margin = new Thickness(0, 2, 0, 0) };
                 code.SetResourceReference(StyleProperty, "Caption");
                 left.Children.Add(code);
                 Grid.SetRow(left, row); Grid.SetColumn(left, 0);
@@ -740,7 +756,9 @@ namespace MagicKeys
 
             string failure = _engine == null ? null : _engine.Failure;
             if (!String.IsNullOrEmpty(failure))
-                stack.Children.Add(Card("Перехват клавиатуры не работает", null, Note(failure)));
+                stack.Children.Add(Card("Перехват клавиатуры не работает", null,
+                    Note(failure + "\n\nПока этого не случится, переназначения, сочетания macOS " +
+                         "и раскладки не работают.")));
 
             stack.Children.Add(Card("Работа программы", null,
                 Toggle("Переназначения включены", _s.Enabled,
@@ -1078,7 +1096,7 @@ namespace MagicKeys
             bool installed = AppleDriver.Installed;
 
             var status = new StackPanel();
-            status.Children.Add(KeyValue("Служба KeyMagic", installed ? "установлена" : "не установлена"));
+            status.Children.Add(KeyValue("Драйвер Apple", installed ? "установлен" : "не установлен"));
             if (installed)
             {
                 status.Children.Add(KeyValue("Состояние", AppleDriver.Active ? "включена" : "отключена"));
@@ -1248,12 +1266,19 @@ namespace MagicKeys
             {
                 var wipe = new Button
                 {
-                    Content = "Убрать скачанное (" + (cached / 1024 / 1024) + " МБ)",
+                    Content = "Убрать скачанное и распакованное (" + (cached / 1024 / 1024) + " МБ)",
                     Margin = new Thickness(0, 0, 8, 8)
                 };
                 wipe.SetResourceReference(StyleProperty, "Btn");
+                wipe.IsEnabled = _setupThread == null || !_setupThread.IsAlive;
                 wipe.Click += delegate
                 {
+                    if (_setupThread != null && _setupThread.IsAlive)
+                    {
+                        SetupSay("Сейчас идёт работа — дождитесь конца, иначе распаковка " +
+                                 "останется без 7-Zip посреди дела.");
+                        return;
+                    }
                     string err;
                     bool ok = AppleDriverSetup.ClearCache(out err);
                     SetupSay(ok
@@ -1296,7 +1321,7 @@ namespace MagicKeys
             stack.Children.Add(Card("Добыть и установить",
                 "Файлы Apple забираются с её же серверов и никуда не распространяются.",
                 buttons, _setupLog,
-                Note("Пакет весит около 700 МБ, а при распаковке нужно ещё пара гигабайт на диске. " +
+                Note("Пакет весит около 700 МБ, а при распаковке нужна ещё пара гигабайт. " +
                      "Качается он в " + AppleDriverSetup.CacheFolder + " и докачивается, если оборвётся. " +
                      "Установку драйвера выполняет pnputil — Windows спросит права администратора.")));
 
@@ -1407,7 +1432,11 @@ namespace MagicKeys
                     if (!String.IsNullOrEmpty(output)) tail += "\n\n" + output.Trim();
                     SetupSay(tail);
 
-                    Dispatcher.BeginInvoke((Action)delegate { if (_nav.SelectedIndex == 5) BuildPage(); });
+                    // По ключу, а не по номеру: номер остался от прежней нумерации
+                    // и после появления режима разработчика указывал уже на другую
+                    // страницу — так что после установки драйвера она не обновлялась
+                    // никогда, и человек видел прежнее «не установлен».
+                    Dispatcher.BeginInvoke((Action)delegate { if (CurrentPage == "driver") BuildPage(); });
                 }
                 catch (Exception e)
                 {
@@ -1449,7 +1478,7 @@ namespace MagicKeys
                 Bullet("Переставляет модификаторы, чтобы ⌘ работала как Ctrl (или наоборот — чтобы " +
                        "Ctrl, Win и Alt встали на привычные для Windows места)."),
                 Bullet("Исправляет перестановку двух клавиш ISO-раскладки Apple."),
-                Bullet("Управляет яркостью внешних мониторов по DDC/CI — Windows такой клавиши не имеет.")));
+                Bullet("Управляет яркостью внешних мониторов — сама Windows этого не умеет.")));
 
             stack.Children.Add(Card("Чего она не делает", null,
                 Bullet("Не видит клавишу Fn сама: Magic Keyboard её в Windows не отправляет. " +
@@ -1468,7 +1497,7 @@ namespace MagicKeys
                         delegate(bool v) { _s.DeveloperMode = v; Save(); FillNav(); BuildPage(); }),
                     Note("Открывает «Устройства» и «Проверку клавиш», а на остальных страницах — " +
                          "исполнение клавиатуры, японские клавиши, третий уровень раскладки, " +
-                         "подмену всех клавиш и техническую часть страницы драйвера.\n\n" +
+                         "подмену всех клавиш и номера языков ввода.\n\n" +
                          "Журнал сюда не относится: он пишется только при запуске с ключом --log.\n\n" +
                          "Включается пятью щелчками по карточке с названием программы или ключом " +
                          "--dev при запуске.")));

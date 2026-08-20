@@ -41,7 +41,17 @@ namespace MagicKeys
         // на клавишу назначено. Запоминается, потому что к отпусканию и заменитель
         // Fn, и настройки успевают стать другими.
         private readonly bool[] _fkeyMedia = new bool[Settings.MaxFKeys];
+        private readonly bool[] _fkeyYield = new bool[Settings.MaxFKeys];
         private readonly string[] _fkeyAction = new string[Settings.MaxFKeys];
+
+        // Какие физические клавиши прямо сейчас выдают в Windows control и Win. Не флаг,
+        // а множество: на control могут быть назначены сразу две клавиши, и отпускание
+        // одной не значит, что control отпущен. Нужно раскладке — подменять символ, пока
+        // зажат control, нельзя, иначе Ctrl+C перестанет копировать. По физической
+        // клавише этого не видно: у пришедших с мака control обычно висит на Caps Lock.
+        private readonly HashSet<ModKey> _ctrlSources = new HashSet<ModKey>();
+        private readonly HashSet<ModKey> _winSources = new HashSet<ModKey>();
+        private bool _capsHeld;
         private readonly Dictionary<ModKey, int> _injected = new Dictionary<ModKey, int>();
         private readonly HashSet<uint> _swallowed = new HashSet<uint>();
         private readonly HashSet<int> _navActive = new HashSet<int>();
@@ -144,8 +154,17 @@ namespace MagicKeys
         public void Stop()
         {
             if (_watch != null) { _watch.Dispose(); _watch = null; }
-            if (_threadId != 0) Native.PostThreadMessageW(_threadId, Native.WM_QUIT, IntPtr.Zero, IntPtr.Zero);
+
+            Thread t = _thread;
             _thread = null;
+            if (_threadId != 0) Native.PostThreadMessageW(_threadId, Native.WM_QUIT, IntPtr.Zero, IntPtr.Zero);
+
+            // Дожидаемся: поток хука отпускает в своём finally всё, что мы держали за
+            // человека, а он фоновый — процесс волен закончиться раньше, чем тот
+            // проснётся. Синтетический control от переназначенной Caps Lock, оставшийся
+            // после выхода, снять уже нечем. Секунды хватает с большим запасом.
+            if (t != null) { try { t.Join(1000); } catch { } }
+            _threadId = 0;
         }
 
         // WM_APP + 1 и + 2: свои сообщения потоку хука, чужим кодом не заняты.
@@ -176,9 +195,13 @@ namespace MagicKeys
                 li.cbSize = (uint)System.Runtime.InteropServices.Marshal.SizeOf(typeof(Native.LASTINPUTINFO));
                 if (!Native.GetLastInputInfo(ref li)) return;
 
+                // Сравнение знаковое нарочно. _lastHookTick мы ставим ПОСЛЕ того, как
+                // ядро проставило dwTime, поэтому он регулярно оказывается на тик больше,
+                // и беззнаковая разность уходила в переполнение — исправный перехват
+                // переставлялся примерно каждые полминуты обычной работы.
                 uint now = Native.GetTickCount();
-                if (unchecked(li.dwTime - _lastHookTick) < 5000) return;
-                if (unchecked(now - _lastCheckTick) < 30000) return;
+                if (unchecked((int)(li.dwTime - _lastHookTick)) < 5000) return;
+                if (unchecked((int)(now - _lastCheckTick)) < 30000) return;
                 _lastCheckTick = now;
 
                 if (_hook != IntPtr.Zero) Native.UnhookWindowsHookEx(_hook);
@@ -195,6 +218,12 @@ namespace MagicKeys
                 {
                     Failure = null;
                     _lastHookTick = Native.GetTickCount();
+
+                    // Пока перехвата не было, отпускания шли мимо нас, и всё зажатое
+                    // осталось зажатым. Воскреснуть с залипшим модификатором — та самая
+                    // неисправность, из-за которой клавиатура переставала слушаться.
+                    Diag.Log("перехват поставлен заново");
+                    ReleaseEverything();
                 }
             }
             catch (Exception e) { Diag.Log("проверка перехвата: сбой", e); }
@@ -213,15 +242,22 @@ namespace MagicKeys
             try
             {
                 _threadId = Native.GetCurrentThreadId();
+                // Начальные значения — иначе первая же проверка через две секунды
+                // сняла бы и поставила заново совершенно исправный перехват.
+                _lastHookTick = Native.GetTickCount();
+                _lastCheckTick = _lastHookTick;
                 _proc = HookProc;
                 _hook = Native.SetWindowsHookExW(Native.WH_KEYBOARD_LL, _proc, Native.GetModuleHandleW(null), 0);
                 if (_hook == IntPtr.Zero)
                 {
-                    Failure = "Windows не дала установить перехват клавиатуры — без него не работает " +
-                              "ни одно переназначение. Обычно это значит, что перехват запрещён " +
-                              "политикой безопасности или его уже занял другой перехватчик. " +
-                              "Попробуйте перезапустить программу. Код отказа Windows: " +
-                              System.Runtime.InteropServices.Marshal.GetLastWin32Error() + ".";
+                    // Причину не называем: низкоуровневые перехваты выстраиваются
+                    // в цепочку, «занять» их нельзя, а прочие догадки не проверялись.
+                    // Придуманное правдоподобное объяснение хуже отсутствия объяснения:
+                    // человек пойдёт чинить не то.
+                    Diag.Log("перехват не установлен, ошибка " +
+                             System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+                    Failure = "Windows не дала установить перехват клавиатуры — без него не " +
+                              "работает ни одно переназначение. Попробуйте перезапустить программу.";
                     return;
                 }
 
@@ -243,7 +279,10 @@ namespace MagicKeys
             catch (Exception e)
             {
                 // Поток хука не имеет права уронить программу целиком.
-                Failure = e.Message;
+                // Наружу — что случилось; подробности исключения в журнал, человеку
+                // от HRESULT пользы нет.
+                Diag.Log("поток перехвата прервался", e);
+                Failure = "Перехват клавиатуры прервался из-за сбоя — перезапустите программу.";
             }
             finally
             {
@@ -307,21 +346,29 @@ namespace MagicKeys
             ModKey phys;
             if (TryPhysical(vk, ext, out phys))
             {
-                if (!phantomCtrl) TrackModifier(phys, down);
-                // Считаем только настоящий Caps Lock. Если он переназначен — а у тех,
-                // кто пришёл с мака, это обычно control или «выключить клавишу», —
-                // Windows свой индикатор не трогает, и перевёрнутый флаг заставил бы
-                // раскладку Apple печатать заглавными при погашенном Caps Lock.
-                if (phys == ModKey.CapsLock && down && TargetFor(s, phys) == ModKey.CapsLock)
-                    _capsOn = !_capsOn;
+                if (!phantomCtrl) TrackModifier(s, phys, down);
+                // Считаем по тому, что реально ушло в Windows, а не по тому, что нажали.
+                // Caps Lock мог быть переназначен — у тех, кто пришёл с мака, на нём
+                // обычно control, — и тогда индикатор не переключается, флаг трогать
+                // нельзя. Но бывает и наоборот: на Caps Lock назначили другую клавишу,
+                // индикатор переключается, а нажатия самого Caps Lock не было.
+                // И только первое нажатие: автоповтор Windows переключателем не считает,
+                // а мы перевернули бы флаг столько раз, сколько пришло повторов.
+                bool toCaps = TargetFor(s, phys) == ModKey.CapsLock;
+                if (toCaps && down && !_capsHeld) _capsOn = !_capsOn;
+                if (toCaps) _capsHeld = down;
                 return HandleModifier(s, phys, down);
             }
 
             // Навигация как в macOS: Fn+стрелки и Fn+Backspace.
-            // Ветку выбираем на нажатии, а на отпускании идём по запомненной. Заменитель
-            // Fn отпускают раньше самой клавиши сплошь и рядом; проверяй мы _fnHeld ещё
-            // и на отпускании, синтетическая Home осталась бы нажатой навсегда.
-            if ((down && _fnHeld && s.FnNavigation) || (!down && _navActive.Contains(vk)))
+            //
+            // Ветку выбираем на первом нажатии, а дальше — и повторы, и отпускание — идём
+            // по запомненной. Заменитель Fn отпускают раньше самой клавиши сплошь и рядом.
+            // Смотри мы _fnHeld на отпускании, синтетическая Home осталась бы нажатой
+            // навсегда; а смотри только на нём же при повторах, повторные ← уходили бы
+            // в систему настоящими, тогда как отпускание мы бы съели — и уже настоящая
+            // стрелка осталась бы нажатой.
+            if (_navActive.Contains(vk) || (down && _fnHeld && s.FnNavigation))
             {
                 int target = FnNavTarget(vk);
                 if (target != 0) return HandleNav(vk, target, down);
@@ -465,7 +512,7 @@ namespace MagicKeys
             // Отпускание всё равно снимаем с учёта: иначе съеденный скан-код остаётся
             // в списке до следующего сброса, и приложение однажды получит отпускание
             // клавиши, нажатия которой не видело.
-            if (CtrlDown || _winDown)
+            if (_ctrlSources.Count > 0 || _winSources.Count > 0)
             {
                 if (!down && _swallowed.Remove(k.scanCode)) return 1;
                 return -1;
@@ -584,8 +631,16 @@ namespace MagicKeys
         //  Модификаторы, F-клавиши, навигация
         // ------------------------------------------------------------------
 
-        private void TrackModifier(ModKey phys, bool down)
+        private void TrackModifier(Settings s, ModKey phys, bool down)
         {
+            // Что видит Windows. Add и Remove при автоповторе безобидны: множество.
+            ModKey target = TargetFor(s, phys);
+            if (down && (target == ModKey.LCtrl || target == ModKey.RCtrl)) _ctrlSources.Add(phys);
+            else _ctrlSources.Remove(phys);
+            if (down && (target == ModKey.LWin || target == ModKey.RWin)) _winSources.Add(phys);
+            else _winSources.Remove(phys);
+
+            // А это — что нажал человек: по нему опознаются сочетания и заменитель Fn.
             switch (phys)
             {
                 case ModKey.LShift: _shiftLeft = down; break;
@@ -695,15 +750,43 @@ namespace MagicKeys
 
         private bool HandleFunctionKey(Settings s, int index, int vk, bool down)
         {
-            // То же и здесь. Иначе достаточно отпустить заменитель Fn раньше F-клавиши,
-            // чтобы отпускание ушло в другую ветку: настоящая F4 осталась бы нажатой,
-            // заменитель — не снятым, и следующее ⌥+F4 дало бы Alt+F4, то есть закрытие
-            // окна вместо F4.
-            bool media;
-            if (down) { media = s.MediaFirst ^ _fnHeld; _fkeyMedia[index] = media; }
-            else media = _fkeyMedia[index];
+            // Всё решается на ПЕРВОМ нажатии и держится до отпускания: и ветка (медиа
+            // или настоящая F-клавиша), и решение уступить ряд драйверу, и назначенное
+            // действие. Три вещи, которые иначе успевают смениться под зажатой клавишей:
+            // заменитель Fn отпускают раньше её сплошь и рядом; автоповтор приходит теми
+            // же нажатиями, а _fnHeld к тому времени уже другой; настройки меняются из
+            // окна в любой момент. Любая из трёх давала одно и то же: отпускание уходило
+            // в другую ветку, синтетическая F4 оставалась нажатой навсегда, а следующее
+            // ⌥+F4 давало Alt+F4 — закрытие окна вместо F4.
+            if (down && !_fkeyDown[index])
+            {
+                _fkeyMedia[index] = s.MediaFirst ^ _fnHeld;
+                _fkeyAction[index] = s.FKey(index);
 
-            if (!media)
+                // Уступаем ряд родному драйверу — но с двумя оговорками.
+                //
+                // Первая: драйвер занимается только F1–F12, потому что медиазначки Apple
+                // напечатаны именно там. F13–F19 он не трогает, и уступать их — значит
+                // молча их обесточить.
+                //
+                // Вторая: уступаем, только пока видим, что драйвер работает. Признак не
+                // в реестре, а в наблюдении: если драйвер преобразует ряд, F-клавиши до
+                // нас не доходят вовсе (проверено — приходит сразу медиакод), а значит
+                // хоть один медиакод мы уже видели. Не видели ни одного, а F-клавиши
+                // идут — драйвер до этой клавиатуры не добрался (так бывает по Bluetooth),
+                // и уступать некому: ряд просто умрёт.
+                _fkeyYield[index] = index < 12 && s.YieldToAppleDriver
+                                    && AppleDriver.TakesFunctionRow && KeyWatch.MediaSeen;
+            }
+            else if (!_fkeyDown[index])
+            {
+                // Отпускание клавиши, которую мы не брали, — не наше дело.
+                return false;
+            }
+
+            if (_fkeyYield[index]) return false;
+
+            if (!_fkeyMedia[index])
             {
                 // Нужна настоящая F-клавиша. Если её вызвали заменителем Fn, снимаем
                 // с него модификатор, иначе получится Alt+F4 вместо F4.
@@ -715,7 +798,6 @@ namespace MagicKeys
                 }
                 else
                 {
-                    if (!_fkeyDown[index]) return false;
                     Input.Key(vk, false);
                     _fkeyDown[index] = false;
                     SubstituteRestore();
@@ -723,33 +805,13 @@ namespace MagicKeys
                 return true;
             }
 
-            // Уступаем ряд родному драйверу — но с двумя оговорками.
-            //
-            // Первая: драйвер занимается только F1–F12, потому что медиазначки Apple
-            // напечатаны именно там. F13–F19 он не трогает, и уступать их — значит
-            // молча их обесточить.
-            //
-            // Вторая: уступаем, только пока видим, что драйвер работает. Признак не
-            // в реестре, а в наблюдении: если драйвер преобразует ряд, F-клавиши до
-            // нас не доходят вовсе (проверено — приходит сразу медиакод), а значит
-            // хоть один медиакод мы уже видели. Не видели ни одного, а F-клавиши
-            // идут — драйвер до этой клавиатуры не добрался (так бывает по Bluetooth),
-            // и уступать некому: ряд просто умрёт.
-            if (index < 12 && s.YieldToAppleDriver && AppleDriver.TakesFunctionRow && KeyWatch.MediaSeen)
-                return false;
-
-            // Действие берём то, что было назначено на нажатии: настройки меняются
-            // из окна в любой момент, и с зажатой клавишей отпускалось бы уже другое —
-            // а нажатое так и осталось бы нажатым.
-            string id = down ? s.FKey(index) : (_fkeyAction[index] != null ? _fkeyAction[index] : s.FKey(index));
-            KeyAction a = Actions.Get(id);
+            KeyAction a = Actions.Get(_fkeyAction[index]);
             if (a.Kind == ActionKind.PassThrough) return false;
 
             if (down)
             {
                 bool repeat = _fkeyDown[index];
                 _fkeyDown[index] = true;
-                _fkeyAction[index] = id;
                 Actions.Begin(a, repeat, s.BrightnessStep);
             }
             else
@@ -878,11 +940,33 @@ namespace MagicKeys
                 _cmdHeld = false;
                 _deadPrefix = null;
                 _swallowed.Clear();
+                _ctrlSources.Clear();
+                _winSources.Clear();
+                _capsHeld = false;
+
+                // Отпускаем то, что держим ЗА человека, а не только модификаторы.
+                // Синтетическая Home от Fn+← — такая же зажатая клавиша, и снять её
+                // после нас нечем: клавиши Home на этой клавиатуре попросту нет.
+                foreach (int src in new List<int>(_navActive))
+                {
+                    int target = FnNavTarget(src);
+                    if (target != 0) Input.Key(target, false);
+                }
                 _navActive.Clear();
+
+                // И начатые действия: зажатая медиаклавиша сама не отпустится.
+                // У настоящей F-клавиши синтетическая совпадает с физической, поэтому
+                // её отпускание доедет само — там довольно очистки.
                 for (int i = 0; i < _fkeyDown.Length; i++)
                 {
+                    if (_fkeyDown[i] && _fkeyMedia[i] && !_fkeyYield[i] && _fkeyAction[i] != null)
+                    {
+                        try { Actions.End(Actions.Get(_fkeyAction[i])); }
+                        catch (Exception e) { Diag.Log("не удалось отпустить действие", e); }
+                    }
                     _fkeyDown[i] = false;
                     _fkeyMedia[i] = false;
+                    _fkeyYield[i] = false;
                     _fkeyAction[i] = null;
                 }
 

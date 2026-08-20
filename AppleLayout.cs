@@ -180,10 +180,20 @@ namespace MagicKeys
         /// <summary>Загрузить заранее, чтобы это не случилось внутри обработчика хука.</summary>
         public static void Warm() { EnsureLoaded(); }
 
+        private static readonly object LoadLock = new object();
+
         private static void EnsureLoaded()
         {
             if (_loaded) return;
-            Reload();
+            // Двойная проверка. Прогрев идёт в своём потоке, а нажатие может прийти
+            // в те же миллисекунды — и поток хука начал бы второй полный разбор
+            // тридцати трёх файлов прямо в обработчике, то есть ровно то, от чего
+            // прогрев и заводили.
+            lock (LoadLock)
+            {
+                if (_loaded) return;
+                Reload();
+            }
         }
 
         public static void Reload()

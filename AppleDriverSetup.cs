@@ -107,15 +107,21 @@ namespace MagicKeys
                 // Перед msiexec проверяем подпись: административная установка исполняет
                 // последовательность действий из самого пакета, то есть чужой MSI здесь
                 // не данные, а программа.
+                // Мало убедиться, что подпись действительна: доверенным считается и корень,
+                // добавленный в хранилище текущего пользователя, а туда пишут без прав
+                // администратора. То есть тот самый противник, ради которого проверка и
+                // делается, подписал бы подделку сам. Поэтому сверяем и подписанта.
                 string signer;
-                if (!SignatureValid(msi, out signer))
+                if (!SignatureValid(msi, out signer) || !SignedBy7Zip(signer))
                 {
-                    error = "установщик 7-Zip не прошёл проверку подписи — запускать его нельзя";
+                    error = signer == null
+                        ? "установщик 7-Zip не подписан — запускать его нельзя"
+                        : "установщик 7-Zip подписан не тем, кем должен (" + signer + ") — запускать его нельзя";
                     try { File.Delete(msi); } catch { }
-                    try { File.Delete(msi + ".state"); } catch { }
+                    try { File.Delete(StatePath(msi)); } catch { }
                     return null;
                 }
-                report(0.85, "подпись установщика в порядке" + (signer == null ? "" : ": " + signer));
+                report(0.85, "подпись установщика в порядке: " + signer);
 
                 string target = Path.Combine(ToolsFolder, "7zip");
                 report(0.9, "разворачиваю 7-Zip…");
@@ -126,10 +132,16 @@ namespace MagicKeys
                 using (Process p = Process.Start(psi))
                 {
                     p.WaitForExit(180000);
-                    if (p.ExitCode != 0) { error = "msiexec вернул " + p.ExitCode; return null; }
+                    if (p.ExitCode != 0)
+                    {
+                        Diag.Log("7-Zip: msiexec вернул " + p.ExitCode);
+                        error = "не удалось развернуть 7-Zip из установщика";
+                        return null;
+                    }
                 }
 
                 try { File.Delete(msi); } catch { }
+                try { File.Delete(StatePath(msi)); } catch { }
                 string found = SevenZip();
                 if (found == null) error = "7-Zip развернулся, но 7z.exe не нашёлся";
                 return found;
@@ -175,13 +187,6 @@ namespace MagicKeys
 
                 Guid action = Native.WINTRUST_ACTION_GENERIC_VERIFY_V2;
                 int rc = Native.WinVerifyTrust(IntPtr.Zero, ref action, pData);
-
-                // Закрыть состояние обязательно, иначе wintrust держит его до выхода.
-                var close = (Native.WINTRUST_DATA)Marshal.PtrToStructure(pData, typeof(Native.WINTRUST_DATA));
-                close.dwStateAction = Native.WTD_STATEACTION_CLOSE;
-                Marshal.StructureToPtr(close, pData, false);
-                Native.WinVerifyTrust(IntPtr.Zero, ref action, pData);
-
                 if (rc != 0) return false;
 
                 try
@@ -197,9 +202,43 @@ namespace MagicKeys
             catch (Exception e) { Diag.Log("проверка подписи: сбой", e); return false; }
             finally
             {
-                if (pData != IntPtr.Zero) Marshal.FreeHGlobal(pData);
-                if (pFile != IntPtr.Zero) Marshal.FreeHGlobal(pFile);
+                // Состояние wintrust закрываем здесь, а не в общем ходу: исключение между
+                // проверкой и закрытием оставило бы его висеть до конца работы программы.
+                if (pData != IntPtr.Zero)
+                {
+                    try
+                    {
+                        var close = (Native.WINTRUST_DATA)Marshal.PtrToStructure(pData, typeof(Native.WINTRUST_DATA));
+                        if (close.dwStateAction == Native.WTD_STATEACTION_VERIFY)
+                        {
+                            close.dwStateAction = Native.WTD_STATEACTION_CLOSE;
+                            Marshal.StructureToPtr(close, pData, false);
+                            Guid a = Native.WINTRUST_ACTION_GENERIC_VERIFY_V2;
+                            Native.WinVerifyTrust(IntPtr.Zero, ref a, pData);
+                        }
+                    }
+                    catch { }
+                    Marshal.FreeHGlobal(pData);
+                }
+                if (pFile != IntPtr.Zero)
+                {
+                    // FreeHGlobal освобождает блок структуры, но не буфер, который
+                    // маршалинг выделил под строку пути. Без DestroyStructure он течёт.
+                    try { Marshal.DestroyStructure(pFile, typeof(Native.WINTRUST_FILE_INFO)); } catch { }
+                    Marshal.FreeHGlobal(pFile);
+                }
             }
+        }
+
+        // Кем подписан официальный установщик 7-Zip. Проверка не строгая по регистру
+        // и по написанию организации: у Igor Pavlov сертификат менялся, менялась и
+        // форма записи, а вот имя оставалось.
+        private const string SevenZipSigner = "Igor Pavlov";
+
+        private static bool SignedBy7Zip(string signer)
+        {
+            return !String.IsNullOrEmpty(signer)
+                && signer.IndexOf(SevenZipSigner, StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         /// <summary>Сколько места занято скачанным и распакованным.</summary>
@@ -453,7 +492,19 @@ namespace MagicKeys
 
                 using (var resp = (HttpWebResponse)req.GetResponse())
                 using (Stream src = resp.GetResponseStream())
-                using (var dst = new FileStream(target, have > 0 ? FileMode.Append : FileMode.Create,
+                {
+                    // Докачивать можно, только если сервер на диапазон согласился. Он
+                    // вправе прислать файл целиком (ответ 200), и тогда дописывание
+                    // к обрывку дало бы мусор — который мы тут же заверили бы собственной
+                    // суммой, то есть узаконили порчу, от которой сумма и заводилась.
+                    bool append = have > 0 && resp.StatusCode == HttpStatusCode.PartialContent;
+                    if (have > 0 && !append)
+                    {
+                        report(0, "сервер прислал файл целиком — качаю заново");
+                        have = 0;
+                    }
+
+                using (var dst = new FileStream(target, append ? FileMode.Append : FileMode.Create,
                                                 FileAccess.Write, FileShare.None, 1 << 16))
                 {
                     if (total <= 0) total = have + resp.ContentLength;
@@ -475,9 +526,11 @@ namespace MagicKeys
                         }
                     }
                 }
+                }
 
                 // Сумму записываем только теперь, когда файл целиком наш.
-                try { WriteState(target, url, new FileInfo(target).Length, Sha256Of(target, report)); }
+                report(1, "проверяю скачанное…");
+                try { WriteState(target, url, new FileInfo(target).Length, Sha256Of(target, null)); }
                 catch { }
                 return true;
             }
@@ -554,7 +607,12 @@ namespace MagicKeys
                     string so = p.StandardOutput.ReadToEnd();
                     string se = p.StandardError.ReadToEnd();
                     p.WaitForExit();
-                    if (p.ExitCode > 1) { error = "7-Zip вернул " + p.ExitCode + ": " + se + so; return false; }
+                    if (p.ExitCode > 1)
+                    {
+                        Diag.Log("7-Zip вернул " + p.ExitCode + ": " + se + so);
+                        error = "7-Zip не смог распаковать пакет";
+                        return false;
+                    }
                     return true;
                 }
             }
@@ -650,7 +708,12 @@ namespace MagicKeys
             catch { return null; }
         }
 
-        /// <summary>Точка повторного разбора: символьная или жёсткая ссылка, соединение.</summary>
+        /// <summary>
+        /// Точка повторного разбора: символьная ссылка или соединение. Жёсткие ссылки
+        /// сюда не попадают — у них такого признака нет и отличить их от обычного файла
+        /// этим способом нельзя. Для нашей задачи довольно: перенаправить запись в чужой
+        /// каталог можно как раз точкой повторного разбора.
+        /// </summary>
         private static bool IsLink(string path)
         {
             try { return (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0; }

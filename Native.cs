@@ -527,10 +527,39 @@ namespace MagicKeys
         [DllImport("kernel32.dll")]
         public static extern uint GetTickCount();
 
-        /// <summary>Точки на дюйм у монитора. В отличие от WPF, работает и без окна.</summary>
-        [DllImport("shcore.dll")]
-        public static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
-        public const int MDT_EFFECTIVE_DPI = 0;
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        public struct DISPLAY_DEVICE
+        {
+            public int cb;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string DeviceName;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceString;
+            public uint StateFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceID;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string DeviceKey;
+        }
+
+        public const uint EDD_GET_DEVICE_INTERFACE_NAME = 0x00000001;
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern bool EnumDisplayDevicesW(string device, uint num, ref DISPLAY_DEVICE info, uint flags);
+
+        [DllImport("user32.dll")] private static extern IntPtr GetDC(IntPtr hwnd);
+        [DllImport("user32.dll")] private static extern int ReleaseDC(IntPtr hwnd, IntPtr dc);
+        [DllImport("gdi32.dll")] private static extern int GetDeviceCaps(IntPtr dc, int index);
+        private const int LOGPIXELSX = 88;
+
+        /// <summary>
+        /// Системный масштаб в точках на дюйм. Именно им живёт WPF в этой программе:
+        /// манифеста с осведомлённостью о масштабе каждого монитора у неё нет, поэтому
+        /// спрашивать масштаб отдельного монитора было бы неверно.
+        /// </summary>
+        public static uint SystemDpi()
+        {
+            IntPtr dc = GetDC(IntPtr.Zero);
+            if (dc == IntPtr.Zero) return 0;
+            try { return (uint)GetDeviceCaps(dc, LOGPIXELSX); }
+            finally { ReleaseDC(IntPtr.Zero, dc); }
+        }
 
         // ---- подпись Authenticode ----
         public static readonly Guid WINTRUST_ACTION_GENERIC_VERIFY_V2 =

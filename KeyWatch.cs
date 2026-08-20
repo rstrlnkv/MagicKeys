@@ -219,11 +219,7 @@ namespace MagicKeys
             finally { Marshal.FreeHGlobal(buf); }
         }
 
-        /// <summary>
-        /// Отчёт медиастраницы. Здесь ищем ровно одно: usage 0xB8 — клавишу ⏏.
-        /// У Magic Keyboard такой коллекции нет вовсе, так что для неё сюда не попадают;
-        /// у алюминиевых моделей с USB — должны.
-        /// </summary>
+        /// <summary>Забыть устройство: его дескриптор Windows выдаст заново другому.</summary>
         private static void Drop(IntPtr device)
         {
             lock (Sync)
@@ -238,15 +234,38 @@ namespace MagicKeys
             }
         }
 
-        // Под замком целиком. Описание отчётов освобождается из другого потока — при
-        // отключении устройства и по кнопке «Начать заново», — а разбор без замка ушёл бы
-        // по уже освобождённой памяти внутри чужого кода HID: падение без объяснений.
+        /// <summary>
+        /// Отчёт медиастраницы. Здесь ищем ровно одно: usage 0xB8 — клавишу ⏏.
+        /// У Magic Keyboard такой коллекции нет вовсе, так что для неё сюда не попадают;
+        /// у алюминиевых моделей с USB — должны.
+        ///
+        /// Разбор идёт под замком: описание отчётов освобождается из другого потока — при
+        /// отключении устройства и по кнопке «Начать заново», — и без замка разбор ушёл бы
+        /// по уже освобождённой памяти внутри чужого кода HID, то есть падение без
+        /// объяснений. А вот подписчиков зовём, уже отпустив замок: держать под своим
+        /// замком чужой код значит полагаться на его свойства, а не на свои.
+        /// </summary>
         private static void HandleHid(IntPtr device, IntPtr buf, int headerSize)
         {
-            lock (Sync) HandleHidLocked(device, buf, headerSize);
+            var seen = new List<int>();
+            var isNew = new List<bool>();
+            lock (Sync) CollectHid(device, buf, headerSize, seen, isNew);
+
+            for (int i = 0; i < seen.Count; i++)
+            {
+                int usage = seen[i];
+                if (isNew[i]) Diag.Log("замечен медиакод " + usage.ToString("X2"));
+                Report(new KeyEvent { Media = true, Code = usage, Fresh = isNew[i] });
+
+                if (usage != Native.UsageEject) continue;
+                if (!_ejectSeen) { _ejectSeen = true; Diag.Log("замечена клавиша ⏏"); }
+                Action h = EjectPressed;
+                if (h != null) h();
+            }
         }
 
-        private static void HandleHidLocked(IntPtr device, IntPtr buf, int headerSize)
+        private static void CollectHid(IntPtr device, IntPtr buf, int headerSize,
+                                       List<int> seen, List<bool> isNew)
         {
             IntPtr preparsed = Preparsed(device);
             if (preparsed == IntPtr.Zero) return;
@@ -271,17 +290,9 @@ namespace MagicKeys
                     int usage = usages[u];
                     if (usage == 0) continue;   // отпускание: пустой список кодов
 
-                    bool fresh;
-                    lock (Sync) fresh = SeenUsages.Add(usage);
-                    if (fresh) Diag.Log("замечен медиакод " + usage.ToString("X2"));
+                    seen.Add(usage);
+                    isNew.Add(SeenUsages.Add(usage));
                     _mediaSeen = true;
-
-                    Report(new KeyEvent { Media = true, Code = usage, Fresh = fresh });
-
-                    if (usage != Native.UsageEject) continue;
-                    if (!_ejectSeen) { _ejectSeen = true; Diag.Log("замечена клавиша ⏏"); }
-                    Action h = EjectPressed;
-                    if (h != null) h();
                 }
             }
         }

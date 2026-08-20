@@ -268,12 +268,31 @@ namespace MagicKeys
                 Directory.CreateDirectory(Folder);
                 string tmp = FilePath + ".tmp";
                 using (FileStream fs = File.Create(tmp))
+                {
                     new XmlSerializer(typeof(Settings)).Serialize(fs, this);
+                    // Сбрасываем на диск до подмены: иначе от пропажи питания Replace
+                    // не спасает — имя уже новое, а содержимого ещё нет.
+                    fs.Flush(true);
+                }
+
                 // Replace вместо «удалить и переименовать»: между теми двумя строками
-                // настроек не существовало ни под одним именем, и падение или пропажа
-                // питания ровно там стирали их целиком — человек получал умолчания.
-                if (File.Exists(FilePath)) File.Replace(tmp, FilePath, null);
-                else File.Move(tmp, FilePath);
+                // настроек не существовало ни под одним именем, и падение ровно там
+                // стирало их целиком — человек получал умолчания.
+                if (!File.Exists(FilePath)) File.Move(tmp, FilePath);
+                else
+                {
+                    try { File.Replace(tmp, FilePath, null); }
+                    catch (Exception e)
+                    {
+                        // ReplaceFile поддерживают не все файловые системы, а %AppData%
+                        // политикой могут увести на сетевой ресурс. Отступаем на старый
+                        // способ: он хуже, но молча перестать сохранять настройки —
+                        // хуже во много раз.
+                        Diag.Log("настройки: подмена файла не удалась, сохраняю по-старому", e);
+                        File.Delete(FilePath);
+                        File.Move(tmp, FilePath);
+                    }
+                }
             }
             catch { }
         }

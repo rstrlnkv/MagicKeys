@@ -291,7 +291,7 @@ namespace MagicKeys
             if (vk >= 0x30 && vk <= 0x39) return true;   // 0-9
             if (vk >= 0x41 && vk <= 0x5A) return true;   // A-Z
             if (vk >= 0xBA && vk <= 0xC0) return true;   // ; = , - . / `
-            if (vk >= 0xDB && vk <= 0xDF) return true;   // [ \ ] ковычка
+            if (vk >= 0xDB && vk <= 0xDF) return true;   // [ \ ] кавычка
             return vk == 0xE2;                           // клавиша ISO между Shift и Z
         }
 

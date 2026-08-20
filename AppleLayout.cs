@@ -14,7 +14,6 @@ namespace MagicKeys
     /// <summary>Один физический клавишный «столбик»: что он даёт на четырёх уровнях.</summary>
     internal sealed class LayoutKey
     {
-        public int Scan;
         public string Base, Shift, Opt, OptShift;
         public bool BaseDead, ShiftDead, OptDead, OptShiftDead;
 
@@ -97,7 +96,6 @@ namespace MagicKeys
                     if (!int.TryParse(e.GetAttribute("scan"), NumberStyles.HexNumber,
                                       CultureInfo.InvariantCulture, out scan)) continue;
                     var k = new LayoutKey();
-                    k.Scan = scan;
                     k.Base = Val(e, "base");
                     k.Shift = Val(e, "shift");
                     k.Opt = Val(e, "opt");

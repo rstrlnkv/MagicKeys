@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Раскладка MagicKeys. Данные получены из Unicode CLDR (keyboards/osx),
+     лицензия Unicode; см. README. Исходник: is.xml -->
+<AppleLayout id="is" title="Исландская" macName="Icelandic">
+  <Key scan="56" iso="B00" base="°" shift="¨" opt="ø" optShift="Ø" dead="base shift" diff="base shift opt optShift"/>
+  <Key scan="2C" iso="B01" base="z" shift="Z" opt="Ω" diff="opt"/>
+  <Key scan="2D" iso="B02" base="x" shift="X" opt="~" diff="opt"/>
+  <Key scan="2E" iso="B03" base="c" shift="C" opt="ç" optShift="Ç" diff="opt optShift"/>
+  <Key scan="2F" iso="B04" base="v" shift="V" opt="√" optShift="◊" diff="opt optShift"/>
+  <Key scan="30" iso="B05" base="b" shift="B" opt="∫" diff="opt"/>
+  <Key scan="31" iso="B06" base="n" shift="N" opt="˜" dead="opt" diff="opt"/>
+  <Key scan="32" iso="B07" base="m" shift="M" opt="µ"/>
+  <Key scan="33" iso="B08" base="," shift=";" opt="≤" optShift="«" diff="opt optShift"/>
+  <Key scan="34" iso="B09" base="." shift=":" opt="≥" optShift="»" diff="opt optShift"/>
+  <Key scan="35" iso="B10" base="þ" shift="Þ" opt="’" optShift="”" diff="opt optShift"/>
+  <Key scan="1E" iso="C01" base="a" shift="A" opt="å" optShift="Å" diff="opt optShift"/>
+  <Key scan="1F" iso="C02" base="s" shift="S" opt="ß" optShift="˙" diff="opt optShift"/>
+  <Key scan="20" iso="C03" base="d" shift="D" opt="∂" optShift="˚" diff="opt optShift"/>
+  <Key scan="21" iso="C04" base="f" shift="F" opt="ƒ" optShift="¯" diff="opt optShift"/>
+  <Key scan="22" iso="C05" base="g" shift="G" opt="©" optShift="˘" diff="opt optShift"/>
+  <Key scan="23" iso="C06" base="h" shift="H" opt="|" optShift="¸" diff="opt optShift"/>
+  <Key scan="24" iso="C07" base="j" shift="J" opt="∆" optShift="˝" diff="opt optShift"/>
+  <Key scan="25" iso="C08" base="k" shift="K" opt="¬" optShift="˛" diff="opt optShift"/>
+  <Key scan="26" iso="C09" base="l" shift="L" opt="…" optShift="ˇ" diff="opt optShift"/>
+  <Key scan="27" iso="C10" base="æ" shift="Æ" opt="œ" optShift="Œ" diff="opt optShift"/>
+  <Key scan="28" iso="C11" base="´" shift="´" opt="^" optShift="‘" dead="base shift" diff="shift opt optShift"/>
+  <Key scan="10" iso="D01" base="q" shift="Q" opt="@" optShift="¶" diff="optShift"/>
+  <Key scan="11" iso="D02" base="w" shift="W" opt="∑" optShift="§" diff="opt optShift"/>
+  <Key scan="12" iso="D03" base="e" shift="E" opt="€" optShift="¿" diff="optShift"/>
+  <Key scan="13" iso="D04" base="r" shift="R" opt="®" diff="opt"/>
+  <Key scan="14" iso="D05" base="t" shift="T" opt="°" optShift="•" diff="opt optShift"/>
+  <Key scan="15" iso="D06" base="y" shift="Y" opt="¥" diff="opt"/>
+  <Key scan="16" iso="D07" base="u" shift="U" opt="¨" dead="opt" diff="opt"/>
+  <Key scan="17" iso="D08" base="i" shift="I" opt="ı" optShift="ª" diff="opt optShift"/>
+  <Key scan="18" iso="D09" base="o" shift="O" opt="ˆ" optShift="º" dead="opt" diff="opt optShift"/>
+  <Key scan="19" iso="D10" base="p" shift="P" opt="π" optShift="∏" diff="opt optShift"/>
+  <Key scan="1A" iso="D11" base="ð" shift="Ð" opt="„" optShift="“" diff="opt optShift"/>
+  <Key scan="1B" iso="D12" base="'" shift="?" opt="~" optShift="·" diff="optShift"/>
+  <Key scan="2B" iso="D13" base="+" shift="*" opt="`" optShift="±" dead="opt" diff="base shift opt optShift"/>
+  <Key scan="29" iso="E00" base="&lt;" shift="&gt;" opt="|" optShift="" diff="base shift opt optShift"/>
+  <Key scan="02" iso="E01" base="1" shift="!" opt="¡" diff="opt"/>
+  <Key scan="03" iso="E02" base="2" shift="&quot;" opt="@" diff="opt"/>
+  <Key scan="04" iso="E03" base="3" shift="#" opt="™" optShift="£" diff="opt optShift"/>
+  <Key scan="05" iso="E04" base="4" shift="$" opt="¢" optShift="€" diff="opt optShift"/>
+  <Key scan="06" iso="E05" base="5" shift="%" opt="‰" optShift="∞" diff="opt optShift"/>
+  <Key scan="07" iso="E06" base="6" shift="&amp;" opt="^" optShift="⁄" diff="opt optShift"/>
+  <Key scan="08" iso="E07" base="7" shift="/" opt="{" optShift="÷" diff="optShift"/>
+  <Key scan="09" iso="E08" base="8" shift="(" opt="[" optShift="{" diff="optShift"/>
+  <Key scan="0A" iso="E09" base="9" shift=")" opt="]" optShift="}" diff="optShift"/>
+  <Key scan="0B" iso="E10" base="0" shift="=" opt="}" optShift="≈" diff="optShift"/>
+  <Key scan="0C" iso="E11" base="ö" shift="Ö" opt="\" optShift="≠" diff="optShift"/>
+  <Key scan="0D" iso="E12" base="-" shift="_" opt="–" optShift="—" diff="opt optShift"/>
+  <Dead from="` " to="`"/>
+  <Dead from="`a" to="à"/>
+  <Dead from="`A" to="À"/>
+  <Dead from="`e" to="è"/>
+  <Dead from="`E" to="È"/>
+  <Dead from="`i" to="ì"/>
+  <Dead from="`I" to="Ì"/>
+  <Dead from="`o" to="ò"/>
+  <Dead from="`O" to="Ò"/>
+  <Dead from="`u" to="ù"/>
+  <Dead from="`U" to="Ù"/>
+  <Dead from="´ " to="´"/>
+  <Dead from="´a" to="á"/>
+  <Dead from="´A" to="Á"/>
+  <Dead from="´e" to="é"/>
+  <Dead from="´E" to="É"/>
+  <Dead from="´i" to="í"/>
+  <Dead from="´I" to="Í"/>
+  <Dead from="´o" to="ó"/>
+  <Dead from="´O" to="Ó"/>
+  <Dead from="´u" to="ú"/>
+  <Dead from="´U" to="Ú"/>
+  <Dead from="´y" to="ý"/>
+  <Dead from="´Y" to="Ý"/>
+  <Dead from="˜ " to="˜"/>
+  <Dead from="˜a" to="ã"/>
+  <Dead from="˜A" to="Ã"/>
+  <Dead from="˜n" to="ñ"/>
+  <Dead from="˜N" to="Ñ"/>
+  <Dead from="˜o" to="õ"/>
+  <Dead from="˜O" to="Õ"/>
+  <Dead from="¨ " to="¨"/>
+  <Dead from="¨a" to="ä"/>
+  <Dead from="¨A" to="Ä"/>
+  <Dead from="¨e" to="ë"/>
+  <Dead from="¨E" to="Ë"/>
+  <Dead from="¨i" to="ï"/>
+  <Dead from="¨I" to="Ï"/>
+  <Dead from="¨o" to="ö"/>
+  <Dead from="¨O" to="Ö"/>
+  <Dead from="¨u" to="ü"/>
+  <Dead from="¨U" to="Ü"/>
+  <Dead from="¨y" to="ÿ"/>
+  <Dead from="¨Y" to="Ÿ"/>
+  <Dead from="ˆ " to="ˆ"/>
+  <Dead from="ˆa" to="â"/>
+  <Dead from="ˆA" to="Â"/>
+  <Dead from="ˆe" to="ê"/>
+  <Dead from="ˆE" to="Ê"/>
+  <Dead from="ˆi" to="î"/>
+  <Dead from="ˆI" to="Î"/>
+  <Dead from="ˆo" to="ô"/>
+  <Dead from="ˆO" to="Ô"/>
+  <Dead from="ˆu" to="û"/>
+  <Dead from="ˆU" to="Û"/>
+  <Dead from="° " to="°"/>
+  <Dead from="°a" to="å"/>
+  <Dead from="°A" to="Å"/>
+</AppleLayout>

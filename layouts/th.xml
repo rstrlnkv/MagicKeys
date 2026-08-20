@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Раскладка MagicKeys. Данные получены из Unicode CLDR (keyboards/osx),
+     лицензия Unicode; см. README. Исходник: th.xml -->
+<AppleLayout id="th" title="Тайская" macName="Thai">
+  <Key scan="2C" iso="B01" base="ผ" shift="Z" diff="shift"/>
+  <Key scan="2D" iso="B02" base="ป" shift="X" diff="shift"/>
+  <Key scan="2E" iso="B03" base="แ" shift="C" diff="shift"/>
+  <Key scan="2F" iso="B04" base="อ" shift="V" diff="shift"/>
+  <Key scan="30" iso="B05" base="ิ" shift="B" diff="shift"/>
+  <Key scan="31" iso="B06" base="ื" shift="N" diff="shift"/>
+  <Key scan="32" iso="B07" base="ท" shift="M" diff="shift"/>
+  <Key scan="33" iso="B08" base="ม" shift="&lt;" diff="shift"/>
+  <Key scan="34" iso="B09" base="ใ" shift="&gt;" diff="shift"/>
+  <Key scan="35" iso="B10" base="ฝ" shift="?" diff="shift"/>
+  <Key scan="1E" iso="C01" base="ฟ" shift="A" diff="shift"/>
+  <Key scan="1F" iso="C02" base="ห" shift="S" diff="shift"/>
+  <Key scan="20" iso="C03" base="ก" shift="D" diff="shift"/>
+  <Key scan="21" iso="C04" base="ด" shift="F" diff="shift"/>
+  <Key scan="22" iso="C05" base="เ" shift="G" opt="©" diff="shift opt"/>
+  <Key scan="23" iso="C06" base="้" shift="H" diff="shift"/>
+  <Key scan="24" iso="C07" base="่" shift="J" diff="shift"/>
+  <Key scan="25" iso="C08" base="า" shift="K" diff="shift"/>
+  <Key scan="26" iso="C09" base="ส" shift="L" diff="shift"/>
+  <Key scan="27" iso="C10" base="ว" shift=":" opt="…" diff="shift opt"/>
+  <Key scan="28" iso="C11" base="ง" shift="&quot;" diff="shift"/>
+  <Key scan="10" iso="D01" base="ๆ" shift="Q" diff="shift"/>
+  <Key scan="11" iso="D02" base="ไ" shift="W" diff="shift"/>
+  <Key scan="12" iso="D03" base="ำ" shift="E" diff="shift"/>
+  <Key scan="13" iso="D04" base="พ" shift="R" opt="®" diff="shift opt"/>
+  <Key scan="14" iso="D05" base="ะ" shift="T" diff="shift"/>
+  <Key scan="15" iso="D06" base="ั" shift="Y" diff="shift"/>
+  <Key scan="16" iso="D07" base="ี" shift="U" diff="shift"/>
+  <Key scan="17" iso="D08" base="ร" shift="I" diff="shift"/>
+  <Key scan="18" iso="D09" base="น" shift="O" diff="shift"/>
+  <Key scan="19" iso="D10" base="ย" shift="P" diff="shift"/>
+  <Key scan="1A" iso="D11" base="บ" shift="{" opt="“" optShift="”" diff="shift opt optShift"/>
+  <Key scan="1B" iso="D12" base="ล" shift="}" opt="‘" optShift="’" diff="shift opt optShift"/>
+  <Key scan="2B" iso="D13" base="ฃ" shift="|" opt="«" optShift="»" diff="base shift opt optShift"/>
+  <Key scan="29" iso="E00" base="-" shift="~" diff="base shift"/>
+  <Key scan="02" iso="E01" base="ๅ" shift="!" diff="shift"/>
+  <Key scan="03" iso="E02" base="/" shift="@" opt="™" diff="shift opt"/>
+  <Key scan="04" iso="E03" base="_" shift="#" diff="base shift"/>
+  <Key scan="05" iso="E04" base="ภ" shift="$" diff="shift"/>
+  <Key scan="06" iso="E05" base="ถ" shift="%" diff="shift"/>
+  <Key scan="07" iso="E06" base="ุ" shift="^" diff="shift"/>
+  <Key scan="08" iso="E07" base="ึ" shift="&amp;" diff="shift"/>
+  <Key scan="09" iso="E08" base="ค" shift="*" opt="•" diff="shift opt"/>
+  <Key scan="0A" iso="E09" base="ต" shift="(" diff="shift"/>
+  <Key scan="0B" iso="E10" base="จ" shift=")" diff="shift"/>
+  <Key scan="0C" iso="E11" base="ข" shift="_" opt="–" optShift="—" diff="shift opt optShift"/>
+  <Key scan="0D" iso="E12" base="ช" shift="+" diff="shift"/>
+</AppleLayout>

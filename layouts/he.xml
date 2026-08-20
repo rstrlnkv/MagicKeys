@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Раскладка MagicKeys. Данные получены из Unicode CLDR (keyboards/osx),
+     лицензия Unicode; см. README. Исходник: he.xml -->
+<AppleLayout id="he" title="Иврит" macName="Hebrew">
+  <Key scan="2C" iso="B01" base="ז" opt="–" optShift="–" diff="opt optShift"/>
+  <Key scan="2D" iso="B02" base="ס" opt="—" optShift="—" diff="opt optShift"/>
+  <Key scan="2E" iso="B03" base="ב" shift="לֹ" opt="“" optShift="֞" diff="shift opt optShift"/>
+  <Key scan="2F" iso="B04" base="ה" opt="”" optShift="”" diff="opt optShift"/>
+  <Key scan="30" iso="B05" base="נ" opt="‘" optShift="֜" diff="opt optShift"/>
+  <Key scan="31" iso="B06" base="מ" opt="’" optShift="’" diff="opt optShift"/>
+  <Key scan="32" iso="B07" base="צ" opt="שׁ" optShift="שׁ" diff="opt optShift"/>
+  <Key scan="33" iso="B08" base="ת" shift="&gt;" opt="ּ" optShift="ּ" diff="opt optShift"/>
+  <Key scan="34" iso="B09" base="ץ" shift="&lt;"/>
+  <Key scan="35" iso="B10" base="." shift="?"/>
+  <Key scan="1E" iso="C01" base="ש" shift="שׁ" opt="שׂ" optShift="שׂ" diff="shift opt optShift"/>
+  <Key scan="1F" iso="C02" base="ד" opt="‎" diff="opt"/>
+  <Key scan="20" iso="C03" base="ג" shift="„" opt="‏" diff="shift opt"/>
+  <Key scan="21" iso="C04" base="כ" opt="€" optShift="€" diff="opt optShift"/>
+  <Key scan="22" iso="C05" base="ע" opt="֞" diff="opt"/>
+  <Key scan="23" iso="C06" base="י" opt="ײַ" optShift="ײַ" diff="opt optShift"/>
+  <Key scan="24" iso="C07" base="ח" opt="”" diff="opt"/>
+  <Key scan="25" iso="C08" base="ל" shift="לֹ" opt="֜" diff="shift opt"/>
+  <Key scan="26" iso="C09" base="ך" opt="’" diff="opt"/>
+  <Key scan="27" iso="C10" base="ף" shift=":" opt=";" optShift=";" diff="opt optShift"/>
+  <Key scan="28" iso="C11" base="," shift="״" opt="ֲ" optShift="ֲ" diff="shift opt optShift"/>
+  <Key scan="10" iso="D01" base="/" opt="…" optShift="…" diff="opt optShift"/>
+  <Key scan="11" iso="D02" base="׳" opt="ָ" optShift="ָ" diff="base opt optShift"/>
+  <Key scan="12" iso="D03" base="ק"/>
+  <Key scan="13" iso="D04" base="ר"/>
+  <Key scan="14" iso="D05" base="א"/>
+  <Key scan="15" iso="D06" base="ט"/>
+  <Key scan="16" iso="D07" base="ו" shift="וֹ" opt="וּ" optShift="וּ" diff="shift opt optShift"/>
+  <Key scan="17" iso="D08" base="ן"/>
+  <Key scan="18" iso="D09" base="ם"/>
+  <Key scan="19" iso="D10" base="פ"/>
+  <Key scan="1A" iso="D11" base="]" shift="}"/>
+  <Key scan="1B" iso="D12" base="[" shift="{"/>
+  <Key scan="2B" iso="D13" base="ֿ" shift="|" opt="־" optShift="־" diff="base shift opt optShift"/>
+  <Key scan="29" iso="E00" base=";" shift="~"/>
+  <Key scan="02" iso="E01" base="1" shift="!" opt="ֲ" optShift="ֲ" diff="opt optShift"/>
+  <Key scan="03" iso="E02" base="2" shift="@" opt="ֳ" optShift="ֳ" diff="opt optShift"/>
+  <Key scan="04" iso="E03" base="3" shift="#" opt="ֱ" optShift="ֱ" diff="opt optShift"/>
+  <Key scan="05" iso="E04" base="4" shift="$" opt="ִ" optShift="ִ" diff="opt optShift"/>
+  <Key scan="06" iso="E05" base="5" shift="%" opt="ֵ" optShift="ֵ" diff="opt optShift"/>
+  <Key scan="07" iso="E06" base="6" shift="^" opt="ַ" optShift="ַ" diff="opt optShift"/>
+  <Key scan="08" iso="E07" base="7" shift="₪" opt="ָ" optShift="ָ" diff="shift opt optShift"/>
+  <Key scan="09" iso="E08" base="8" shift="*" opt="ֻ" optShift="ֻ" diff="opt optShift"/>
+  <Key scan="0A" iso="E09" base="9" shift=")" opt="ֶ" optShift="ֶ" diff="opt optShift"/>
+  <Key scan="0B" iso="E10" base="0" shift="(" opt="ְ" optShift="ְ" diff="opt optShift"/>
+  <Key scan="0C" iso="E11" base="-" shift="_" opt="-" optShift="-" diff="opt optShift"/>
+  <Key scan="0D" iso="E12" base="=" shift="+" opt="ֹ" optShift="ֹ" diff="opt optShift"/>
+</AppleLayout>

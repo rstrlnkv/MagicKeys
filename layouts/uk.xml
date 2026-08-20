@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Раскладка MagicKeys. Данные получены из Unicode CLDR (keyboards/osx),
+     лицензия Unicode; см. README. Исходник: uk.xml -->
+<AppleLayout id="uk" title="Украинская" macName="Ukrainian">
+  <Key scan="56" iso="B00" base="&gt;" shift="&lt;" opt="§" optShift="±" diff="base shift opt optShift"/>
+  <Key scan="2C" iso="B01" base="я" shift="Я" opt="ђ" optShift="Ђ" diff="opt optShift"/>
+  <Key scan="2D" iso="B02" base="ч" shift="Ч" opt="≈" optShift="≈" diff="opt optShift"/>
+  <Key scan="2E" iso="B03" base="с" shift="С" opt="≠" optShift="≠" diff="opt optShift"/>
+  <Key scan="2F" iso="B04" base="м" shift="М" opt="µ" optShift="µ" diff="opt optShift"/>
+  <Key scan="30" iso="B05" base="і" shift="І" opt="и" optShift="И" diff="base shift opt optShift"/>
+  <Key scan="31" iso="B06" base="т" shift="Т" opt="™" optShift="™" diff="opt optShift"/>
+  <Key scan="32" iso="B07" base="ь" shift="Ь" opt="~" optShift="~" diff="opt optShift"/>
+  <Key scan="33" iso="B08" base="б" shift="Б" opt="≤" optShift="&lt;" diff="opt optShift"/>
+  <Key scan="34" iso="B09" base="ю" shift="Ю" opt="≥" optShift="&gt;" diff="opt optShift"/>
+  <Key scan="35" iso="B10" base="/" shift="?" opt="“" optShift="„" diff="base shift opt optShift"/>
+  <Key scan="1E" iso="C01" base="ф" shift="Ф" opt="ƒ" optShift="₴" diff="opt optShift"/>
+  <Key scan="1F" iso="C02" base="и" shift="И" opt="ы" optShift="Ы" diff="base shift opt optShift"/>
+  <Key scan="20" iso="C03" base="в" shift="В" opt="ћ" optShift="Ћ" diff="opt optShift"/>
+  <Key scan="21" iso="C04" base="а" shift="А" opt="÷" optShift="÷" diff="opt optShift"/>
+  <Key scan="22" iso="C05" base="п" shift="П" opt="©" optShift="©" diff="opt optShift"/>
+  <Key scan="23" iso="C06" base="р" shift="Р" opt="}" optShift="{" diff="opt optShift"/>
+  <Key scan="24" iso="C07" base="о" shift="О" opt="°" optShift="•" diff="opt optShift"/>
+  <Key scan="25" iso="C08" base="л" shift="Л" opt="љ" optShift="Љ" diff="opt optShift"/>
+  <Key scan="26" iso="C09" base="д" shift="Д" opt="∆" optShift="∆" diff="opt optShift"/>
+  <Key scan="27" iso="C10" base="ж" shift="Ж" opt="…" optShift="…" diff="opt optShift"/>
+  <Key scan="28" iso="C11" base="є" shift="Є" opt="э" optShift="Э" diff="opt optShift"/>
+  <Key scan="10" iso="D01" base="й" shift="Й" opt="ј" optShift="Ј" diff="opt optShift"/>
+  <Key scan="11" iso="D02" base="ц" shift="Ц" opt="џ" optShift="Џ" diff="opt optShift"/>
+  <Key scan="12" iso="D03" base="у" shift="У" opt="ќ" optShift="Ќ" diff="opt optShift"/>
+  <Key scan="13" iso="D04" base="к" shift="К" opt="®" optShift="®" diff="opt optShift"/>
+  <Key scan="14" iso="D05" base="е" shift="Е" opt="†" optShift="†" diff="opt optShift"/>
+  <Key scan="15" iso="D06" base="н" shift="Н" opt="њ" optShift="Њ" diff="opt optShift"/>
+  <Key scan="16" iso="D07" base="г" shift="Г" opt="ѓ" optShift="Ѓ" diff="opt optShift"/>
+  <Key scan="17" iso="D08" base="ш" shift="Ш" opt="ѕ" optShift="Ѕ" diff="opt optShift"/>
+  <Key scan="18" iso="D09" base="щ" shift="Щ" opt="ў" optShift="Ў" diff="opt optShift"/>
+  <Key scan="19" iso="D10" base="з" shift="З" opt="‘" optShift="’" diff="opt optShift"/>
+  <Key scan="1A" iso="D11" base="х" shift="Х" opt="“" optShift="”" diff="opt optShift"/>
+  <Key scan="1B" iso="D12" base="ї" shift="Ї" opt="ъ" optShift="Ъ" diff="opt optShift"/>
+  <Key scan="2B" iso="D13" base="ґ" shift="Ґ" opt="ё" optShift="Ё" diff="base shift opt optShift"/>
+  <Key scan="29" iso="E00" base="'" shift="~" opt="]" optShift="[" diff="base shift opt optShift"/>
+  <Key scan="02" iso="E01" base="1" shift="!" opt="!" optShift="|" diff="opt optShift"/>
+  <Key scan="03" iso="E02" base="2" shift="&quot;" opt="@" optShift="&quot;" diff="opt optShift"/>
+  <Key scan="04" iso="E03" base="3" shift="№" opt="#" optShift="£" diff="opt optShift"/>
+  <Key scan="05" iso="E04" base="4" shift="%" opt="$" optShift="€" diff="shift opt optShift"/>
+  <Key scan="06" iso="E05" base="5" shift=":" opt="%" optShift="∞" diff="shift opt optShift"/>
+  <Key scan="07" iso="E06" base="6" shift="," opt="^" optShift="¬" diff="shift opt optShift"/>
+  <Key scan="08" iso="E07" base="7" shift="." opt="&amp;" optShift="¶" diff="shift opt optShift"/>
+  <Key scan="09" iso="E08" base="8" shift=";" opt="*" optShift="√" diff="shift opt optShift"/>
+  <Key scan="0A" iso="E09" base="9" shift="(" opt="(" optShift="'" diff="opt optShift"/>
+  <Key scan="0B" iso="E10" base="0" shift=")" opt=")" optShift="`" diff="opt optShift"/>
+  <Key scan="0C" iso="E11" base="-" shift="_" opt="–" optShift="—" diff="opt optShift"/>
+  <Key scan="0D" iso="E12" base="=" shift="+" opt="»" optShift="«" diff="opt optShift"/>
+</AppleLayout>

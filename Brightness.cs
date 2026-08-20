@@ -135,13 +135,25 @@ namespace MagicKeys
                 if (want < target0.Min) want = target0.Min;
                 if (want > target0.Max) want = target0.Max;
 
-                if (want != target0.Cur && Native.SetMonitorBrightness(target0.Handle, (uint)want))
+                bool ok = want == target0.Cur;      // упёрлись в край — тоже удача
+                if (!ok && Native.SetMonitorBrightness(target0.Handle, (uint)want))
+                {
                     target0.Cur = (uint)want;
+                    ok = true;
+                }
 
-                // Показываем и когда упёрлись в край: иначе кажется, что клавиша не сработала.
-                shown = Percent(target0);
-                shownOn = target0.Screen;
-                shownName = target0.Name;
+                // Показываем и когда упёрлись в край: иначе кажется, что клавиша
+                // не сработала. Но если монитор отказал — молчим: раньше плашка
+                // рисовала прежний процент как подтверждение того, чего не было.
+                // Так выглядит монитор, выключенный своей кнопкой: событие о смене
+                // экранов не приходит, кэш ещё жив, а яркость уже никуда не идёт.
+                if (ok)
+                {
+                    shown = Percent(target0);
+                    shownOn = target0.Screen;
+                    shownName = target0.Name;
+                }
+                else Invalidate();   // кэш врёт — пересобрать при следующем нажатии
             }
 
             // И здесь тоже только для встроенной панели. Эта ветка достаётся случаю,

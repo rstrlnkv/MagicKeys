@@ -846,7 +846,23 @@ namespace MagicKeys
 
             var refresh = new Button { Content = "Обновить", HorizontalAlignment = HorizontalAlignment.Left };
             refresh.SetResourceReference(StyleProperty, "Btn");
-            refresh.Click += delegate { Devices.Rescan(); RefreshDevices(); };
+            // Опрос идёт в сторонке: он открывает каждую клавиатуру и тянет из неё
+            // три строки, а по Bluetooth это секунды. На потоке окна Windows успевала
+            // нарисовать «не отвечает».
+            refresh.Click += delegate
+            {
+                refresh.IsEnabled = false;
+                System.Threading.ThreadPool.QueueUserWorkItem(delegate
+                {
+                    try { Devices.Rescan(); }
+                    catch (Exception e) { Diag.Log("не удалось опросить устройства", e); }
+                    Dispatcher.BeginInvoke((Action)delegate
+                    {
+                        refresh.IsEnabled = true;
+                        RefreshDevices();
+                    });
+                });
+            };
             stack.Children.Add(refresh);
 
         }
@@ -1001,6 +1017,14 @@ namespace MagicKeys
                 lines.Children.Add(Note("Перехват не знает, с какой клавиатуры пришло нажатие, " +
                                         "поэтому правила действуют на весь ввод — включая встроенную " +
                                         "клавиатуру ноутбука."));
+
+            // Без сырого ввода программа перестаёт узнавать клавиатуру и, что хуже,
+            // сторожить собственный перехват — сравнивать его показания становится не с чем.
+            if (!String.IsNullOrEmpty(KeyWatch.Failure))
+                lines.Children.Add(Note("Программа не видит, с какой клавиатуры приходят нажатия, — " +
+                                        "Windows отказала в подписке на ввод. Переназначения работают, " +
+                                        "но выбор «только с Magic Keyboard» и определение модели — нет. " +
+                                        "Помогает перезапуск программы."));
 
             return Card(null, null, lines);
         }

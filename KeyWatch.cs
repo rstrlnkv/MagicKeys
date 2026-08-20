@@ -118,6 +118,12 @@ namespace MagicKeys
             // Заодно и счёт F-клавиш: он тоже умеет только расти, и одна чужая
             // полноразмерная клавиатура иначе оставляла бы строки F13–F19 в окне
             // до перезапуска. Ровно за это из настроек убрали ObservedFunctionKeys.
+            //
+            // Вместе с ним обязательно забыть и виденные клавиши: счёт поднимается
+            // только на свежих, а Bluetooth переподключается на каждом пробуждении.
+            // Обнулив одно и оставив другое, мы теряли счёт навсегда — после первого
+            // же выхода из сна строки F13-F19 пропадали до перезапуска программы.
+            lock (Sync) SeenKeys.Clear();
             _maxFunctionKey = 0;
         }
 
@@ -165,6 +171,22 @@ namespace MagicKeys
             }
         }
 
+        /// <summary>
+        /// Почему перепись клавиш не работает, или null. Молчать здесь нельзя: без сырого
+        /// ввода программа не знает, с какой клавиатуры пришло нажатие, — а заодно
+        /// перестаёт сторожить сам перехват, потому что сравнивать его показания не с чем.
+        /// Раньше отказ уходил в журнал, который по умолчанию выключен, и наружу
+        /// не показывался ничем.
+        /// </summary>
+        public static string Failure { get { return _failure; } }
+        private static volatile string _failure;
+
+        private static void Fail(string why)
+        {
+            _failure = why;
+            Diag.Log("перепись клавиш: " + why);
+        }
+
         public static void Start()
         {
             if (_thread != null) return;
@@ -190,7 +212,7 @@ namespace MagicKeys
                     Native.WS_POPUP, 0, 0, 0, 0, IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero);
                 if (_window == IntPtr.Zero)
                 {
-                    Diag.Log("перепись клавиш: окно не создано, ошибка " + Marshal.GetLastWin32Error());
+                    Fail("окно сырого ввода не создано, ошибка " + Marshal.GetLastWin32Error());
                     return;
                 }
 
@@ -205,7 +227,7 @@ namespace MagicKeys
                 rid[1].hwndTarget = _window;
                 if (!Native.RegisterRawInputDevices(rid, (uint)rid.Length, (uint)Marshal.SizeOf(typeof(Native.RAWINPUTDEVICE))))
                 {
-                    Diag.Log("перепись клавиш: сырой ввод не подписан, ошибка " + Marshal.GetLastWin32Error());
+                    Fail("подписка на сырой ввод отклонена, ошибка " + Marshal.GetLastWin32Error());
                     return;
                 }
 
@@ -342,7 +364,8 @@ namespace MagicKeys
                 uint len = (uint)max;
                 IntPtr report = new IntPtr(data.ToInt64() + (long)i * sizeHid);
                 if (Native.HidP_GetUsages(Native.HIDP_INPUT, Native.UsagePageConsumer, 0,
-                                          usages, ref len, preparsed, report, (uint)sizeHid) != 0) continue;
+                                          usages, ref len, preparsed, report, (uint)sizeHid)
+                    != Native.HIDP_STATUS_SUCCESS) continue;
                 for (int u = 0; u < len; u++)
                 {
                     int usage = usages[u];
@@ -362,7 +385,12 @@ namespace MagicKeys
 
             IntPtr result = IntPtr.Zero;
             uint size = 0;
-            Native.GetRawInputDeviceInfoW(device, Native.RIDI_PREPARSEDDATA, IntPtr.Zero, ref size);
+            // Возврат мерного вызова проверяем: при отказе (устройство как раз отключают)
+            // он равен (UINT)-1, а size остаётся нулём — и без проверки это попадало
+            // в ветку «Windows ответила, что описания нет». Один промах при подключении
+            // отключал разбор медиаотчётов этого устройства до конца сеанса.
+            bool asked = Native.GetRawInputDeviceInfoW(device, Native.RIDI_PREPARSEDDATA,
+                                                       IntPtr.Zero, ref size) != uint.MaxValue;
             if (size > 0 && size < 64 * 1024)
             {
                 IntPtr b = Marshal.AllocHGlobal((int)size);
@@ -371,9 +399,9 @@ namespace MagicKeys
                 else
                     Marshal.FreeHGlobal(b);
             }
-            // То же и здесь: пустоту запоминаем, только если Windows правда ответила,
-            // что описания отчётов нет, а не если запрос не удался.
-            if (result != IntPtr.Zero || size == 0) lock (Sync) Preparsedes[device] = result;
+            // Пустоту запоминаем, только если Windows правда ответила, что описания
+            // отчётов нет, а не если запрос не удался.
+            if (result != IntPtr.Zero || (asked && size == 0)) lock (Sync) Preparsedes[device] = result;
             return result;
         }
 

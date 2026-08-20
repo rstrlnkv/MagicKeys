@@ -64,7 +64,7 @@ namespace MagicKeys
             // Отмену и повтор держат, чтобы откатиться на несколько шагов, — им повтор нужен.
             Edit("undo", "Отменить", "⌘Z", Vk.Z, Vk.Z).Repeats = true;
             Add("redo", GroupEdit, "Повторить", "⇧⌘Z", "Ctrl+Y",
-                MacMod.Cmd | MacMod.Shift, Vk.Z, new int[] { Vk.LControl }, Vk.Y);
+                MacMod.Cmd | MacMod.Shift, Vk.Z, new int[] { Vk.LControl }, Vk.Y).Repeats = true;
             Edit("selectall", "Выделить всё", "⌘A", Vk.A, Vk.A);
             Edit("save", "Сохранить", "⌘S", Vk.S, Vk.S);
             Edit("find", "Найти", "⌘F", Vk.F, Vk.F);
@@ -163,8 +163,12 @@ namespace MagicKeys
                     MacMod.Cmd, digits[i], new int[] { Vk.LControl }, digits[i]);
 
             // Масштаб. В браузере замечают за первый час.
-            Add("zoomin", GroupEdit, "Крупнее", "⌘+", "Ctrl+=",
+            // «+» на клавише набирается с Shift, поэтому настоящее ⇧⌘+ приходит
+            // с двумя модификаторами. Подпись обещала ⌘+, а работало только ⌘=.
+            Add("zoomin", GroupEdit, "Крупнее", "⌘=", "Ctrl+=",
                 MacMod.Cmd, Vk.OemPlus, new int[] { Vk.LControl }, Vk.OemPlus).Repeats = true;
+            Add("zoominshift", GroupEdit, "Крупнее", "⇧⌘+", "Ctrl+=",
+                MacMod.Cmd | MacMod.Shift, Vk.OemPlus, new int[] { Vk.LControl }, Vk.OemPlus).Repeats = true;
             Add("zoomout", GroupEdit, "Мельче", "⌘−", "Ctrl+−",
                 MacMod.Cmd, Vk.OemMinus, new int[] { Vk.LControl }, Vk.OemMinus).Repeats = true;
             Add("zoomreset", GroupEdit, "Обычный размер", "⌘0", "Ctrl+0",
@@ -235,6 +239,51 @@ namespace MagicKeys
                     SendMods = new int[] { Vk.LWin }, SendVk = Vk.Space
                 };
             return null;
+        }
+
+        /// <summary>
+        /// ⌘ с обычной клавишей, которой в таблице нет: то же самое, но с control.
+        ///
+        /// Без этого правила ⌘ вне таблицы не делала ничего. Перехват такие нажатия
+        /// глотает — и правильно делает: у пришедшего с мака ⌘L означает «строка адреса»,
+        /// а Windows на Win+L запирает экран. Но глотать — не значит выбрасывать:
+        /// ⌘K, ⌘D, ⌘E, ⌘J, ⌘U, ⌘Y и весь слой ⇧⌘ оказывались мёртвыми, хотя в Windows
+        /// им отвечает ровно то же с control. Таблица остаётся для того, чего заменой
+        /// клавиши не получить (⌘←, ⌘⌫, ⌘Q), а всё прочее переводится по правилу.
+        ///
+        /// ⌥ и ⌃ вместе с ⌘ сюда не попадают: на маке ⌥ чаще набирает символ, чем
+        /// участвует в команде, и переводить его наугад — обещать то, чего не знаем.
+        /// </summary>
+        public static MacShortcut Generic(int vk, MacMod mods)
+        {
+            if ((mods & MacMod.Cmd) == 0) return null;
+            if ((mods & (MacMod.Opt | MacMod.Ctrl)) != 0) return null;
+            if (!Plain(vk)) return null;
+
+            var send = new List<int>();
+            send.Add(Vk.LControl);
+            if ((mods & MacMod.Shift) != 0) send.Add(Vk.LShift);
+
+            var s = new MacShortcut();
+            s.Id = "generic";
+            s.Group = GroupEdit;
+            s.Title = "То же самое с control";
+            s.Mods = mods;
+            s.Vk = vk;
+            s.SendMods = send.ToArray();
+            s.SendVk = vk;
+            s.Repeats = true;
+            return s;
+        }
+
+        /// <summary>Обычная клавиша: буква, цифра или знак. Не модификатор, не F, не стрелка.</summary>
+        private static bool Plain(int vk)
+        {
+            if (vk >= 0x30 && vk <= 0x39) return true;   // 0-9
+            if (vk >= 0x41 && vk <= 0x5A) return true;   // A-Z
+            if (vk >= 0xBA && vk <= 0xC0) return true;   // ; = , - . / `
+            if (vk >= 0xDB && vk <= 0xDF) return true;   // [ \ ] ковычка
+            return vk == 0xE2;                           // клавиша ISO между Shift и Z
         }
 
         /// <summary>Ищет сочетание по нажатой клавише и зажатым модификаторам Apple.</summary>

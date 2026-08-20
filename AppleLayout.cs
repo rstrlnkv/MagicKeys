@@ -179,9 +179,19 @@ namespace MagicKeys
 
         private static readonly object LoadLock = new object();
 
+        /// <summary>
+        /// Поток, которому разбирать файлы запрещено. Его ставит себе поток перехвата:
+        /// попытка вместо замка спасала от ожидания на чужом разборе, но не от того,
+        /// что разбор возьмёт на себя он сам — тридцать три файла при бюджете в триста
+        /// миллисекунд, после которых Windows снимает перехват. Он берёт только готовое.
+        /// </summary>
+        [ThreadStatic] private static bool _noLoad;
+
+        public static void ThisThreadTakesOnlyReady() { _noLoad = true; }
+
         private static void EnsureLoaded()
         {
-            if (_loaded) return;
+            if (_loaded || _noLoad) return;
             // Не lock, а попытка. Двойная проверка спасала от второго разбора, но не
             // от ожидания: нажатие, пришедшее пока идёт прогрев, вставало на замок на всё
             // время разбора тридцати трёх файлов — сотни миллисекунд при бюджете в триста,

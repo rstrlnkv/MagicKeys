@@ -59,7 +59,11 @@ namespace MagicKeys
         //  7-Zip
         // ------------------------------------------------------------------
 
-        /// <summary>Одноразовые файлы: сюда pnputil пишет свой вывод. Не %TEMP% — см. Pnputil.</summary>
+        /// <summary>
+        /// Одноразовые файлы прежних версий: сюда через cmd писал свой вывод pnputil.
+        /// Больше сюда не пишет никто — папка осталась только затем, чтобы «очистить
+        /// загруженное» убрало её у тех, у кого она уже есть.
+        /// </summary>
         private static string RunFolder
         {
             get
@@ -111,6 +115,18 @@ namespace MagicKeys
                 // добавленный в хранилище текущего пользователя, а туда пишут без прав
                 // администратора. То есть тот самый противник, ради которого проверка и
                 // делается, подписал бы подделку сам. Поэтому сверяем и подписанта.
+                // Держим файл открытым от проверки до самого msiexec: иначе между
+                // «подпись верна» и «пакет запущен» лежит окно, в которое подставляется
+                // другой файл. Папка своя, но писать в неё может любой процесс этого же
+                // пользователя — а проверка, которую можно обойти подменой, не проверка.
+                using (FileStream keep = Open(msi))
+                {
+                    if (keep == null)
+                    {
+                        error = "скачанный установщик 7-Zip занят другой программой";
+                        return null;
+                    }
+
                 string signer;
                 if (!SignatureValid(msi, out signer) || !SignedBy7Zip(signer))
                 {
@@ -142,6 +158,8 @@ namespace MagicKeys
                     }
                 }
 
+                }   // отпускаем пакет: он уже развёрнут
+
                 try { File.Delete(msi); } catch { }
                 try { File.Delete(StatePath(msi)); } catch { }
                 string found = SevenZip();
@@ -149,6 +167,13 @@ namespace MagicKeys
                 return found;
             }
             catch (Exception e) { error = e.Message; return null; }
+        }
+
+        /// <summary>Открыть файл на чтение, запретив запись всем остальным.</summary>
+        private static FileStream Open(string path)
+        {
+            try { return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read); }
+            catch { return null; }
         }
 
         /// <summary>
@@ -652,40 +677,32 @@ namespace MagicKeys
             return Pnputil("/delete-driver \"" + infName + "\" /uninstall /force", out output);
         }
 
+        /// <summary>
+        /// Запустить pnputil с правами администратора. Напрямую, без cmd.
+        ///
+        /// Раньше между нами и pnputil стоял cmd — только затем, чтобы перенаправлением
+        /// «>» забрать вывод в файл. Обходилось это дорого. Cmd раскрывает %ПЕРЕМЕННЫЕ%
+        /// в командной строке, и внутри кавычек тоже, — а путь к .inf выбирает человек
+        /// или распаковывает архив Apple в папку, доступную на запись кому угодно того же
+        /// пользователя. Папки «скидка 50%» хватало, чтобы установка молча пошла не туда
+        /// и человек прочитал «запрос прав администратора отклонён». А тот, кто заведёт
+        /// себе переменную окружения нужного содержания и подложит каталог с её именем,
+        /// получал исполнение своей команды с правами администратора — то есть ровно тот
+        /// переход, ради которого всё это и закрывали. CreateProcess не раскрывает ничего.
+        ///
+        /// Вывод забрать теперь нечем: перенаправление требует cmd, а поток напрямую —
+        /// UseShellExecute, без которого нет запроса прав. Взамен отвечаем сами, по коду
+        /// возврата. Человеку от этого только лучше: pnputil говорит с ним кодами вида
+        /// 0xE0000247, да ещё и в кодировке консоли, которую мы читали как системную —
+        /// то есть кириллица доходила мусором.
+        /// </summary>
         private static bool Pnputil(string args, out string output)
         {
             output = null;
-
-            // Вывод забираем через файл: перенаправить поток напрямую нельзя, потому что
-            // запрос прав требует UseShellExecute, а он запрещает RedirectStandardOutput.
-            //
-            // Имя файла — случайное и в своей папке, а не постоянное в %TEMP%. Постоянное
-            // и заранее известное позволяло подложить по этому пути ссылку на системный
-            // файл: перенаправление «>» пошло бы по ней, и cmd, работающий с правами
-            // администратора, перезаписал бы то, до чего пользователю хода нет. Это
-            // готовый переход из пользователя в администраторы. Угадать случайное имя
-            // заранее нельзя; а если ссылка там всё же оказалась, мы её не читаем.
-            string log;
             try
             {
-                Directory.CreateDirectory(RunFolder);
-                log = Path.Combine(RunFolder, "pnputil-" + Guid.NewGuid().ToString("N") + ".txt");
-            }
-            catch (Exception e) { output = e.Message; return false; }
-
-            try
-            {
-                // Оба имени — полными путями. ShellExecute ищет cmd.exe в том числе
-                // в текущем каталоге, а сам cmd так же ищет pnputil; каталог у переносимой
-                // программы её собственный и доступен на запись любому процессу того же
-                // пользователя. Подмена любого из двух дала бы исполнение с правами
-                // администратора. Имя файла вывода тут уже случайное — а исполняемые
-                // файлы оставались беззащитными.
                 string sys = Environment.SystemDirectory;
-                var psi = new ProcessStartInfo(
-                    Path.Combine(sys, "cmd.exe"),
-                    "/c \"" + Path.Combine(sys, "pnputil.exe") + "\" " + args +
-                    " > \"" + log + "\" 2>&1");
+                var psi = new ProcessStartInfo(Path.Combine(sys, "pnputil.exe"), args);
                 psi.WorkingDirectory = sys;
                 psi.UseShellExecute = true;      // нужно для запроса прав
                 psi.Verb = "runas";
@@ -693,36 +710,52 @@ namespace MagicKeys
                 psi.WindowStyle = ProcessWindowStyle.Hidden;
                 using (Process p = Process.Start(psi))
                 {
-                    p.WaitForExit(120000);
-                    output = ReadPlainFile(log);
-                    if (!p.HasExited)
+                    if (!p.WaitForExit(120000))
                     {
-                        output = "установка драйвера не уложилась в срок";
+                        output = "Установка драйвера не уложилась в срок.";
                         return false;
                     }
-                    return p.ExitCode == 0;
+                    return Verdict(p.ExitCode, out output);
                 }
             }
             catch (Exception e)
             {
-                output = e.Message;   // отказ в правах приходит сюда же
+                Diag.Log("pnputil не запустился", e);
+                output = "Запрос прав администратора отклонён.";
                 return false;
-            }
-            finally
-            {
-                try { if (File.Exists(log) && !IsLink(log)) File.Delete(log); } catch { }
             }
         }
 
-        /// <summary>Прочитать файл — но только настоящий файл, не ссылку на чужой.</summary>
-        private static string ReadPlainFile(string path)
+        /// <summary>Код возврата pnputil человеческими словами.</summary>
+        private static bool Verdict(int code, out string output)
         {
-            try
+            switch (code)
             {
-                if (!File.Exists(path) || IsLink(path)) return null;
-                return File.ReadAllText(path, Encoding.Default);
+                case 0:
+                    output = null;
+                    return true;
+                case 3010:   // ERROR_SUCCESS_REBOOT_REQUIRED
+                    // Успех, а не отказ. Считая его отказом, программа говорила
+                    // «установить не удалось» и тут же, на том же экране, показывала
+                    // драйвер установленным.
+                    output = "Драйвер установлен. Чтобы он заработал, перезагрузите компьютер.";
+                    return true;
+                case 5:
+                    output = "Windows не дала прав на установку драйвера.";
+                    return false;
+                case 1223:
+                    output = "Запрос прав администратора отклонён.";
+                    return false;
+                case 259:
+                    output = "Такого драйвера в системе нет — удалять нечего.";
+                    return false;
+                case 87:
+                    output = "Windows не приняла путь к файлу драйвера.";
+                    return false;
+                default:
+                    output = "Установщик драйверов Windows ответил кодом " + code + ".";
+                    return false;
             }
-            catch { return null; }
         }
 
         /// <summary>

@@ -192,6 +192,7 @@ namespace MagicKeys
             Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
             Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
             Microsoft.Win32.SystemEvents.PowerModeChanged += OnPowerModeChanged;
+            Microsoft.Win32.SystemEvents.SessionSwitch += OnSessionSwitch;
 
             UpdateTrayText();
         }
@@ -205,9 +206,23 @@ namespace MagicKeys
         private void OnPowerModeChanged(object sender, Microsoft.Win32.PowerModeChangedEventArgs e)
         {
             if (e.Mode != Microsoft.Win32.PowerModes.Resume) return;
+            try { if (_engine != null) _engine.ReleaseHeld(); } catch { }
             try { Brightness.Invalidate(); } catch { }
             try { KeyboardBattery.Invalidate(); } catch { }
             try { AppleDriver.Refresh(true); } catch { }
+        }
+
+        /// <summary>
+        /// Экран заперли, отперли или ушли на защищённый рабочий стол.
+        ///
+        /// Пока там Ctrl+Alt+Del или запрос прав администратора, нажатия до перехвата
+        /// не доходят — а значит, не доходят и отпускания. Человек отпустил Caps Lock
+        /// уже на том экране, а мы всё ещё держим за него синтетический control:
+        /// вернувшись, он обнаруживает, что клавиатура «сломалась».
+        /// </summary>
+        private void OnSessionSwitch(object sender, Microsoft.Win32.SessionSwitchEventArgs e)
+        {
+            try { if (_engine != null) _engine.ReleaseHeld(); } catch { }
         }
 
         /// <summary>Мониторы переключили, подключили или отключили.</summary>
@@ -366,6 +381,7 @@ namespace MagicKeys
             try { Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged; } catch { }
             try { Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged; } catch { }
             try { Microsoft.Win32.SystemEvents.PowerModeChanged -= OnPowerModeChanged; } catch { }
+            try { Microsoft.Win32.SystemEvents.SessionSwitch -= OnSessionSwitch; } catch { }
             try
             {
                 if (_tray != null)

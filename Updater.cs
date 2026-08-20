@@ -204,11 +204,14 @@ namespace MagicKeys
                     return null;
                 }
 
-                Prepare();
-                using (var client = new WebClient())
+                if (!Grab(url, path, out error)) { Forget(path); return null; }
+
+                // Держим до самого запуска: с этой секунды подменить файл нельзя.
+                if (!Hold(path))
                 {
-                    client.Headers.Add("User-Agent", Repo);
-                    client.DownloadFile(url, path);
+                    Forget(path);
+                    error = "скачанный установщик занят другой программой";
+                    return null;
                 }
 
                 string wrong = SignatureProblem(path);
@@ -329,8 +332,43 @@ namespace MagicKeys
 
         private static void Forget(string path)
         {
+            Unhold();
             try { if (path != null && File.Exists(path)) File.Delete(path); }
             catch { }
+        }
+
+        /// <summary>
+        /// Скачанный пакет, открытый на чтение без права записи, — и открытым он остаётся
+        /// до самого запуска msiexec.
+        ///
+        /// Иначе между «подпись верна» и «установщик запущен» лежит окно, в которое всё
+        /// разваливается: файл лежит во временной папке пользователя, писать в неё может
+        /// любой процесс того же человека, а человек в это время смотрит на запрос UAC
+        /// и вот-вот нажмёт «Да». Проверили бы мы один файл, а установили другой — и уже
+        /// с правами системы. Отпечаток сертификата от этого не спасает: он про тот файл,
+        /// которого к моменту запуска может уже не быть.
+        /// </summary>
+        private static FileStream _held;
+        private static string _heldPath;
+
+        private static bool Hold(string path)
+        {
+            Unhold();
+            try
+            {
+                _held = new FileStream(path, FileMode.Open, FileAccess.Read,
+                                       FileShare.Read);   // читать можно всем, писать — никому
+                _heldPath = path;
+                return true;
+            }
+            catch { _held = null; _heldPath = null; return false; }
+        }
+
+        private static void Unhold()
+        {
+            FileStream s = _held;
+            _held = null; _heldPath = null;
+            if (s != null) try { s.Dispose(); } catch { }
         }
 
         // ------------------------------------------------------------------ установка
@@ -371,6 +409,67 @@ namespace MagicKeys
         }
 
         // ------------------------------------------------------------------ мелочи
+
+        /// <summary>
+        /// Забрать файл по ссылке. Своими руками, а не WebClient, ради трёх вещей:
+        /// каждый переход проверяется на https (WebClient молча уходит с https на http),
+        /// у ожидания есть срок (иначе «Скачиваю…» висит до пяти минут молча),
+        /// и у размера есть потолок (сервер отвечает не тем, чем обещал, чаще, чем кажется).
+        /// </summary>
+        private const long MaxInstaller = 200L * 1024 * 1024;
+
+        private static bool Grab(Uri url, string path, out string error)
+        {
+            error = null;
+            Prepare();
+            Uri at = url;
+            for (int hop = 0; hop < 5; hop++)
+            {
+                if (at.Scheme != Uri.UriSchemeHttps)
+                {
+                    error = "загрузка увела с защищённого соединения";
+                    return false;
+                }
+                var request = (HttpWebRequest)WebRequest.Create(at);
+                request.UserAgent = Repo;
+                request.AllowAutoRedirect = false;
+                request.Timeout = 15000;
+                request.ReadWriteTimeout = 60000;
+                using (var response = (HttpWebResponse)request.GetResponse())
+                {
+                    int code = (int)response.StatusCode;
+                    if (code >= 300 && code < 400)
+                    {
+                        string next = response.Headers["Location"];
+                        if (String.IsNullOrEmpty(next) ||
+                            !Uri.TryCreate(at, next, out at)) { error = "сервер отправил в никуда"; return false; }
+                        continue;
+                    }
+                    if (response.ContentLength > MaxInstaller)
+                    {
+                        error = "установщик неправдоподобно велик";
+                        return false;
+                    }
+
+                    long total = 0;
+                    var buffer = new byte[64 * 1024];
+                    using (Stream from = response.GetResponseStream())
+                    using (var to = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
+                    {
+                        int read;
+                        while ((read = from.Read(buffer, 0, buffer.Length)) > 0)
+                        {
+                            total += read;
+                            if (total > MaxInstaller) { error = "установщик неправдоподобно велик"; return false; }
+                            to.Write(buffer, 0, read);
+                        }
+                    }
+                    return true;
+                }
+            }
+            error = "сервер водит по кругу";
+            return false;
+        }
 
         private static string Fetch(string url)
         {

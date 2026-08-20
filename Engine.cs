@@ -55,6 +55,16 @@ namespace MagicKeys
         // никто не просил.
         private int _macFiredVk;
 
+        // Чьё нажатие взял на себя слой аккордов: сочетания macOS, ⌘+Tab, ⌘+пробел
+        // и промах мимо таблицы при зажатой ⌘.
+        //
+        // Без этого отпускание решалось по модификаторам, зажатым в этот миг, а не по
+        // тому, как ушло нажатие. Достаточно нажать ⌥ уже ПОСЛЕ стрелки: нажатие ушло
+        // в приложение обычной стрелкой, а отпускание вдруг оказывалось ⌥+← из таблицы
+        // и проглатывалось. Стрелка оставалась зажатой навсегда — снять её нечем,
+        // человек её уже отпустил. Тем же путём залипали буква после ⌘, Tab и пробел.
+        private readonly HashSet<int> _chordTaken = new HashSet<int>();
+
         // Что мы держим за человека помимо модификаторов: действие на одиночной клавише
         // и подставленный скан-код перестановки ISO. Без учёта их некому отпустить.
         private readonly Dictionary<int, string> _singleAction = new Dictionary<int, string>();
@@ -256,6 +266,15 @@ namespace MagicKeys
             catch (Exception e) { Diag.Log("проверка перехвата: сбой", e); }
         }
 
+        /// <summary>
+        /// Отпустить всё, что программа держит за человека. Зовут при возвращении
+        /// с защищённого рабочего стола и из сна: пока на экране был Ctrl+Alt+Del
+        /// или запрос прав, отпускания шли мимо перехвата, и синтетический модификатор
+        /// оставался нажатым. Со стороны это выглядит как переставшая слушаться
+        /// клавиатура, а причина — наша.
+        /// </summary>
+        public void ReleaseHeld() { PostRelease(); }
+
         /// <summary>Попросить поток хука отпустить всё зажатое — с любого потока.</summary>
         private void PostRelease()
         {
@@ -269,6 +288,8 @@ namespace MagicKeys
             try
             {
                 _threadId = Native.GetCurrentThreadId();
+                // Разбирать файлы раскладок этому потоку нельзя — только брать готовое.
+                Layouts.ThisThreadTakesOnlyReady();
                 // Начальные значения — иначе первая же проверка через две секунды
                 // сняла бы и поставила заново совершенно исправный перехват.
                 _lastHookTick = Native.GetTickCount();
@@ -416,10 +437,19 @@ namespace MagicKeys
                 if (t != 0) return HandleNav(vk, t, down);
             }
 
+            // Отпускание идёт туда же, куда ушло нажатие. Всё, что слой аккордов взял
+            // себе, он же и отпускает — не спрашивая, какие модификаторы зажаты сейчас.
+            if (!down && _chordTaken.Remove(vk))
+            {
+                if (_macFiredVk == vk) _macFiredVk = 0;
+                return true;
+            }
+
             // ⌘+Tab ведёт себя как Alt+Tab.
             if (s.CmdTabSwitchesWindows && vk == Vk.Tab && _cmdHeld)
             {
-                if (down)
+                if (!down) return false;   // отпускание уже разобрано выше
+                _chordTaken.Add(vk);
                 {
                     if (!_cmdTabAlt)
                     {
@@ -453,9 +483,10 @@ namespace MagicKeys
                 if (vk == Vk.Space && (mm == MacMod.Cmd || mm == MacMod.Ctrl))
                 {
                     MacShortcut space = MacKeys.SpaceAction(mm == MacMod.Cmd ? s.CmdSpace : s.CtrlSpace);
-                    if (space != null)
+                    if (space != null && down)
                     {
-                        if (down) MacSend(space);
+                        MacSend(space);
+                        _chordTaken.Add(vk);
                         return true;
                     }
                 }
@@ -463,18 +494,22 @@ namespace MagicKeys
                 if (mm != MacMod.None)
                 {
                     MacShortcut sc = MacKeys.Find(vk, mm);
-                    if (sc != null && s.MacEnabled(sc.Id))
+                    // Выключенное поимённо остаётся выключенным: подставлять вместо него
+                    // общее правило значило бы не слушаться человека.
+                    bool off = sc != null && !s.MacEnabled(sc.Id);
+                    if (sc == null) sc = MacKeys.Generic(vk, mm);
+                    if (sc != null && !off)
                     {
                         // Аккорд отправляем один раз на удержание. Автоповтор приходит
                         // теми же нажатиями, а на маке такие сочетания не повторяются:
                         // задержал ⌘Q на полсекунды — и Alt+F4 уходит три десятка раз,
                         // закрывая окно за окном. Движения по тексту, наоборот, повторять
                         // надо, и они это про себя объявляют сами.
-                        if (down)
-                        {
-                            if (sc.Repeats || _macFiredVk != vk) { _macFiredVk = vk; MacSend(sc); }
-                        }
-                        else if (_macFiredVk == vk) _macFiredVk = 0;
+                        // Отпускание сюда не доходит: если нажатие взяли, его разобрали
+                        // выше; а если не взяли — оно и не наше.
+                        if (!down) return false;
+                        if (sc.Repeats || _macFiredVk != vk) { _macFiredVk = vk; MacSend(sc); }
+                        _chordTaken.Add(vk);
                         return true;
                     }
 
@@ -556,7 +591,9 @@ namespace MagicKeys
             // замерено стендом, ⌘1 открывал меню и забирал фокус.
             if (cmdMiss)
             {
-                if (down && _winDown) Input.Tap(VkNoop);
+                if (!down) return false;   // нажатия не брали — и отпускание не наше
+                if (_winDown) Input.Tap(VkNoop);
+                _chordTaken.Add(vk);
                 return true;
             }
 
@@ -579,6 +616,10 @@ namespace MagicKeys
         //  Раскладка Apple
         // ------------------------------------------------------------------
 
+        private IntPtr _layHkl;
+        private Settings _layFor;
+        private AppleLayoutFile _layFile;
+
         private IntPtr ForegroundLayout()
         {
             int now = Environment.TickCount;
@@ -590,27 +631,57 @@ namespace MagicKeys
             return _hkl;
         }
 
+        /// <summary>
+        /// Раскладка Apple для языка окна, которое сейчас впереди.
+        ///
+        /// Держится вместе с HKL те же 150 мс: LayoutFor при непривязанном языке идёт
+        /// подбирать раскладку через CultureInfo, а тот на незнакомом языке бросает
+        /// исключение — на каждое нажатие, в потоке с бюджетом в триста миллисекунд.
+        /// </summary>
         private AppleLayoutFile CurrentLayout(Settings s)
         {
             IntPtr hkl = ForegroundLayout();
-            int lang = (int)(hkl.ToInt64() & 0xFFFF);
-            return Layouts.ById(s.LayoutFor(lang));
+            if (hkl == _layHkl && _layFor == s) return _layFile;
+            _layHkl = hkl;
+            _layFor = s;
+            _layFile = Layouts.ById(s.LayoutFor((int)(hkl.ToInt64() & 0xFFFF)));
+            return _layFile;
+        }
+
+        /// <summary>Выпустить висящий знак ударения, пока для него ещё есть раскладка.</summary>
+        private void DropDead(Settings s)
+        {
+            if (_deadPrefix == null) return;
+            AppleLayoutFile lay = CurrentLayout(s);
+            if (lay != null) FlushDead(lay, false);
+            else _deadPrefix = null;
         }
 
         /// <summary>-1 — не наше дело; 0 — пропустить; 1 — проглотить.</summary>
         private int HandleLayout(Settings s, Native.KBDLLHOOKSTRUCT k, bool down)
         {
-            // Отпускание всё равно снимаем с учёта: иначе съеденный скан-код остаётся
-            // в списке до следующего сброса, и приложение однажды получит отпускание
-            // клавиши, нажатия которой не видело.
+            // Отпускание съеденного снимается всегда и раньше всего: куда ушло нажатие,
+            // туда же обязано уйти отпускание. Раньше два выхода ниже — «раскладки для
+            // языка нет» и «Alt не как третий уровень» — уходили мимо этой строки,
+            // и скан-код оставался в списке. Следующее нажатие той же клавиши шло
+            // в систему своим ходом, а её отпускание мы съедали как своё: клавиша
+            // оставалась зажатой в приложении.
+            if (!down && _swallowed.Remove(k.scanCode)) return 1;
+
             if (_ctrlSources.Count > 0 || _winSources.Count > 0)
             {
-                if (!down && _swallowed.Remove(k.scanCode)) return 1;
+                if (down) DropDead(s);
                 return -1;
             }
 
             AppleLayoutFile lay = CurrentLayout(s);
-            if (lay == null) return -1;
+            if (lay == null)
+            {
+                // Выпустить знак ударения некуда — раскладки нет. Забываем, иначе
+                // он всплывёт получасом позже поверх чужой буквы.
+                if (down) _deadPrefix = null;
+                return -1;
+            }
 
             LayoutKey key = lay.Key((int)k.scanCode);
             if (key == null)
@@ -624,7 +695,6 @@ namespace MagicKeys
                     return 1;
                 }
                 if (_deadPrefix != null && down) FlushDead(lay, false);
-                if (!down && _swallowed.Remove(k.scanCode)) return 1;
                 return -1;
             }
 
@@ -639,13 +709,15 @@ namespace MagicKeys
                 default: optWanted = false; break;
             }
             // Alt, который не просили считать третьим уровнем, оставляем меню.
-            if ((_altLeft || _altRight) && !optWanted) return -1;
-
-            if (!down)
+            if ((_altLeft || _altRight) && !optWanted)
             {
-                if (_swallowed.Remove(k.scanCode)) return 1;
+                // Alt+Tab — тоже этот путь: знак ударения выпускаем в то окно, где его
+                // набрали, а не в то, куда сейчас уйдут.
+                if (down && _deadPrefix != null) FlushDead(lay, false);
                 return -1;
             }
+
+            if (!down) return -1;
 
             string text = key.Text(ShiftDown, optWanted);
             if (text == null) return -1;
@@ -1111,6 +1183,10 @@ namespace MagicKeys
                 _phantomCtrl = false;
                 _cmdHeld = false;
                 _macFiredVk = 0;
+                _chordTaken.Clear();
+                // Настройки могли смениться — запомненную раскладку окна забываем.
+                _layHkl = IntPtr.Zero; _layFor = null; _layFile = null;
+                _hkl = IntPtr.Zero;
                 _deadPrefix = null;
                 _swallowed.Clear();
                 _ctrlSources.Clear();

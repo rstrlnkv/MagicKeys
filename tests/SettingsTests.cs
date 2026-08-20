@@ -48,6 +48,7 @@ namespace MagicKeys
             MacShortcuts();
             SpaceRoles();
             AppleLayout();
+            ModifierChangedMidPress();
             SnapshotIndependence();
             LayoutGuess();
             OtherSettings();
@@ -498,6 +499,41 @@ namespace MagicKeys
             Shielded("выключенное поимённо не срабатывает и не зовёт Windows", sw);
             Up(0x43); Up(Vk.LWin); Clear();
 
+            // ⌘ с клавишей, которой в таблице нет, — то же самое с control.
+            s = Fresh();
+            Use(s);
+            Down(Vk.LWin); Clear();
+            sw = Down(0x4B);            // ⌘K
+            Seq("⌘K → Ctrl+K, хотя в таблице его нет", sw,
+                N(Vk.LControl) + "v", "Kv", "K^", N(Vk.LControl) + "^");
+            Up(0x4B); Up(Vk.LWin); Clear();
+
+            Down(Vk.LWin); Down(Vk.LShift); Clear();
+            sw = Down(0x4E);            // ⇧⌘N
+            Seq("⇧⌘N → Ctrl+Shift+N", sw,
+                N(Vk.LControl) + "v", N(Vk.LShift) + "v", "Nv", "N^");
+            Up(0x4E); Up(Vk.LShift); Up(Vk.LWin); Clear();
+
+            // А выключенное поимённо общее правило не воскрешает.
+            s = Fresh();
+            s.MacShortcutsOff = new string[] { "copy" };
+            Use(s);
+            Down(Vk.LWin); Clear();
+            sw = Down(0x43);
+            Shielded("выключенное ⌘C общим правилом не оживает", sw);
+            Up(0x43); Up(Vk.LWin); Clear();
+
+            // Правило не берёт то, у чего есть свой хозяин: верхний ряд разбирается
+            // ниже и остаётся за ним, даже когда зажата ⌘.
+            s = Fresh();
+            s.MediaFirst = true;
+            s.FKeys[4] = "key.home";
+            Use(s);
+            Down(Vk.LWin); Clear();
+            sw = Down(Vk.F1 + 4); Up(Vk.F1 + 4);
+            Tapped("⌘ с F-клавишей достаётся верхнему ряду", sw, Vk.Home);
+            Up(Vk.LWin); Clear();
+
             s = Fresh(); s.MacShortcuts = false;
             Use(s);
             Down(Vk.LWin); Clear();
@@ -536,6 +572,81 @@ namespace MagicKeys
             sw = Down(Vk.Space); Up(Vk.Space);
             Shielded("⌘Space отключён — и «Пуск» не открывается", sw);
             Up(Vk.LWin); Clear();
+        }
+
+        /// <summary>
+        /// Модификатор нажали или отпустили между нажатием и отпусканием клавиши.
+        ///
+        /// Это самая тихая поломка, какая здесь бывает: если отпускание проглотили,
+        /// а нажатие ушло в систему, клавиша остаётся зажатой навсегда — снять её
+        /// нечем, человек её уже отпустил. Правило одно: куда ушло нажатие, туда же
+        /// обязано уйти и отпускание, что бы ни изменилось между ними.
+        /// </summary>
+        static void ModifierChangedMidPress()
+        {
+            Head("Модификатор сменился посреди нажатия");
+            Settings s = Fresh();
+            Use(s);
+
+            // ⌥ нажали ПОСЛЕ стрелки: нажатие ушло в систему как обычная стрелка.
+            bool swDown = Down(Vk.Left);
+            Down(Vk.LMenu);
+            Clear();
+            bool swUp = Up(Vk.Left);
+            Check("стрелка: ⌥ нажали после — отпускание уходит следом за нажатием",
+                  !swDown && !swUp, "нажатие проглочено=" + swDown + ", отпускание=" + swUp);
+            Clear();
+            Up(Vk.LMenu); Clear();
+
+            // ⌘ нажали после буквы: то же самое.
+            swDown = Down(0x53);            // S
+            Down(Vk.LWin);
+            Clear();
+            swUp = Up(0x53);
+            Check("буква: ⌘ нажали после — отпускание уходит следом за нажатием",
+                  !swDown && !swUp, "нажатие проглочено=" + swDown + ", отпускание=" + swUp);
+            Clear();
+            Up(Vk.LWin); Clear();
+
+            // Tab нажали до ⌘: переключателя окон не начинали, отпускать нечего.
+            swDown = Down(Vk.Tab);
+            Down(Vk.LWin);
+            Clear();
+            swUp = Up(Vk.Tab);
+            Check("Tab: ⌘ нажали после — отпускание уходит следом за нажатием",
+                  !swDown && !swUp, "нажатие проглочено=" + swDown + ", отпускание=" + swUp);
+            Clear();
+            Up(Vk.LWin); Clear();
+
+            // Пробел нажали до ⌘.
+            swDown = Down(Vk.Space);
+            Down(Vk.LWin);
+            Clear();
+            swUp = Up(Vk.Space);
+            Check("пробел: ⌘ нажали после — отпускание уходит следом за нажатием",
+                  !swDown && !swUp, "нажатие проглочено=" + swDown + ", отпускание=" + swUp);
+            Clear();
+            Up(Vk.LWin); Clear();
+
+            // А обратный порядок обязан работать по-прежнему: сначала ⌘, потом клавиша.
+            Down(Vk.LWin); Clear();
+            swDown = Down(0x43);            // ⌘C
+            Seq("⌘ держали заранее — сочетание работает", swDown,
+                N(Vk.LControl) + "v", "Cv", "C^", N(Vk.LControl) + "^");
+            swUp = Up(0x43);
+            Check("и его отпускание проглочено", swUp, "отпускание=" + swUp);
+            Clear();
+            Up(Vk.LWin); Clear();
+
+            // ⌥ отпустили раньше клавиши: нажатие ушло аккордом, отпускание — тоже наше.
+            Down(Vk.LMenu); Clear();
+            swDown = Down(Vk.Left);         // ⌥← = по словам влево
+            Clear();
+            Up(Vk.LMenu); Clear();
+            swUp = Up(Vk.Left);
+            Check("⌥ отпустили раньше стрелки — отпускание всё равно наше",
+                  swDown && swUp, "нажатие=" + swDown + ", отпускание=" + swUp);
+            Clear();
         }
 
         static void AppleLayout()

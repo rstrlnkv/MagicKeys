@@ -327,19 +327,28 @@ namespace MagicKeys
         public const uint FILE_SHARE_READWRITE = 3;
         public const uint GENERIC_READ = 0x80000000;
 
-        [DllImport("hid.dll", SetLastError = true)]
+        // У всех HidD_* возврат — BOOLEAN, то есть один байт. Без пометки маршалер
+        // читает четыре, а старшие три по соглашению о вызове не определены: «работает»
+        // ровно до того дня, когда компилятор перестанет обнулять регистр.
+        [DllImport("hid.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.U1)]
         public static extern bool HidD_GetInputReport(IntPtr h, [In, Out] byte[] buffer, int size);
 
-        [DllImport("hid.dll", SetLastError = true)]
+        [DllImport("hid.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.U1)]
         public static extern bool HidD_GetFeature(IntPtr h, [In, Out] byte[] buffer, int size);
 
-        [DllImport("hid.dll", SetLastError = true)]
+        [DllImport("hid.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.U1)]
         public static extern bool HidD_SetFeature(IntPtr h, [In] byte[] buffer, int size);
 
         // ---------- разбор отчётов HID: медиастраница и Eject ----------
 
         public const uint RIDI_PREPARSEDDATA = 0x20000005;
         public const int HIDP_INPUT = 0;
+        // Успех у разбора отчётов HID — не ноль. Код собирается как
+        // (важность &lt;&lt; 28) | (0x11 &lt;&lt; 16) | номер, и код средства 0x11 подмешан
+        // даже в удачу. Сверка с нулём отбрасывала каждый разобранный отчёт:
+        // медиакоды не замечались никогда, а с ними — ни ⏏, ни коды яркости,
+        // ни строка «замечено кодов» в окне.
+        public const int HIDP_STATUS_SUCCESS = unchecked((int)0x00110000);
         public const ushort UsagePageConsumer = 0x0C;
         public const ushort UsageEject = 0xB8;
 
@@ -393,9 +402,12 @@ namespace MagicKeys
         public static extern int HidP_GetUsages(int reportType, ushort usagePage, ushort linkCollection,
             [In, Out] ushort[] usageList, ref uint usageLength, IntPtr preparsed, IntPtr report, uint reportLength);
 
-        [DllImport("hid.dll")] public static extern bool HidD_GetProductString(IntPtr h, [Out] byte[] buffer, int size);
-        [DllImport("hid.dll")] public static extern bool HidD_GetManufacturerString(IntPtr h, [Out] byte[] buffer, int size);
-        [DllImport("hid.dll")] public static extern bool HidD_GetSerialNumberString(IntPtr h, [Out] byte[] buffer, int size);
+        [DllImport("hid.dll")] [return: MarshalAs(UnmanagedType.U1)]
+        public static extern bool HidD_GetProductString(IntPtr h, [Out] byte[] buffer, int size);
+        [DllImport("hid.dll")] [return: MarshalAs(UnmanagedType.U1)]
+        public static extern bool HidD_GetManufacturerString(IntPtr h, [Out] byte[] buffer, int size);
+        [DllImport("hid.dll")] [return: MarshalAs(UnmanagedType.U1)]
+        public static extern bool HidD_GetSerialNumberString(IntPtr h, [Out] byte[] buffer, int size);
 
         // ---------- скрытое окно для сырого ввода ----------
 

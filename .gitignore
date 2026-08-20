@@ -1,6 +1,13 @@
 # Сборка
 MagicKeys.exe
 *.pdb
+BuildInfo.g.cs
+
+# Установщик: пакеты и подтянутый набор WiX
+*.msi
+*.wixpdb
+/installer/obj/
+/installer/wix/
 
 # Драйверы Apple: несвободные файлы, публиковать нельзя — см. drivers/ЧИТАЙ.md
 drivers/

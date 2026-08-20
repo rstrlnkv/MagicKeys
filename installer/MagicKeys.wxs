@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  MagicKeys — настройка Apple Magic Keyboard для Windows.
+  Copyright (C) 2026 r.strlnkv
+  Свободная программа под GNU General Public License v3 или новее; см. LICENSE.
+
+  Устройство пакета списано с соседней программы DIIISPL — нарочно: два установщика
+  одного автора, устроенные по-разному, — это два набора неожиданностей вместо одного.
+
+  Отличий два, и оба по делу. Каналов сборки здесь нет: Stable и Dev у MagicKeys —
+  это выбор человека в самой программе, а не разные сборки, поэтому пакет один.
+  И набор окон стандартный, из WiX: свои рисовать не для чего, пока нечего ими
+  сказать сверх того, что говорят обычные.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension">
+
+  <Product Id="*"
+           Name="MagicKeys"
+           Language="1049"
+           Codepage="1251"
+           Version="$(var.Version)"
+           Manufacturer="Rostislav Strelnikov"
+           UpgradeCode="A32F9840-B221-44E1-85E5-02D76E790FA2">
+
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Description="MagicKeys — клавиатуры Apple в Windows"
+             Comments="Свободная программа под GNU GPL v3 или новее"
+             Languages="1049"
+             SummaryCodepage="1251" />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Новая версия заменяет прежнюю, а не встаёт рядом с ней. -->
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="Уже установлена более новая версия MagicKeys." />
+
+    <!--
+      Программа живёт в трее и держит низкоуровневый перехват клавиатуры. Если её
+      не закрыть, файл окажется занятым и установка потребует перезагрузки.
+    -->
+    <util:CloseApplication Id="CloseMagicKeys"
+                           Target="MagicKeys.exe"
+                           CloseMessage="yes"
+                           TerminateProcess="1"
+                           RebootPrompt="no" />
+
+    <Icon Id="MagicKeys.ico" SourceFile="$(var.SourceDir)\MagicKeys.ico" />
+    <Property Id="ARPPRODUCTICON" Value="MagicKeys.ico" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/rstrlnkv/MagicKey" />
+
+    <!-- Иначе в списке установленных программ расположение и размер остаются пустыми. -->
+    <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" />
+
+    <!--
+      Обновление обязано встать туда же, где стояла прежняя версия, и не спрашивать
+      об этом заново: человек выбрал папку один раз.
+    -->
+    <Property Id="INSTALLFOLDER">
+      <RegistrySearch Id="PrevInstallFolder" Root="HKLM" Key="Software\MagicKeys"
+                      Name="InstallFolder" Type="raw" Win64="yes" />
+    </Property>
+
+    <!--
+      Был ли ярлык в прошлый раз. Если человек от него отказался, обновление
+      не должно возвращать его молча.
+    -->
+    <Property Id="PREVSHORTCUT">
+      <RegistrySearch Id="PrevShortcut" Root="HKLM" Key="Software\MagicKeys"
+                      Name="StartMenuShortcut" Type="raw" Win64="yes" />
+    </Property>
+    <SetProperty Id="INSTALLSHORTCUT" Value="0" After="AppSearch" Sequence="both">
+      PREVSHORTCUT AND PREVSHORTCUT = "#0"
+    </SetProperty>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="MagicKeys" />
+      </Directory>
+      <Directory Id="ProgramMenuFolder" />
+    </Directory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component Id="MainProgram" Guid="*" Win64="yes">
+        <File Id="MagicKeys.exe" Source="$(var.BinDir)\MagicKeys.exe" KeyPath="yes" />
+      </Component>
+
+      <Component Id="License" Guid="*" Win64="yes">
+        <File Id="LICENSE.txt" Source="$(var.SourceDir)\LICENSE" Name="LICENSE.txt" KeyPath="yes" />
+      </Component>
+
+      <Component Id="Readme" Guid="*" Win64="yes">
+        <File Id="README.md" Source="$(var.SourceDir)\README.md" KeyPath="yes" />
+      </Component>
+
+      <!-- Куда поставили. Читается при следующем обновлении, см. RegistrySearch выше. -->
+      <Component Id="InstallState" Guid="*" Win64="yes">
+        <RegistryValue Root="HKLM" Key="Software\MagicKeys" Name="InstallFolder"
+                       Type="string" Value="[INSTALLFOLDER]" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!--
+      Раскладки — отдельным набором файлов. Их тридцать три, и перечислять каждый
+      руками значило бы забыть новый при первом же добавлении, поэтому список
+      создаётся при сборке пакета (см. build-msi.cmd, heat.exe).
+    -->
+
+    <!--
+      Ярлык отдельным компонентом, а не довеском к файлу программы: иначе от него
+      нельзя отказаться — компонент ставится целиком. Ключом здесь запись в реестре,
+      потому что сам ярлык ключом быть не может.
+    -->
+    <Property Id="INSTALLSHORTCUT" Value="1" Secure="yes" />
+
+    <DirectoryRef Id="ProgramMenuFolder">
+      <Component Id="StartMenuShortcut" Guid="*" Win64="yes">
+        <!--
+          Сравнение со значением обязательно: голое имя свойства истинно при любой
+          непустой строке, а «0» — тоже непустая строка, и ярлык создавался бы
+          даже при снятом флажке.
+        -->
+        <Condition>INSTALLSHORTCUT = "1"</Condition>
+        <Shortcut Id="MagicKeysShortcut"
+                  Name="MagicKeys"
+                  Description="Клавиатуры Apple в Windows"
+                  Target="[INSTALLFOLDER]MagicKeys.exe"
+                  WorkingDirectory="INSTALLFOLDER"
+                  Icon="MagicKeys.ico" />
+        <RegistryValue Root="HKLM" Key="Software\MagicKeys" Name="StartMenuShortcut"
+                       Type="integer" Value="1" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="Main" Title="MagicKeys" Level="1" Absent="disallow"
+             ConfigurableDirectory="INSTALLFOLDER"
+             Description="Настройка клавиатур Apple в Windows.">
+      <ComponentRef Id="MainProgram" />
+      <ComponentRef Id="License" />
+      <ComponentRef Id="Readme" />
+      <ComponentRef Id="InstallState" />
+      <ComponentRef Id="StartMenuShortcut" />
+      <ComponentGroupRef Id="LayoutFiles" />
+    </Feature>
+
+    <!-- Галочка «запустить» в последнем окне обычной установки. -->
+    <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="Запустить MagicKeys" />
+    <Property Id="WixShellExecTarget" Value="[#MagicKeys.exe]" />
+    <CustomAction Id="LaunchApplication" BinaryKey="WixCA" DllEntry="WixShellExec"
+                  Impersonate="yes" Return="ignore" />
+
+    <!--
+      Обновление изнутри программы. Свойство передаёт сам Updater, поэтому обычная
+      установка руками этим путём не идёт — там за запуск отвечает галочка выше.
+      Действие немедленное и без ожидания: оно выполняется от имени того, кто
+      обновлялся, а держать установщик открытым, пока живёт программа, незачем.
+    -->
+    <Property Id="MAGICKEYSRELAUNCH" Secure="yes" />
+    <SetProperty Id="RelaunchExe" Value="[INSTALLFOLDER]MagicKeys.exe"
+                 Before="RelaunchInTray" Sequence="execute" />
+    <CustomAction Id="RelaunchInTray" Property="RelaunchExe" ExeCommand="--tray"
+                  Execute="immediate" Return="asyncNoWait" />
+
+    <!--
+      Убрать запись автозапуска при удалении программы.
+
+      Автозапуск включает сама программа — галочкой на странице «Общие», — и запись
+      при этом ложится в ветку пользователя. Пакет ставится на всю машину, про эту
+      запись не знает, и после удаления она осталась бы висеть: Windows при каждом
+      входе пыталась бы запустить файл, которого больше нет.
+
+      Действие именно немедленное. Отложенные при установке на машину выполняются
+      от имени системы, и HKCU там — ветка системной учётной записи, а не того, кто
+      удаляет. Return="ignore" обязателен: если автозапуск не включали, reg вернёт
+      «нет такого значения», и удаление не должно на этом останавливаться.
+    -->
+    <SetProperty Id="MagicKeysRegExe" Value="[System64Folder]reg.exe"
+                 Before="CleanAutoStart" Sequence="execute" />
+    <CustomAction Id="CleanAutoStart" Property="MagicKeysRegExe"
+                  ExeCommand="delete &quot;HKCU\Software\Microsoft\Windows\CurrentVersion\Run&quot; /v MagicKeys /f"
+                  Execute="immediate" Return="ignore" />
+
+    <InstallExecuteSequence>
+      <Custom Action="CleanAutoStart" Before="RemoveFiles">REMOVE="ALL"</Custom>
+      <Custom Action="RelaunchInTray" After="InstallFinalize">MAGICKEYSRELAUNCH="1" AND NOT REMOVE="ALL"</Custom>
+    </InstallExecuteSequence>
+
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="$(var.LicenseRtf)" />
+    <UIRef Id="WixUI_InstallDir" />
+
+    <UI>
+      <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">
+        WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed
+      </Publish>
+    </UI>
+
+  </Product>
+</Wix>

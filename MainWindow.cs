@@ -1556,19 +1556,15 @@ namespace MagicKeys
             return t;
         }
 
-        /// <summary>Три числа в строку: версия, сборка, сколько раскладок.</summary>
+        /// <summary>Два числа в строку: версия и номер сборки.</summary>
         private static UIElement AboutNumbers()
         {
             var grid = new Grid();
-            for (int i = 0; i < 3; i++)
+            for (int i = 0; i < 2; i++)
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-            int layouts = 0;
-            try { layouts = Layouts.All.Count; } catch { }
 
             AboutNumber(grid, 0, BuildInfo.Version, "ВЕРСИЯ");
             AboutNumber(grid, 1, BuildInfo.Number, "СБОРКА");
-            AboutNumber(grid, 2, layouts.ToString(), "РАСКЛАДКИ");
 
             return new Border
             {

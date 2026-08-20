@@ -27,7 +27,7 @@ namespace MagicKeys
     internal static class Updater
     {
         public const string Owner = "rstrlnkv";
-        public const string Repo = "MagicKey";
+        public const string Repo = "MagicKeys";
 
         /// <summary>
         /// Отпечаток сертификата, которым подписаны сборки. Скачанный установщик обязан

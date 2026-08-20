@@ -139,7 +139,7 @@ namespace MagicKeys
             return _current;
         }
 
-        public static ResourceDictionary Build()
+        private static ResourceDictionary Build()
         {
             bool dark = IsDark;
             Color accent = Accent();

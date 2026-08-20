@@ -77,7 +77,7 @@ namespace MagicKeys
         }
 
         /// <summary>Второй байт отчёта — состояние. Показываем его только в журнале.</summary>
-        public static int Flags
+        private static int FlagsUnused
         {
             get { lock (Sync) return _flags; }
         }

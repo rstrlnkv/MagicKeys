@@ -697,14 +697,18 @@ namespace MagicKeys
             // при распаковке из установщика с проверенной подписью. Копию из Program Files
             // или из ветки HKLM так не проверяем: туда без прав администратора не записать,
             // а если они есть, защищать уже нечего.
+            // Держим открытыми оба: и фасад, и библиотеку. Пока они открыты без права
+            // записи, подменить их между проверкой и запуском нельзя.
+            string dll = Path.Combine(Path.GetDirectoryName(sevenZip), "7z.dll");
             using (FileStream keep = Open(sevenZip))
+            using (FileStream keepDll = File.Exists(dll) ? Open(dll) : null)
             {
                 if (keep == null)
                 {
                     error = "7-Zip занят другой программой";
                     return false;
                 }
-                if (!TrustedSevenZip(sevenZip, keep, out error)) return false;
+                if (!TrustedSevenZip(sevenZip, keep, keepDll, out error)) return false;
                 return Run7zHeld(sevenZip, args, out error);
             }
         }
@@ -725,25 +729,74 @@ namespace MagicKeys
             "4cd7d776c686427226a151789d2d61f0b2ed2c392148cc4e69c0238362fafecf";
 
         /// <summary>
+        /// И сумма 7z.dll — из того же установщика. Сам 7z.exe весит 575 КБ и без этой
+        /// библиотеки не распаковывает ничего: все обработчики форматов в ней. Закрепить
+        /// один фасад значило закрыть проверку наполовину — подменивший библиотеку
+        /// получал исполнение внутри процесса, который выбирает .inf для установки
+        /// драйвера с правами администратора.
+        /// </summary>
+        private const string SevenZipDllSha256 =
+            "5bd20fb38499d95c39594f41d4781b6181b3304b7f1f4d06b0182f514e7eaa74";
+
+        /// <summary>
         /// Можно ли верить этому 7z.exe. Файл уже открыт без права записи, и сумма
         /// считается по открытому — подменить его между проверкой и запуском нельзя.
         /// </summary>
-        private static bool TrustedSevenZip(string path, FileStream open, out string error)
+        private static bool TrustedSevenZip(string path, FileStream open, FileStream dll, out string error)
         {
             error = null;
-            string mine = Path.GetFullPath(ToolsFolder);
-            if (!Path.GetFullPath(path).StartsWith(mine, StringComparison.OrdinalIgnoreCase))
-                return true;   // не наша копия — значит из места, куда пишет администратор
+            if (WrittenOnlyByAdmin(path)) return true;
 
             string now = HashOf(open);
             if (!String.Equals(now, SevenZipSha256, StringComparison.OrdinalIgnoreCase))
             {
                 Diag.Log("7z.exe не тот, что кладёт официальный установщик: " + now);
-                error = "7-Zip в папке программы не тот, что кладёт официальный установщик — "
-                      + "уберите скачанное и повторите";
+                error = "7-Zip не тот, что кладёт официальный установщик — уберите скачанное и повторите";
+                return false;
+            }
+            if (dll == null)
+            {
+                error = "рядом с 7z.exe нет 7z.dll — распаковывать нечем";
+                return false;
+            }
+            string nowDll = HashOf(dll);
+            if (!String.Equals(nowDll, SevenZipDllSha256, StringComparison.OrdinalIgnoreCase))
+            {
+                Diag.Log("7z.dll не та, что кладёт официальный установщик: " + nowDll);
+                error = "7z.dll не та, что кладёт официальный установщик — уберите скачанное и повторите";
                 return false;
             }
             return true;
+        }
+
+        /// <summary>
+        /// Лежит ли файл там, куда без прав администратора не записать.
+        ///
+        /// Судим по месту, а не по происхождению пути. Прежнее правило считало доверенным
+        /// всё, что не в своей папке, — в том числе путь из ветки HKLM, а его записал
+        /// установщик 7-Zip, и указывать он может куда угодно, включая папку профиля,
+        /// открытую на запись любому процессу этого пользователя.
+        /// </summary>
+        private static bool WrittenOnlyByAdmin(string path)
+        {
+            try
+            {
+                string full = Path.GetFullPath(path);
+                foreach (Environment.SpecialFolder f in new[]
+                {
+                    Environment.SpecialFolder.ProgramFiles,
+                    Environment.SpecialFolder.ProgramFilesX86,
+                    Environment.SpecialFolder.Windows
+                })
+                {
+                    string root = Environment.GetFolderPath(f);
+                    if (String.IsNullOrEmpty(root)) continue;
+                    if (!root.EndsWith("\\")) root += "\\";
+                    if (full.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return true;
+                }
+            }
+            catch (Exception e) { Diag.Log("не удалось выяснить, где лежит 7-Zip", e); }
+            return false;
         }
 
         /// <summary>Сумма уже открытого файла — без второго открытия и без окна для подмены.</summary>

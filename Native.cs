@@ -383,8 +383,10 @@ namespace MagicKeys
                 case 0xE2: return "без звука";
                 case 0xE9: return "громче";
                 case 0xEA: return "тише";
-                case 0x6A: return "подсветка клавиш ярче";
-                case 0x6B: return "подсветка клавиш темнее";
+                // По документу HID Usage Tables подсветка клавиатуры — 0x79/0x7A;
+                // 0x6A и 0x6B не назначены ничему.
+                case 0x79: return "подсветка клавиш ярче";
+                case 0x7A: return "подсветка клавиш темнее";
                 case 0x192: return "калькулятор";
                 case 0x221: return "поиск";
                 case 0x223: return "домашняя страница";

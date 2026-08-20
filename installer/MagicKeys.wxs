@@ -57,7 +57,7 @@
 
     <Icon Id="MagicKeys.ico" SourceFile="$(var.SourceDir)\MagicKeys.ico" />
     <Property Id="ARPPRODUCTICON" Value="MagicKeys.ico" />
-    <Property Id="ARPURLINFOABOUT" Value="https://github.com/rstrlnkv/MagicKey" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/rstrlnkv/MagicKeys" />
 
     <!-- Иначе в списке установленных программ расположение и размер остаются пустыми. -->
     <SetProperty Id="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" After="CostFinalize" />

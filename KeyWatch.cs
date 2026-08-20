@@ -240,7 +240,7 @@ namespace MagicKeys
                     Native.DispatchMessageW(ref msg);
                 }
             }
-            catch (Exception e) { Diag.Log("перепись клавиш: сбой", e); }
+            catch (Exception e) { Fail("сбой: " + e.GetType().Name + ": " + e.Message); }
             finally
             {
                 if (_window != IntPtr.Zero) { Native.DestroyWindow(_window); _window = IntPtr.Zero; }

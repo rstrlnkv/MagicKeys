@@ -172,10 +172,12 @@ namespace MagicKeys
         }
 
         /// <summary>
-        /// Пересобирает содержимое под новое оформление. Кисти и стили, присвоенные
-        /// значением при постройке страницы, сами не перекрашиваются, поэтому проще
-        /// собрать страницу заново — она и так строится за миллисекунды.
+        /// Обновляет строку об устройствах в подвале и пересобирает страницу: пришедшая
+        /// клавиатура меняет и подписи клавиш, и заводские назначения верхнего ряда.
         /// </summary>
+        /// <summary>Что показывалось в прошлый раз — чтобы не пересобирать страницу зря.</summary>
+        private string _deviceMark;
+
         public void RefreshDevices()
         {
             IList<KeyboardInfo> all = Devices.Known;
@@ -190,10 +192,15 @@ namespace MagicKeys
             else
                 _deviceLine.Text = "Клавиатура Apple не найдена. Клавиатур в системе: " + all.Count + ".";
 
-            // Перестраиваем любую страницу, а не только «Диагностику»: приход другой
-            // клавиатуры переписывает заводские назначения верхнего ряда и подписи
-            // клавиш, и страница «Клавиши» оставалась с прежними — на экране одно,
-            // в настройках другое.
+            // Перестраиваем, только когда на экране правда что-то поменялось. Событий
+            // приходит много — каждая впервые нажатая клавиша, каждый ответ о заряде,
+            // каждый опрос устройств, — а перестройка стирает список на странице проверки
+            // и роняет раскрытый список под указателем.
+            string now = all.Count + "|" + apple + "|" + KeyWatch.MaxFunctionKey + "|"
+                       + (int)KeyWatch.DetectedPhysical + "|" + KeyboardBattery.Percent + "|"
+                       + (Devices.AppleModel == null ? "" : Devices.AppleModel.Name);
+            if (now == _deviceMark) return;
+            _deviceMark = now;
             BuildPage();
         }
 
@@ -377,6 +384,9 @@ namespace MagicKeys
                           "Fn+Backspace удаляет вперёд, Fn+Enter — это Insert."),
                 Note(AppleDriver.TakesFunctionRow
                     ? "С драйвером Apple настоящая Fn работает, и заменитель не нужен."
+                    : _s.FnSubstitute == ModKey.None
+                    ? "Magic Keyboard не отправляет Fn в Windows — её обрабатывает сама " +
+                      "клавиатура. Поэтому и нужна замена: выберите клавишу выше."
                     : "Magic Keyboard не отправляет Fn в Windows — её обрабатывает сама " +
                       "клавиатура. Поэтому нужна замена. Выбранная клавиша сохраняет своё " +
                       "обычное значение; если она нужна только как Fn, отключите его — " +
@@ -970,6 +980,13 @@ namespace MagicKeys
                      "а переводит сами сочетания. Поэтому получается и то, чего заменой " +
                      "клавиш не добиться: ⌘← уходит в начало строки, ⌘Q закрывает программу.")));
 
+            // Переключение окон — до общего выключателя: ⌘+Tab работает независимо
+            // от него (Engine спрашивает свою настройку), и, спрятав карточку вместе
+            // с остальными, мы отбирали у настройки единственного хозяина.
+            stack.Children.Add(Card("Переключение окон", null,
+                Toggle("⌘+Tab переключает окна, как Alt+Tab", _s.CmdTabSwitchesWindows,
+                    delegate(bool v) { _s.CmdTabSwitchesWindows = v; Save(); })));
+
             if (!_s.MacShortcuts) return stack;
 
             // Один вопрос вместо двух. На маке поиск живёт на одной из двух клавиш,
@@ -996,10 +1013,6 @@ namespace MagicKeys
                         ? "Пробел с модификатором остаётся программам как есть."
                         : "Второй клавише достаётся переключение языка — через собственный " +
                           "переключатель Windows.")));
-
-            stack.Children.Add(Card("Переключение окон", null,
-                Toggle("⌘+Tab переключает окна, как Alt+Tab", _s.CmdTabSwitchesWindows,
-                    delegate(bool v) { _s.CmdTabSwitchesWindows = v; Save(); })));
 
             // Три группы вместо шести десятков строк. Человек либо хочет всё — а хочет он
             // всё почти всегда, — либо ему мешает ровно одно сочетание; ради второго
@@ -1120,8 +1133,10 @@ namespace MagicKeys
                 IsChecked = _s.MacEnabled(id),
                 VerticalAlignment = VerticalAlignment.Center
             };
-            cb.Checked += delegate { if (!_building) { _s.MacSet(id, true); Save(); } };
-            cb.Unchecked += delegate { if (!_building) { _s.MacSet(id, false); Save(); } };
+            // Перестраиваем: над строками стоит переключатель всей группы, и он считает
+            // себя по ним. Без перестройки он оставался выключенным над включённой строкой.
+            cb.Checked += delegate { if (!_building) { _s.MacSet(id, true); Save(); BuildPage(); } };
+            cb.Unchecked += delegate { if (!_building) { _s.MacSet(id, false); Save(); BuildPage(); } };
             Grid.SetColumn(cb, 0);
 
             var mid = new StackPanel();
@@ -1311,12 +1326,14 @@ namespace MagicKeys
                     "Медиа сразу — как на маке" + (fb == 1 ? "  ·  сейчас так" : ""),
                     "F1–F12 сами дают громкость и перемотку, обычные F-клавиши — через Fn. " +
                     "Делает это драйвер; MagicKeys функциональный ряд не трогает. " +
-                    "Яркость при этом пропадает: F1 и F2 драйвер съедает и наружу не отдаёт.",
+                    "Яркость остаётся: драйвер переводит F1 и F2 в коды, которые Windows " +
+                    "применяет только к панели ноутбука, — программа ловит их и отдаёт " +
+                    "внешним мониторам сама.",
                     delegate { ApplyFnBehavior(1); }));
                 modes.Children.Add(PresetButton(
                     "F-клавиши сразу" + (fb == 0 ? "  ·  сейчас так" : ""),
                     "F1–F12 приходят обычными F-клавишами, и переназначает их MagicKeys — " +
-                    "тогда доступна и яркость внешних мониторов, которой у драйвера нет.",
+                    "яркостью внешних мониторов занимается программа.",
                     delegate { ApplyFnBehavior(0); }));
                 if (!String.IsNullOrEmpty(_fnNotice))
                 {
@@ -1348,10 +1365,11 @@ namespace MagicKeys
                 }
 
                 stack.Children.Add(Card("Кто занимается функциональным рядом", null,
-                    Note("Выбор между двумя вещами, которые вместе не получаются. Драйвер даёт " +
-                         "медиаклавиши и настоящую Fn, но забирает F1 и F2 себе и никому их " +
-                         "не отдаёт — яркости внешних мониторов с ним не будет. MagicKeys яркость " +
-                         "умеет, но действует на весь ввод, а не только на клавиатуру Apple."),
+                    Note("Драйвер даёт медиаклавиши и настоящую Fn, но переназначать верхний " +
+                         "ряд по-своему с ним нельзя: этим занимается он. MagicKeys переназначает " +
+                         "как угодно, но действует на весь ввод, а не только на клавиатуру Apple. " +
+                         "Яркость внешних мониторов работает в обоих случаях — коды от драйвера " +
+                         "программа ловит и отдаёт мониторам сама."),
                     modes));
             }
 
@@ -1506,13 +1524,23 @@ namespace MagicKeys
                 remove.SetResourceReference(StyleProperty, "Btn");
                 remove.Click += delegate
                 {
-                    string output;
-                    bool ok = AppleDriverSetup.Uninstall("keymagic2.inf", out output);
-                    ToWindow(delegate { if (CurrentPage == "driver") BuildPage(); });
-                    SetupSay((ok ? "Драйвер удалён."
-                                 : "Удалить не вышло — возможно, отклонён запрос прав администратора.")
-                             + "\n\n" + output);
-                    AppleDriver.Refresh(true);
+                    // В стороне: внутри ждём установщик драйверов Windows до пяти минут,
+                    // и всё это время наверху висит запрос прав. На потоке окна это
+                    // означало бы «программа не отвечает» ровно тогда, когда человек
+                    // на неё смотрит.
+                    remove.IsEnabled = false;
+                    SetupSay("Удаляю драйвер…");
+                    ThreadPool.QueueUserWorkItem(delegate
+                    {
+                        string output;
+                        bool ok = false;
+                        try { ok = AppleDriverSetup.Uninstall("keymagic2.inf", out output); }
+                        catch (Exception e) { output = e.Message; }
+                        SetupSay((ok ? "Драйвер удалён."
+                                     : "Удалить не вышло.") + "\n\n" + output);
+                        try { AppleDriver.Refresh(true); } catch { }
+                        ToWindow(delegate { if (CurrentPage == "driver") BuildPage(); });
+                    });
                 };
                 buttons.Children.Add(remove);
             }
@@ -2027,6 +2055,10 @@ namespace MagicKeys
 
         private void SetChannel(string channel)
         {
+            // Пока идёт проверка, канал не меняем: ответ придёт по прежнему и ляжет
+            // как ответ по новому — то есть перешедшему на Stable предложат раннюю сборку.
+            if (_updBusy) return;
+
             if (_s.UpdateChannel == channel) return;
             _s.UpdateChannel = channel;
             Save();
@@ -2085,9 +2117,9 @@ namespace MagicKeys
                     // проверки, человек возвращался к вечному «Проверяю…» и мёртвой
                     // кнопке — снять флаг было больше нечем.
                     _updBusy = false;
-                    if (_updStatus == null) return;   // ушли со страницы
+                    _updFound = found;                // до выхода: иначе найденный
+                    if (_updStatus == null) return;   // выпуск терялся вместе с уходом
                     _updAction.IsEnabled = true;
-                    _updFound = found;
                     if (found != null)
                     {
                         _updStatus.Text = "Есть новый выпуск " + found.Tag;
@@ -2121,8 +2153,10 @@ namespace MagicKeys
 
                 ToWindow(delegate
                 {
-                    if (_updStatus == null) return;
+                    // Раньше выхода: ушёл со страницы во время «Скачиваю…» — и признак
+                    // оставался включённым навсегда, а кнопка мёртвой до перезапуска.
                     _updBusy = false;
+                    if (_updStatus == null) return;
                     _updAction.IsEnabled = true;
                     if (path == null)
                     {
@@ -2416,23 +2450,32 @@ namespace MagicKeys
         /// в поле, а не в надпись: страница после этого пересобирается, чтобы
         /// отметка «сейчас так» переехала на выбранный режим.
         /// </summary>
+        /// <summary>
+        /// Переключает режим верхнего ряда у драйвера. В стороне от потока окна: внутри
+        /// запрос прав администратора и ожидание до тридцати секунд, а окно в это время
+        /// не должно превращаться в «не отвечает».
+        /// </summary>
         private void ApplyFnBehavior(int value)
         {
-            string error;
-            if (AppleDriver.SetFnBehavior(value, out error))
+            SetupSay("Записываю настройку драйвера…");
+            ThreadPool.QueueUserWorkItem(delegate
             {
-                _fnNotice = "Записано. Драйвер перечитает значение при следующем подключении "
+                string error = null;
+                bool ok = false;
+                try { ok = AppleDriver.SetFnBehavior(value, out error); }
+                catch (Exception e) { error = e.Message; }
+
+                ToWindow(delegate
+                {
+                    _fnNotice = ok
+                        ? "Записано. Драйвер перечитает значение при следующем подключении "
                           + "клавиатуры — переподключите её или перезагрузитесь, до этого ряд "
-                          + "работает по-старому.";
-                if (_apply != null) _apply();
-            }
-            else
-            {
-                _fnNotice = "Не вышло: " + error + ". Настройка принадлежит драйверу, а не программе, "
-                          + "поэтому нужны права администратора; если запрос был отклонён — "
-                          + "ничего не изменилось.";
-            }
-            BuildPage();
+                          + "работает по-старому."
+                        : "Не вышло: " + error;
+                    if (ok && _apply != null) _apply();
+                    BuildPage();
+                });
+            });
         }
 
         /// <summary>

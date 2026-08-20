@@ -984,10 +984,15 @@ namespace MagicKeys
             {
                 int n;
                 mids[s.Id] = mids.TryGetValue(s.Id, out n) ? n + 1 : 1;
-                string key = s.Vk + "/" + (int)s.Mods;
-                string had;
-                if (pairs.TryGetValue(key, out had)) clash.Add(had + " и " + s.Id);
-                else pairs[key] = s.Id;
+                // И второй код тоже: у «Следующего окна» их два, и без этой строки
+                // пара с ним выпадала из проверки целиком.
+                foreach (int code in s.Vk2 != 0 ? new int[] { s.Vk, s.Vk2 } : new int[] { s.Vk })
+                {
+                    string key = code + "/" + (int)s.Mods;
+                    string had;
+                    if (pairs.TryGetValue(key, out had)) clash.Add(had + " и " + s.Id);
+                    else pairs[key] = s.Id;
+                }
             }
             twice = new List<string>();
             foreach (KeyValuePair<string, int> kv in mids) if (kv.Value > 1) twice.Add(kv.Key);

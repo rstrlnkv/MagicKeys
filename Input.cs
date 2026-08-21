@@ -43,7 +43,12 @@ namespace MagicKeys
         public const int LMenu = 0xA4, RMenu = 0xA5;
         public const int MediaNext = 0xB0, MediaPrev = 0xB1, MediaStop = 0xB2, MediaPlay = 0xB3;
         public const int VolumeMute = 0xAD, VolumeDown = 0xAE, VolumeUp = 0xAF;
+        public const int Oem1 = 0xBA;   // «;» в среднем ряду
+        public const int Oem2 = 0xBF;   // «/» в нижнем ряду
         public const int Oem3 = 0xC0;   // клавиша слева от «1» на клавиатуре Windows
+        public const int Oem4 = 0xDB, Oem6 = 0xDD;   // «[» и «]»
+        public const int Oem5 = 0xDC;   // «\» у ANSI; у ISO — клавиша слева от Enter
+        public const int Oem7 = 0xDE;   // апостроф
         public const int Oem102 = 0xE2; // дополнительная клавиша ISO, слева от «Z»
         public const int OemPeriod = 0xBE;
 

@@ -92,6 +92,7 @@ namespace MagicKeys
             SpaceCardFollowsCmd();
             FnBehaviorUnknownIsNotRegistry();
             NarrowWindowKeepsWordsWhole();
+            KeyboardArtIsHonest();
             ElevatedWindowIsSaidOutLoud();
 
             Console.WriteLine();
@@ -758,6 +759,11 @@ namespace MagicKeys
             }
             var d = node as DependencyObject;
             if (d == null) return;
+            // И внутрь Viewbox: схема клавиатуры лежит там, а её подписи — такие же
+            // надписи, как все прочие, и значок ⌫ на клавише выглядел бы пустым
+            // прямоугольником ровно так же.
+            var deco = node as Decorator;
+            if (deco != null) Words(deco.Child, bad);
             var content = node as ContentControl;
             if (content != null) Words(content.Content, bad);
             var panel = node as Panel;
@@ -1224,10 +1230,16 @@ namespace MagicKeys
             FieldInfo test = t.GetField("_selfTest", f);
             FieldInfo lines = t.GetField("_selfTestLines", f);
             MethodInfo diag = t.GetMethod("PageDiag", f);
+            MethodInfo mac = t.GetMethod("PageMacKeys", f);
+            MethodInfo attach = t.GetMethod("AttachWatch", f);
             MethodInfo detach = t.GetMethod("DetachSelfTest", f);
             MethodInfo forget = t.GetMethod("ForgetSelfTest", f);
-            if (test == null || lines == null || diag == null || detach == null || forget == null)
+            if (test == null || lines == null || diag == null || mac == null
+                || attach == null || detach == null || forget == null)
             { Check("страница проверки доступна", false, "нет поля или метода"); return; }
+
+            // Подписку ставит не сама страница, а BuildPage после сборки: слушателей
+            // у переписи двое. Здесь повторяется тот же порядок — собрать, потом слушать.
 
             // Спрятанное окно слушать не должно: страницу пересобирают и мимо событий
             // «спрятали» и «потеряли фокус» — ответ о заряде приходит раз в минуту сам,
@@ -1237,6 +1249,7 @@ namespace MagicKeys
             try
             {
                 diag.Invoke(_win, null);
+                attach.Invoke(_win, null);
                 Check("спрятанное окно не подписывается на нажатия",
                       test.GetValue(_win) == null,
                       "невидимое окно снова слушает клавиатуру и копит набранное");
@@ -1245,7 +1258,7 @@ namespace MagicKeys
             finally { MainWindow.ShownProbe = null; }
 
             MainWindow.ShownProbe = delegate { return true; };
-            try { diag.Invoke(_win, null); }
+            try { diag.Invoke(_win, null); attach.Invoke(_win, null); }
             catch (Exception e)
             {
                 Check("страница проверки собирается", false, Inner(e));
@@ -1257,8 +1270,31 @@ namespace MagicKeys
             detach.Invoke(_win, null);
             Check("уход со страницы снимает подписку", test.GetValue(_win) == null, "подписка осталась");
 
+            // Схема клавиатуры на «Основных» — второй слушатель, и правило у него то же.
+            // Подсветка нажатой клавиши показывает, что человек печатает, ничуть не хуже
+            // списка: в чужом окне это подглядывание через плечо.
+            MainWindow.ShownProbe = delegate { return false; };
+            try { mac.Invoke(_win, null); attach.Invoke(_win, null); }
+            finally { MainWindow.ShownProbe = null; }
+            Check("спрятанное окно не слушает и ради схемы", test.GetValue(_win) == null,
+                  "невидимое окно слушает клавиатуру ради подсветки");
+
             MainWindow.ShownProbe = delegate { return true; };
-            try { diag.Invoke(_win, null); }
+            try { mac.Invoke(_win, null); attach.Invoke(_win, null); }
+            finally { MainWindow.ShownProbe = null; }
+            // Схему рисуют только по узнанной модели. Без клавиатуры Apple подсвечивать
+            // нечего — и не слушать тогда правильно, а не забывчиво. Оба ответа законны,
+            // и проверяется тот, который к делу.
+            if (Devices.AppleModel == null)
+                Check("без клавиатуры Apple слушать незачем", test.GetValue(_win) == null,
+                      "окно слушает клавиатуру, а подсвечивать нечего");
+            else
+                Check("схема на «Основных» слушает нажатия", test.GetValue(_win) != null,
+                      "подсвечивать нажатия нечем");
+            forget.Invoke(_win, null);
+
+            MainWindow.ShownProbe = delegate { return true; };
+            try { diag.Invoke(_win, null); attach.Invoke(_win, null); }
             finally { MainWindow.ShownProbe = null; }
             var log = (List<string>)lines.GetValue(_win);
             log.Add("клавиша A   vk=41");
@@ -1726,6 +1762,220 @@ namespace MagicKeys
             string name;
             bool higher = Elevated.ForegroundIsHigher(out name);
             Console.WriteLine("  · впереди сейчас: " + (higher ? name : "досягаемое окно"));
+        }
+
+
+        /// <summary>
+        /// Схема клавиатуры: то, что нарисовано, должно быть правдой.
+        ///
+        /// Схема — единственное место в программе, где человек судит о правильности
+        /// глазами, а не по надписи. Поэтому её проверяют не «собралась ли», а по
+        /// существу: клавиши не налезают друг на друга, у каждой свой код, у клавиш
+        /// без кода сказано почему, и отличия исполнений — настоящие.
+        ///
+        /// Живой клавиатуры для этого не нужно: раскладка считается из модели, а модели
+        /// лежат в каталоге. Проверяются все.
+        /// </summary>
+        static void KeyboardArtIsHonest()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== схема клавиатуры ==");
+
+            PhysLayout[] kinds = { PhysLayout.Ansi, PhysLayout.Iso, PhysLayout.Jis };
+            int drawn = 0, overlaps = 0, dupes = 0, mute = 0;
+            string firstOverlap = null, firstDupe = null, firstMute = null;
+
+            foreach (int pid in AllProducts())
+            {
+                AppleModel m = Models.Find(pid);
+                if (m == null) continue;
+                foreach (PhysLayout phys in kinds)
+                {
+                    drawn++;
+                    List<KeyCap> keys = KeyboardArt.Layout(m, phys);
+                    string where = m.Designation + " " + phys;
+
+                    // Налезающие клавиши. Прямоугольники сравниваются попарно: клавиш
+                    // меньше сотни, и точность здесь дороже скорости.
+                    for (int i = 0; i < keys.Count; i++)
+                        for (int j = i + 1; j < keys.Count; j++)
+                            if (Overlap(keys[i], keys[j]))
+                            {
+                                overlaps++;
+                                if (firstOverlap == null)
+                                    firstOverlap = where + ": «" + keys[i].Cap + "» и «" + keys[j].Cap + "»";
+                            }
+
+                    // Один код — одна клавиша. Исключение одно и настоящее: Enter
+                    // на цифровом блоке Windows отдаёт тем же кодом, что и обычный.
+                    var seen = new Dictionary<int, string>();
+                    foreach (KeyCap k in keys)
+                    {
+                        if (k.Vk == 0) continue;
+                        if (k.Vk == Vk.Return) continue;
+                        string had;
+                        if (seen.TryGetValue(k.Vk, out had))
+                        {
+                            dupes++;
+                            if (firstDupe == null)
+                                firstDupe = where + ": код " + k.Vk.ToString("X2") +
+                                            " и у «" + had + "», и у «" + k.Cap + "»";
+                        }
+                        else seen[k.Vk] = k.Cap;
+                    }
+
+                    // Клавиша без кода обязана объяснить себя. Их ровно три вида:
+                    // fn и Eject до Windows не доходят, Touch ID — не клавиша вовсе.
+                    foreach (KeyCap k in keys)
+                    {
+                        if (k.Vk != 0) continue;
+                        bool explained = !String.IsNullOrEmpty(k.Tip);
+                        if (!explained)
+                        {
+                            mute++;
+                            if (firstMute == null) firstMute = where + ": «" + k.Cap + "»";
+                        }
+                    }
+                }
+            }
+
+            Check("все модели каталога нарисовались", drawn >= 60, "нарисовано " + drawn);
+            Check("клавиши не налезают друг на друга", overlaps == 0,
+                  "налезают " + overlaps + ", первая пара — " + firstOverlap);
+            Check("у каждой клавиши свой код", dupes == 0,
+                  "повторов " + dupes + ", первый — " + firstDupe);
+            Check("клавиша без кода объясняет себя", mute == 0,
+                  "молчунов " + mute + ", первый — " + firstMute);
+
+            // Отличия исполнений — настоящие, а не подписью.
+            AppleModel compact = Models.Find(0x029A);      // Magic Keyboard с Touch ID
+            AppleModel full = Models.Find(0x029F);         // она же с цифровым блоком
+            Check("модели для проверки нашлись", compact != null && full != null, "нет в каталоге");
+            if (compact == null || full == null) return;
+
+            Check("у ISO есть клавиша слева от Z", HasVk(compact, PhysLayout.Iso, Vk.Oem102),
+                  "Oem102 на схеме нет");
+            Check("у ANSI её нет", !HasVk(compact, PhysLayout.Ansi, Vk.Oem102),
+                  "Oem102 попала на схему ANSI");
+            Check("у ANSI есть клавиша Oem5", HasVk(compact, PhysLayout.Ansi, Vk.Oem5),
+                  "Oem5 на схеме нет");
+            Check("у JIS есть кана", HasVk(compact, PhysLayout.Jis, Vk.Kana),
+                  "кода каны на схеме нет");
+            Check("у ANSI её нет", !HasVk(compact, PhysLayout.Ansi, Vk.Kana),
+                  "код каны попал на схему ANSI");
+
+            Check("у компактной нет цифрового блока", !HasVk(compact, PhysLayout.Ansi, 0x64),
+                  "цифровая 4 на компактной");
+            Check("у полноразмерной он есть", HasVk(full, PhysLayout.Ansi, 0x64),
+                  "цифровой 4 нет");
+            Check("у компактной верхний ряд кончается на F12",
+                  HasVk(compact, PhysLayout.Ansi, Vk.F12) && !HasVk(compact, PhysLayout.Ansi, Vk.F13),
+                  "ряд не тот");
+            Check("у полноразмерной он доходит до F19",
+                  HasVk(full, PhysLayout.Ansi, Vk.F13 + 6), "F19 на схеме нет");
+
+            // Clear и «=» цифрового блока — те самые две клавиши, ради которых написана
+            // отдельная карточка настроек. На схеме они обязаны сказать о себе правду.
+            Check("Clear на схеме названа своим кодом Windows",
+                  Mentions(TipOf(full, PhysLayout.Ansi, Vk.NumLock), "Num Lock"),
+                  "сказано: " + TipOf(full, PhysLayout.Ansi, Vk.NumLock));
+            Check("«=» цифрового блока тоже",
+                  Mentions(TipOf(full, PhysLayout.Ansi, Vk.Clear), "очистить"),
+                  "сказано: " + TipOf(full, PhysLayout.Ansi, Vk.Clear));
+
+            // И сам рисунок вместе с подсветкой. Живой клавиатуры на прогоне нет,
+            // поэтому нажатие подаётся тем же путём, каким его подаёт перепись клавиш:
+            // через обработчик окна. Проверяется то, ради чего схема и рисуется, —
+            // что нажатая клавиша загорается, а потом гаснет сама.
+            KeyboardView view;
+            try
+            {
+                view = KeyboardArt.Draw(full, PhysLayout.Iso,
+                                        delegate { return KeyboardArt.State.Seen; });
+            }
+            catch (Exception e) { Check("рисунок строится", false, Inner(e)); return; }
+
+            Check("рисунок строится", view != null && view.Element != null, "пусто");
+            Check("рисунок знает свои клавиши", view.Has(Vk.Space) && !view.Has(0),
+                  "клавиши не нашлись");
+            Check("до нажатия клавиша не горит", view.StateOf(Vk.Space) == KeyboardArt.State.Seen,
+                  "показано " + view.StateOf(Vk.Space));
+
+            BindingFlags f = BindingFlags.NonPublic | BindingFlags.Instance;
+            FieldInfo art = typeof(MainWindow).GetField("_art", f);
+            MethodInfo press = typeof(MainWindow).GetMethod("ArtPress", f);
+            MethodInfo fade = typeof(MainWindow).GetMethod("ArtFade", f);
+            if (art == null || press == null || fade == null)
+            { Check("подсветка доступна", false, "нет поля или метода"); return; }
+
+            object hadArt = art.GetValue(_win);
+            art.SetValue(_win, view);
+            try
+            {
+                press.Invoke(_win, new object[] { Vk.Space });
+                Check("нажатая клавиша загорается",
+                      view.StateOf(Vk.Space) == KeyboardArt.State.Down,
+                      "показано " + view.StateOf(Vk.Space));
+
+                // Нажали другую, не отпустив первую: отпусканий перепись не присылает,
+                // и без явного гашения на схеме горели бы обе — а нажата одна.
+                press.Invoke(_win, new object[] { Vk.Tab });
+                Check("прежняя гаснет сама",
+                      view.StateOf(Vk.Space) != KeyboardArt.State.Down,
+                      "горят обе");
+                Check("новая загорается",
+                      view.StateOf(Vk.Tab) == KeyboardArt.State.Down,
+                      "показано " + view.StateOf(Vk.Tab));
+
+                fade.Invoke(_win, null);
+                Check("гаснет и последняя",
+                      view.StateOf(Vk.Tab) != KeyboardArt.State.Down,
+                      "клавиша осталась гореть");
+
+                // Клавиши, которой на схеме нет, подсветка не выдумывает.
+                press.Invoke(_win, new object[] { Vk.Scroll });
+                Check("чужую клавишу подсветка не выдумывает",
+                      view.StateOf(Vk.Scroll) != KeyboardArt.State.Down,
+                      "загорелось то, чего на схеме нет");
+            }
+            finally { art.SetValue(_win, hadArt); }
+        }
+
+        /// <summary>Пересекаются ли две клавиши. Соприкосновение краями — не пересечение.</summary>
+        static bool Overlap(KeyCap a, KeyCap b)
+        {
+            const double Eps = 0.001;
+            return a.X + a.W > b.X + Eps && b.X + b.W > a.X + Eps
+                && a.Y + a.H > b.Y + Eps && b.Y + b.H > a.Y + Eps;
+        }
+
+        static bool HasVk(AppleModel m, PhysLayout phys, int vk)
+        {
+            foreach (KeyCap k in KeyboardArt.Layout(m, phys)) if (k.Vk == vk) return true;
+            return false;
+        }
+
+        static string TipOf(AppleModel m, PhysLayout phys, int vk)
+        {
+            foreach (KeyCap k in KeyboardArt.Layout(m, phys)) if (k.Vk == vk) return k.Tip;
+            return null;
+        }
+
+        static bool Mentions(string s, string part)
+        {
+            return s != null && s.IndexOf(part, StringComparison.Ordinal) >= 0;
+        }
+
+        /// <summary>Все коды товаров из каталога — через отражение, чтобы список был один.</summary>
+        static List<int> AllProducts()
+        {
+            FieldInfo f = typeof(Models).GetField("ByProduct",
+                                                  BindingFlags.NonPublic | BindingFlags.Static);
+            var map = (System.Collections.IDictionary)f.GetValue(null);
+            var ids = new List<int>();
+            foreach (object key in map.Keys) ids.Add((int)key);
+            ids.Sort();
+            return ids;
         }
 
         static void Page(string method)

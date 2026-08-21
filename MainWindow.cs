@@ -69,7 +69,7 @@ namespace MagicKeys
             // на месте, но не отзывалась ни на одно нажатие.
             IsVisibleChanged += delegate
             {
-                if (IsVisible) { if (CurrentPage == "diag") BuildPage(); }
+                if (IsVisible) { if (CurrentPage == "diag") BuildPage(); else AttachWatch(); }
                 else ForgetSelfTest();
             };
             // Сворачивание IsVisible не гасит, а окно при этом с глаз ушло: историю
@@ -78,12 +78,20 @@ namespace MagicKeys
             {
                 if (WindowState == WindowState.Minimized) ForgetSelfTest();
                 else if (CurrentPage == "diag" && _selfTest == null) BuildPage();
+                else AttachWatch();
             };
             // И при потере фокуса. Окно может быть видно — на втором мониторе, сбоку, —
             // пока человек печатает в другой программе. Список последних нажатий тогда
             // копился бы дальше, и пароль оказался бы на экране у всех на виду.
             Deactivated += delegate { ForgetSelfTest(); };
-            Activated += delegate { if (CurrentPage == "diag" && _selfTest == null) BuildPage(); };
+            // «Диагностику» пересобираем: снятая подписка унесла с собой и надписи,
+            // на которые она ссылалась. Схеме пересборка не нужна — её рамки на месте,
+            // им нужен только слушатель.
+            Activated += delegate
+            {
+                if (CurrentPage == "diag" && _selfTest == null) BuildPage();
+                else AttachWatch();
+            };
             UseLayoutRounding = true;
 
             var root = new Grid();
@@ -285,6 +293,11 @@ namespace MagicKeys
             // а надписи, на которые они ссылаются, уже выброшены.
             DetachSelfTest();
 
+            // Схема прежней страницы выброшена вместе со страницей: держать указатели
+            // на её рамки значит красить то, чего на экране нет.
+            ArtFade();
+            _art = null;
+
             // Со страницы «О программе» уходим — обновление больше некому показывать.
             _updStatus = null;
             _updAction = null;
@@ -311,6 +324,9 @@ namespace MagicKeys
             finally
             {
                 _building = false;
+                // Страница собрана — можно слушать. Раньше, чем собрана, нельзя:
+                // подписчику нечего было бы красить.
+                AttachWatch();
                 // Отчёты о разовых действиях живут до ухода со своей страницы.
                 //
                 // Гасить их на входе нельзя: их ставят прямо перед BuildPage, а читает
@@ -1412,6 +1428,7 @@ namespace MagicKeys
             var stack = new StackPanel();
 
             stack.Children.Add(StateCard());
+            stack.Children.Add(KeyboardCard());
 
             if (!String.IsNullOrEmpty(Settings.LoadFailed))
                 stack.Children.Add(Card("Прежние настройки не прочитались", null,
@@ -1579,6 +1596,96 @@ namespace MagicKeys
         /// работает. Три вопроса, на которые человек хочет ответ сразу, а не после того,
         /// как найдёт нужную страницу.
         /// </summary>
+
+        /// <summary>Схема, нарисованная сейчас. Нужна, чтобы подсвечивать нажатия, а не
+        /// пересобирать страницу на каждую клавишу.</summary>
+        private KeyboardView _art;
+
+        /// <summary>Клавиша, подсвеченная как нажатая, и таймер её угасания.</summary>
+        private int _artDown;
+        private System.Windows.Threading.DispatcherTimer _artFade;
+
+        /// <summary>
+        /// Схема клавиатуры: та самая модель, которую узнала программа.
+        ///
+        /// Затем, чтобы человек увидел своими глазами, что программа поняла его
+        /// клавиатуру правильно, — и чтобы нажатие клавиши было видно. Обведённые
+        /// клавиши программа уже видела; закрашенная нажата прямо сейчас.
+        ///
+        /// Рисунок, а не снимок: фотография клавиатуры Apple — чужое изображение,
+        /// а программа свободная. Подробности — в KeyboardArt.
+        /// </summary>
+        private UIElement KeyboardCard()
+        {
+            AppleModel m = Devices.AppleModel;
+            if (m == null)
+                return Card("Ваша клавиатура", null,
+                    Note("Клавиатуры Apple сейчас не видно, и рисовать нечего: схема " +
+                         "показывает ту модель, которую программа узнала, а не любую."));
+
+            PhysLayout phys = _engine == null ? PhysLayout.Ansi : _engine.Physical(_s);
+            _art = KeyboardArt.Draw(m, phys, delegate(int vk)
+            {
+                return KeyWatch.Seen(vk) ? KeyboardArt.State.Seen : KeyboardArt.State.Unknown;
+            });
+            _artDown = 0;
+
+            string phrase = Models.GenName(m.Gen) + " · " + Models.PhysName(phys);
+
+            // Оговорки — сноской, а не на клавишах: на клавише в сорок точек шириной
+            // «приходит в Windows как Num Lock» не помещается никак, а обрезанное
+            // «приход…» — это не подпись, а обещание, которого не разобрать. На самих
+            // клавишах то же самое живёт подсказкой под курсором.
+            var quirks = new System.Text.StringBuilder();
+            quirks.Append("Обведённые клавиши программа уже видела своими глазами — значит, ");
+            quirks.Append("они доходят до Windows. Нажмите любую: она подсветится.");
+            quirks.Append("\n\nfn до Windows не доходит вовсе — её обрабатывает сама клавиатура, ");
+            quirks.Append("и вместо неё работает заменитель Fn.");
+            if (m.Eject)
+                quirks.Append(" Клавиша Eject не доходит тоже.");
+            if (m.TouchId)
+                quirks.Append(" Touch ID — датчик, а не клавиша: в Windows он не работает.");
+            if (m.Numpad)
+                quirks.Append(" На цифровом блоке Clear приходит как Num Lock, а «=» — кодом " +
+                              "«очистить»: обеим программа возвращает смысл.");
+            quirks.Append("\n\nСхема нарисована по модели и исполнению, а не снята с вашего стола: " +
+                          "у клавиш здесь стандартные пропорции.");
+
+            return Card(m.Name, phrase, _art.Element, Note(quirks.ToString()));
+        }
+
+        /// <summary>
+        /// Подсветить нажатую клавишу и погасить её через треть секунды.
+        ///
+        /// Отпусканий перепись клавиш не присылает — сырой ввод здесь разбирает только
+        /// нажатия, — поэтому гасим по времени, а не по событию. Треть секунды — чтобы
+        /// вспышку было видно и при быстром наборе.
+        /// </summary>
+        private void ArtPress(int vk)
+        {
+            if (_art == null || !_art.Has(vk)) return;
+            if (_artDown != 0 && _artDown != vk) ArtFade();
+            _artDown = vk;
+            _art.Set(vk, KeyboardArt.State.Down);
+
+            if (_artFade == null)
+            {
+                _artFade = new System.Windows.Threading.DispatcherTimer();
+                _artFade.Interval = TimeSpan.FromMilliseconds(330);
+                _artFade.Tick += delegate { ArtFade(); };
+            }
+            _artFade.Stop();
+            _artFade.Start();
+        }
+
+        private void ArtFade()
+        {
+            if (_artFade != null) _artFade.Stop();
+            if (_art == null || _artDown == 0) return;
+            _art.Set(_artDown, KeyWatch.Seen(_artDown) ? KeyboardArt.State.Seen : KeyboardArt.State.Unknown);
+            _artDown = 0;
+        }
+
         private UIElement StateCard()
         {
             var lines = new StackPanel();
@@ -1700,6 +1807,34 @@ namespace MagicKeys
         }
 
         /// <summary>
+        /// Подписаться на перепись клавиш, если есть кому смотреть.
+        ///
+        /// Смотрящих двое: список последних нажатий на «Диагностике» и схема клавиатуры
+        /// на «Основных». Условие у них общее и строгое — окно видно и оно впереди.
+        /// Строгое оно не зря: и список, и подсветка показывают, какие клавиши человек
+        /// нажимает, — то есть в чужом окне это было бы подглядыванием через плечо.
+        /// </summary>
+        private void AttachWatch()
+        {
+            if (_selfTest != null) return;
+            if (_art == null && _selfTestLog == null) return;
+            if (!SelfTestMayListen) return;
+
+            _selfTest = delegate(KeyWatch.KeyEvent e)
+            {
+                // Событие приходит из потока переписи — рисовать можно только из своего.
+                ToWindow(delegate { OnWatchEvent(e); });
+            };
+            KeyWatch.Activity += _selfTest;
+        }
+
+        private void OnWatchEvent(KeyWatch.KeyEvent e)
+        {
+            if (!e.Media) ArtPress(e.Code);
+            OnSelfTestEvent(e);
+        }
+
+        /// <summary>
         /// Снять подписку страницы проверки.
         ///
         /// Накопленное не трогает: пересборка той же страницы — не уход с глаз.
@@ -1747,6 +1882,9 @@ namespace MagicKeys
             // видимым на другом мониторе, и последние два десятка нажатий висели бы
             // на экране сколько угодно — при том что текст карточки обещает обратное.
             if (_selfTestLog != null) _selfTestLog.Text = "";
+            // И подсвеченную клавишу: окно может остаться видимым на другом мониторе,
+            // и последняя нажатая висела бы на схеме сколько угодно.
+            ArtFade();
             DetachSelfTest();
             _selfTestLines.Clear();
         }
@@ -1829,16 +1967,10 @@ namespace MagicKeys
             // человек печатает в другом, — при том что карточка обещает обратное,
             // а снять её было уже нечем: ни «потеря фокуса», ни «спрятали» больше
             // не придут.
-            if (SelfTestMayListen)
-            {
-                _selfTest = delegate(KeyWatch.KeyEvent e)
-                {
-                    // Событие приходит из потока переписи — рисовать можно только из своего.
-                    ToWindow(delegate { OnSelfTestEvent(e); });
-                };
-                KeyWatch.Activity += _selfTest;
-            }
-            else _selfTestLines.Clear();
+            // Саму подписку ставит BuildPage, когда страница уже собрана: слушателей
+            // у переписи теперь двое — этот список и схема клавиатуры на «Основных», —
+            // и ставить её отсюда значило бы ставить только для одного из них.
+            if (!SelfTestMayListen) _selfTestLines.Clear();
 
             RefreshSelfTest();
         }

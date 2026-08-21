@@ -98,8 +98,20 @@ namespace MagicKeys
                     StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 string alive = LiveServiceKey();
-                if (alive == null || path.IndexOf(alive, StringComparison.OrdinalIgnoreCase) != 0)
-                    path = alive;
+                // Сравнение целиком, а не приставкой: «KeyMagic» — приставка «KeyMagic2»,
+                // и найденное в отключённой KeyMagic2 принималось за живую KeyMagic.
+                // Ошибка была односторонней и потому незаметной.
+                bool same = alive != null && SameKey(path, alive);
+                if (alive == null)
+                {
+                    // Все службы отключены. Найденное место не выбрасываем: писать
+                    // в него бессмысленно, но и подменять на ключ устройства нельзя —
+                    // драйвер читает значение из службы. Говорим как есть.
+                    error = "Служба драйвера Apple отключена — включать ей нечего. "
+                          + "Включите её в «Диспетчере устройств» и повторите.";
+                    return false;
+                }
+                if (!same) path = alive;
             }
             if (String.IsNullOrEmpty(path))
             {
@@ -123,7 +135,17 @@ namespace MagicKeys
                     if (dev != null) path = @"HKLM\" + dev;
                 }
             }
-            if (String.IsNullOrEmpty(path)) { error = "Драйвер Apple не найден."; return false; }
+            if (String.IsNullOrEmpty(path))
+            {
+                // Службы есть, но все отключены — это не «не найден». Карточка выше
+                // в этот миг пишет «установлен · отключена», и назвать причиной
+                // отсутствие значило отправить человека искать не то.
+                error = Installed
+                    ? "Служба драйвера Apple отключена — записывать некуда. "
+                    + "Включите её в «Диспетчере устройств» и повторите."
+                    : "Драйвер Apple не найден.";
+                return false;
+            }
 
             try
             {
@@ -227,10 +249,10 @@ namespace MagicKeys
                 if (live != null) order.Add(live);
                 foreach (string path in ServiceKeys) if (path != live) order.Add(path);
 
-                // Ищем в трёх местах, в порядке достоверности. Первое — ключ службы:
-                // именно там значение и лежит на этой машине, замерено. Второе — ключ
-                // устройства драйвера. Третье — перебор класса клавиатур, оставшийся
-                // от прежней догадки: пусть будет, стоит он дёшево.
+                // Ищем в четырёх местах, в порядке достоверности. Ключ живой службы —
+                // именно там значение и лежит на этой машине, замерено. Его \Parameters.
+                // Ключ устройства драйвера, найденный по опубликованному имени .inf.
+                // И последним рубежом — перебор устройств обоих классов.
                 foreach (string path in order)
                     using (RegistryKey k = Registry.LocalMachine.OpenSubKey(path, false))
                     {
@@ -255,7 +277,11 @@ namespace MagicKeys
                             if (k != null) TryBehavior(k, dev, ref behavior, ref where);
                 }
 
-                if (behavior < 0) FindBehaviorInClass(ref behavior, ref where);
+                // Тоже только при установленном драйвере, и по той же причине, что
+                // и поиск ключа устройства: без него перебирать десятки устройств двух
+                // классов каждые тридцать секунд незачем — ответ всё равно не пригодится,
+                // _takesRow домножается на installed.
+                if (behavior < 0 && installed) FindBehaviorInClass(ref behavior, ref where);
             }
             catch (Exception e) { Diag.Log("драйвер Apple: не удалось посмотреть реестр", e); }
 
@@ -285,6 +311,14 @@ namespace MagicKeys
         // Refresh(true), и без него забвение отменялось ответом, посчитанным ДО
         // установки драйвера. Тот же приём, что у возраста в KeyboardBattery.
         private static int _devKeyAge;
+
+        /// <summary>Один и тот же ключ реестра — сравнение целиком, а не приставкой.</summary>
+        private static bool SameKey(string a, string b)
+        {
+            if (a == null || b == null) return false;
+            return String.Equals(a.TrimEnd((char)92), b.TrimEnd((char)92),
+                                 StringComparison.OrdinalIgnoreCase);
+        }
 
         /// <summary>
         /// Первая работающая служба драйвера с приставкой «HKLM\», или null. Отключённая

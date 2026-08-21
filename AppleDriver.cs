@@ -89,6 +89,18 @@ namespace MagicKeys
             error = null;
             string path;
             lock (Sync) path = _fnBehaviorPath;
+
+            // Нашли значение в отключённой службе — писать туда нельзя: её никто
+            // не читает, а человек прочтёт «Записано». Живая служба важнее найденного
+            // места: KeyMagic2 вполне может остаться от прошлой клавиатуры и быть
+            // отключён при исправно работающем KeyMagic.
+            if (!String.IsNullOrEmpty(path) && path.IndexOf(@"\Services\",
+                    StringComparison.OrdinalIgnoreCase) >= 0)
+            {
+                string alive = LiveServiceKey();
+                if (alive == null || path.IndexOf(alive, StringComparison.OrdinalIgnoreCase) != 0)
+                    path = alive;
+            }
             if (String.IsNullOrEmpty(path))
             {
                 // Значения ещё нет — заводим его в ключе службы: замер на этой машине
@@ -173,7 +185,7 @@ namespace MagicKeys
                 _stamp = DateTime.UtcNow;
                 // По просьбе «перечитать» забываем и запомненный ключ устройства:
                 // ровно тогда драйвер и мог появиться или исчезнуть.
-                if (force) _devKeyKnown = false;
+                if (force) { _devKeyKnown = false; _devKeyAge++; }
             }
 
             bool installed = false, enabled = false;
@@ -230,11 +242,11 @@ namespace MagicKeys
                     }
 
                 // Только когда драйвер вообще установлен. Поиск ключа устройства идёт
-                // через опубликованное имя .inf, а оно добывается перебором всего
-                // %WINDIR%\INF с чтением каждого файла: замерено 112 файлов, 8 МБ,
-                // 80 мс на четыре имени. На машине без драйвера ответ гарантированно
-                // пуст, и повторять эту работу каждые тридцать секунд — молотить диск
-                // ради невозможного.
+                // через опубликованное имя .inf, а оно добывается перебором oem*.inf
+                // в %WINDIR%\INF с чтением каждого файла: замерено 112 таких файлов,
+                // 8 МБ, 80 мс на четыре имени. На машине без драйвера ответ
+                // гарантированно пуст, и повторять эту работу каждые тридцать секунд —
+                // молотить диск ради невозможного.
                 if (behavior < 0 && installed)
                 {
                     string dev = DeviceKey();
@@ -269,6 +281,10 @@ namespace MagicKeys
         // который зовут обе кнопки.
         private static bool _devKeyKnown;
         private static string _devKey;
+        // Поколение: между «сходили за ответом» и «запомнили» может целиком пройти
+        // Refresh(true), и без него забвение отменялось ответом, посчитанным ДО
+        // установки драйвера. Тот же приём, что у возраста в KeyboardBattery.
+        private static int _devKeyAge;
 
         /// <summary>
         /// Первая работающая служба драйвера с приставкой «HKLM\», или null. Отключённая
@@ -289,13 +305,17 @@ namespace MagicKeys
         /// <summary>Ключ устройства драйвера, с памятью на один ответ.</summary>
         private static string DeviceKey()
         {
+            int age;
             lock (Sync)
             {
                 if (_devKeyKnown) return _devKey;
+                age = _devKeyAge;
             }
             string found = DeviceKeyOfDriver();
             lock (Sync)
             {
+                // Пока мы искали, кто-то попросил перечитать — ответ уже не о том.
+                if (age != _devKeyAge) return found;
                 _devKey = found;
                 _devKeyKnown = true;
             }
@@ -345,23 +365,27 @@ namespace MagicKeys
             catch { return null; }
         }
 
-        /// <summary>Обходит ключи класса клавиатур: значение живёт у устройства, а не у службы.</summary>
+        /// <summary>
+        /// Последний рубеж: перебор устройств обоих классов. Достаётся ему случай, когда
+        /// ключ устройства по имени .inf не опознан, — тогда искать больше негде.
+        /// Классов два, как и в DeviceKeyOfDriver: устройство драйвера стоит под HID,
+        /// и смотреть только под классом клавиатур значило не найти ничего никогда.
+        /// </summary>
         private static void FindBehaviorInClass(ref int behavior, ref string where)
         {
             try
             {
-                using (RegistryKey root = Registry.LocalMachine.OpenSubKey(KeyboardClass, false))
-                {
-                    if (root == null) return;
-                    foreach (string sub in root.GetSubKeyNames())
+                foreach (string cls in new[] { HidClass, KeyboardClass })
+                    using (RegistryKey root = Registry.LocalMachine.OpenSubKey(cls, false))
                     {
-                        using (RegistryKey k = root.OpenSubKey(sub, false))
-                        {
-                            if (k == null) continue;
-                            if (TryBehavior(k, KeyboardClass + @"\" + sub, ref behavior, ref where)) return;
-                        }
+                        if (root == null) continue;
+                        foreach (string sub in root.GetSubKeyNames())
+                            using (RegistryKey k = root.OpenSubKey(sub, false))
+                            {
+                                if (k == null) continue;
+                                if (TryBehavior(k, cls + @"\" + sub, ref behavior, ref where)) return;
+                            }
                     }
-                }
             }
             catch { }
         }

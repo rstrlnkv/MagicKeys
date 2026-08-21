@@ -470,6 +470,40 @@ namespace MagicKeys
         public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr pid);
 
         [DllImport("user32.dll")]
+        public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+
+        // ---------- уровень целостности: до кого программе не дотянуться ----------
+
+        public const uint PROCESS_QUERY_LIMITED_INFORMATION = 0x1000;
+        public const uint TOKEN_QUERY = 0x0008;
+        public const int TokenIntegrityLevel = 25;
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        public static extern IntPtr OpenProcess(uint access, bool inherit, uint pid);
+
+        [DllImport("kernel32.dll")]
+        public static extern IntPtr GetCurrentProcess();
+
+        [DllImport("kernel32.dll")]
+        public static extern uint GetCurrentProcessId();
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        public static extern bool QueryFullProcessImageNameW(IntPtr proc, uint flags,
+                                                             System.Text.StringBuilder name, ref int size);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        public static extern bool OpenProcessToken(IntPtr proc, uint access, out IntPtr token);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        public static extern bool GetTokenInformation(IntPtr token, int cls, IntPtr buf, int len, out int need);
+
+        [DllImport("advapi32.dll")]
+        public static extern IntPtr GetSidSubAuthority(IntPtr sid, uint index);
+
+        [DllImport("advapi32.dll")]
+        public static extern IntPtr GetSidSubAuthorityCount(IntPtr sid);
+
+        [DllImport("user32.dll")]
         public static extern IntPtr GetKeyboardLayout(uint threadId);
 
         [DllImport("user32.dll")]

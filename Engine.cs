@@ -333,6 +333,10 @@ namespace MagicKeys
                     // свой тридцатисекундный срок, так что работы почти нет, — но реестр
                     // читается на этом потоке, а не на пути нажатия клавиши.
                     AppleDriver.Refresh(false);
+                    // Кто сейчас впереди. Не для перехвата, а для честности: пока
+                    // впереди окно с правами администратора, программа до него не
+                    // достаёт, и об этом надо уметь сказать.
+                    Elevated.Sample();
                     if (_threadId != 0)
                         Native.PostThreadMessageW(_threadId, WmCheck, IntPtr.Zero, IntPtr.Zero);
 
@@ -390,6 +394,43 @@ namespace MagicKeys
         private uint _lastCheckTick;
 
         /// <summary>
+        /// Вышли ли сроки: сырой ввод видел нажатие, перехват его не видел, и с прошлой
+        /// проверки прошло больше тридцати секунд.
+        ///
+        /// raw — когда перепись клавиш последний раз видела нажатие, lastHook — когда
+        /// его последний раз видел перехват, lastCheck — когда сторож просыпался.
+        /// </summary>
+        internal static bool Due(uint raw, uint lastHook, uint now, uint lastCheck)
+        {
+            if (raw == 0) return false;        // перепись не запускалась — судить не по чему
+
+            // Сравнение знаковое: обе отметки берутся из GetTickCount в разном
+            // порядке, и беззнаковая разность на близких значениях уходила
+            // в переполнение.
+            if (unchecked((int)(raw - lastHook)) < 5000) return false;
+            if (unchecked((int)(now - lastCheck)) < 30000) return false;
+            return true;
+        }
+
+        /// <summary>
+        /// Всё решение сторожа целиком: сроки вышли и расхождению нет объяснения.
+        ///
+        /// Вынесено затем, чтобы его можно было проверить стендом. Проверять
+        /// CheckHookAlive целиком нельзя — он ставит настоящий глобальный перехват,
+        /// а стенду такого не положено.
+        ///
+        /// unreachable — было ли только что впереди окно, до которого не дотянуться.
+        /// Пока такое окно впереди, перехват законно не видит его нажатий, а сырой
+        /// ввод идёт своим путём. Переставлять исправный перехват из-за этого значит
+        /// каждые полминуты отпускать всё зажатое посреди работы — а зажатое в такую
+        /// минуту как раз и держит человек.
+        /// </summary>
+        internal static bool Ripe(uint raw, uint lastHook, uint now, uint lastCheck, bool unreachable)
+        {
+            return Due(raw, lastHook, now, lastCheck) && !unreachable;
+        }
+
+        /// <summary>
         /// Windows снимает низкоуровневый перехват молча, стоит обработчику один раз
         /// задуматься дольше LowLevelHooksTimeout. Ни события, ни ошибки, ни изменения
         /// дескриптора при этом нет: программа продолжает считать, что всё работает,
@@ -410,15 +451,17 @@ namespace MagicKeys
             try
             {
                 uint raw = KeyWatch.LastKeyTick;
-                if (raw == 0) return;          // перепись не запускалась — судить не по чему
-
-                // Сравнение знаковое: обе отметки берутся из GetTickCount в разном
-                // порядке, и беззнаковая разность на близких значениях уходила
-                // в переполнение.
                 uint now = Native.GetTickCount();
-                if (unchecked((int)(raw - _lastHookTick)) < 5000) return;
-                if (unchecked((int)(now - _lastCheckTick)) < 30000) return;
+
+                // Сроки и объяснение — врозь. Отметку проверки двигаем, как только
+                // сроки вышли: отказ из-за недосягаемого окна — тоже проверка, иначе
+                // следующий тик таймера пробовал бы снова через две секунды, а не
+                // через тридцать. И наоборот, пока сроки не вышли, отметку трогать
+                // нельзя: тогда расхождение, появившееся только что, ждало бы лишние
+                // полминуты.
+                if (!Due(raw, _lastHookTick, now, _lastCheckTick)) return;
                 _lastCheckTick = now;
+                if (Elevated.SeenWithin(10000)) return;
 
                 if (_hook != IntPtr.Zero) Native.UnhookWindowsHookEx(_hook);
                 _hook = Native.SetWindowsHookExW(Native.WH_KEYBOARD_LL, _proc,

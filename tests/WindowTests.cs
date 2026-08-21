@@ -92,6 +92,7 @@ namespace MagicKeys
             SpaceCardFollowsCmd();
             FnBehaviorUnknownIsNotRegistry();
             NarrowWindowKeepsWordsWhole();
+            ElevatedWindowIsSaidOutLoud();
 
             Console.WriteLine();
             Console.WriteLine("прошло " + _pass + ", провалено " + _fail);
@@ -1653,6 +1654,78 @@ namespace MagicKeys
                 }
             }
             return widest;
+        }
+
+
+        /// <summary>
+        /// Окно с правами администратора: программа обязана и заметить его, и сказать
+        /// о нём человеку.
+        ///
+        /// Настоящего такого окна на стенде взять негде — его пришлось бы запускать
+        /// от администратора прямо во время прогона, — поэтому ответ Windows подменяет
+        /// шов Elevated.Probe. Проверяется всё остальное: что встреча запоминается,
+        /// что карточка называет имя, и что до встречи она не выдумывает её.
+        /// </summary>
+        static void ElevatedWindowIsSaidOutLoud()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== окно с правами администратора ==");
+            MethodInfo card = typeof(MainWindow).GetMethod("ElevatedCard",
+                                                           BindingFlags.NonPublic | BindingFlags.Instance);
+            if (card == null) { Check("карточка есть", false, "нет метода ElevatedCard"); return; }
+
+            Elevated.Forget();
+            Elevated.Probe = delegate { return null; };
+            Elevated.Sample();
+            Check("досягаемое окно ничего не запоминает",
+                  Elevated.SeenName == null && Elevated.SeenCount == 0 && !Elevated.SeenWithin(60000),
+                  "запомнилось «" + Elevated.SeenName + "», счёт " + Elevated.SeenCount);
+
+            object before = card.Invoke(_win, null);
+            Check("до встречи карточка не выдумывает имени",
+                  Says(before, "не попадалось ни разу"), "сказано другое");
+
+            Elevated.Probe = delegate { return "ЧужаяПрограмма"; };
+            Elevated.Sample();
+            Elevated.Sample();
+            Check("встреча запоминается с именем", Elevated.SeenName == "ЧужаяПрограмма",
+                  "запомнилось «" + Elevated.SeenName + "»");
+            Check("встречи считаются", Elevated.SeenCount == 2, "насчитано " + Elevated.SeenCount);
+            Check("встреча свежая", Elevated.SeenWithin(60000), "SeenWithin отвечает «нет»");
+            Check("давность считается", !Elevated.SeenWithin(0), "нулевой срок сочтён свежим");
+
+            object after = card.Invoke(_win, null);
+            Check("карточка называет виновника", Says(after, "ЧужаяПрограмма"), "имени в карточке нет");
+            Check("карточка объясняет, почему сочетания стали старыми",
+                  Says(after, "не видит нажатий"), "объяснения в карточке нет");
+
+            // Страница «Основные» обязана показать карточку и при выключенных
+            // сочетаниях: недосягаемость окна касается всего перехвата.
+            Settings saved = _s.Snapshot();
+            _s.MacShortcuts = false;
+            MethodInfo page = typeof(MainWindow).GetMethod("PageMacKeys",
+                                                           BindingFlags.NonPublic | BindingFlags.Instance);
+            object off = page.Invoke(_win, null);
+            Check("при выключенных сочетаниях карточка всё равно на странице",
+                  Says(off, "ЧужаяПрограмма"), "карточки на странице нет");
+            _s.MacShortcuts = true;
+            object on = page.Invoke(_win, null);
+            Check("и при включённых тоже", Says(on, "ЧужаяПрограмма"), "карточки на странице нет");
+            Restore(saved);
+
+            Elevated.Probe = null;
+            Elevated.Forget();
+            Check("забывание работает", Elevated.SeenName == null && Elevated.SeenTick == 0,
+                  "осталось «" + Elevated.SeenName + "»");
+
+            // И настоящая Windows, а не шов: вся затея держится на том, что метку
+            // целостности удаётся прочитать. Не удастся — программа промолчит там,
+            // где должна была сказать, и проверок выше это не заденет.
+            Check("свой уровень целостности читается", Elevated.MyLevel >= 0x1000,
+                  "прочитано " + Elevated.MyLevel);
+            string name;
+            bool higher = Elevated.ForegroundIsHigher(out name);
+            Console.WriteLine("  · впереди сейчас: " + (higher ? name : "досягаемое окно"));
         }
 
         static void Page(string method)

@@ -1,4 +1,5 @@
 @echo off
+chcp 65001>nul
 rem Сборка установщика MagicKeys.msi. Сеть нужна только при первом запуске:
 rem набор WiX подтягивается пакетом, ставить в систему ничего не надо.
 rem
@@ -9,7 +10,6 @@ rem Каналов у пакета нет: Stable и Dev у MagicKeys — это
 rem программе, а не разные сборки. Ранним выпуск делает пометка pre-release
 rem на GitHub, и пакет для обоих каналов один и тот же.
 setlocal
-chcp 65001>nul
 set HERE=%~dp0
 set ROOT=%HERE%..
 

@@ -142,8 +142,14 @@ namespace MagicKeys
                 // «ещё спрашиваю» успевало превратиться в «клавиатура не ответила».
                 if (age != _age) return;
 
-                // Клавиатуры нет — не «не ответила», а «спрашивать некого».
-                if (String.IsNullOrEmpty(path)) _percent = NoSource;
+                // Клавиатуры нет — не «не ответила», а «спрашивать некого». Но только
+                // если список устройств уже прочитан: на запуске первый опрос уходит
+                // в свой поток и по Bluetooth идёт секунды, а мы к тому времени успеваем
+                // спросить и получить пустой путь. Сказать тогда «эта клавиатура заряд
+                // не сообщает, ждать нечего» — значит утверждать непроверенное, ради чего
+                // три состояния и заведены.
+                if (String.IsNullOrEmpty(path))
+                    _percent = Devices.Scanned ? NoSource : Unknown;
                 else if (percent >= 0) _percent = percent;
                 else if (_percent < 0) _percent = -1;   // ждали ответа — не дождались
                 // Иначе не трогаем: известное число промах не стирает.
@@ -164,7 +170,7 @@ namespace MagicKeys
                 if (buf[0] != ReportId) return;
                 flags = buf[1];
                 percent = buf[2];
-                if (percent < 0 || percent > 100) percent = -1;
+                if (percent > 100) percent = -1;   // байт, меньше нуля не бывает
             }
             catch (Exception e) { Diag.Log("заряд: не удалось спросить", e); }
             finally { Native.CloseHandle(h); }

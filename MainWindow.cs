@@ -688,6 +688,11 @@ namespace MagicKeys
                           (_s.FnNavigation ? "Fn+стрелки работают." : "Навигация Fn выключена выше.")
                         : "Переключает верхний ряд" + (_s.FnNavigation ? " и даёт Fn+стрелки" : "") +
                           ". Без драйвера Apple настоящая Fn до Windows не доходит, поэтому нужна замена.")
+                : now == "plain" && _s.OptLevel != OptLevel.Off && _s.Reaches(ModKey.RAlt)
+                    ? "Ничего не забирает: приходит в Windows как " + comes + ". " +
+                      "Третий уровень при этом включён и живёт на другой клавише — той, " +
+                      "что приходит правым Alt. Выключить его можно, вернув сюда роль " +
+                      "«Символы ⌥»."
                 : now == "symbols"
                     ? "Набирает символы, напечатанные на клавише третьими. Работает, только когда " +
                       "включены раскладки Apple." +
@@ -1096,36 +1101,76 @@ namespace MagicKeys
         /// </summary>
         private string FnNavigationNote()
         {
-            bool table = _s.MacShortcuts && FnSubstituteIsOption;
-            bool arrows = table && (_s.MacEnabled("wordleft") || _s.MacEnabled("wordright"));
-            bool back = table && _s.MacEnabled("delword");
-
             var mine = new List<string>();
-            mine.Add("Fn+↑↓ листают страницу");
-            if (!arrows) mine.Add("Fn+←→ уводят в начало и конец строки");
-            if (!back) mine.Add("Fn+Backspace удаляет вперёд");
-            mine.Add("Fn+Enter — это Insert");
-
-            string said = String.Join(", ", mine.ToArray()) + ".";
-            if (!arrows && !back) return said;
-
             var taken = new List<string>();
-            if (arrows) taken.Add("Fn+←→");
-            if (back) taken.Add("Fn+Backspace");
-            return said + " " + String.Join(" и ", taken.ToArray()) +
-                   (taken.Count > 1 ? " достаются" : " достаётся") +
-                   " сочетаниям macOS: там ⌥ ходит по словам, а начало и конец строки — на ⌘←→.";
+
+            if (TakenByTable(Vk.Up)) taken.Add("Fn+↑↓");
+            else mine.Add("Fn+↑↓ листают страницу");
+
+            if (TakenByTable(Vk.Left)) taken.Add("Fn+←→");
+            else mine.Add("Fn+←→ уводят в начало и конец строки");
+
+            if (TakenByTable(Vk.Back)) taken.Add("Fn+Backspace");
+            else mine.Add("Fn+Backspace удаляет вперёд");
+
+            if (TakenByTable(Vk.Return)) taken.Add("Fn+Enter");
+            else mine.Add("Fn+Enter — это Insert");
+
+            string said = mine.Count > 0
+                ? String.Join(", ", mine.ToArray()) + "."
+                : "Все шесть сочетаний сейчас достались таблице macOS.";
+
+            if (taken.Count > 0)
+                said += " " + String.Join(" и ", taken.ToArray()) +
+                        (taken.Count > 1 ? " достаются" : " достаётся") +
+                        " сочетаниям macOS: их видно списком на первой странице, и там же " +
+                        "их можно выключить по одному.";
+
+            // ⌘+Tab стоит ещё выше таблицы и своей настройкой не делится ни с кем.
+            if (FnSubstituteMod == MacMod.Cmd && _s.CmdTabSwitchesWindows)
+                said += " А Fn+Tab открывает переключатель окон: выбранная клавиша " +
+                        "приходит в Windows как ⌘.";
+
+            return said;
         }
 
-        /// <summary>Приходит ли клавиша-заменитель Fn в Windows как ⌥ — левый или правый.</summary>
-        private bool FnSubstituteIsOption
+        /// <summary>
+        /// Что клавиша-заменитель Fn приносит в Windows. От этого зависит, кто первым
+        /// возьмёт сочетание — таблица macOS или навигация: перехват спрашивает
+        /// назначение клавиши, а не её надпись.
+        /// </summary>
+        private MacMod FnSubstituteMod
         {
             get
             {
-                if (_s.FnSubstitute == ModKey.None) return false;
-                ModKey t = _s.TargetOf(_s.FnSubstitute);
-                return t == ModKey.LAlt || t == ModKey.RAlt;
+                if (_s.FnSubstitute == ModKey.None) return MacMod.None;
+                switch (_s.TargetOf(_s.FnSubstitute))
+                {
+                    case ModKey.LWin: case ModKey.RWin: return MacMod.Cmd;
+                    case ModKey.LAlt: case ModKey.RAlt: return MacMod.Opt;
+                    case ModKey.LCtrl: case ModKey.RCtrl: return MacMod.Ctrl;
+                    case ModKey.LShift: case ModKey.RShift: return MacMod.Shift;
+                    default: return MacMod.None;
+                }
             }
+        }
+
+        /// <summary>
+        /// Заберёт ли таблица macOS это сочетание у навигации Fn.
+        ///
+        /// Спрашиваем саму таблицу, а не список известных наперёд строк. Прежде здесь
+        /// стояло «заменитель приходит как ⌥» и три имени сочетаний — а список
+        /// заменителей предлагает и клавиши Win, то есть ⌘, и у ⌘ таблица забирает
+        /// больше: ⌘↑ и ⌘↓ уводят в начало и конец документа, а ⌘Backspace стирает
+        /// строку до курсора. Сноска при этом обещала листание страницы и удаление
+        /// одного знака.
+        /// </summary>
+        private bool TakenByTable(int vk)
+        {
+            MacMod mm = FnSubstituteMod;
+            if (!_s.MacShortcuts || mm == MacMod.None) return false;
+            MacShortcut sc = MacKeys.Find(vk, mm);
+            return sc != null && _s.MacEnabled(sc.Id);
         }
 
         /// <summary>
@@ -2398,11 +2443,14 @@ namespace MagicKeys
             var switcher = new StackPanel { Orientation = Orientation.Horizontal };
             Grid.SetColumn(switcher, 1);
 
-            _updStable = new Button { Content = "Stable", Height = 30, MinWidth = 96 };
+            // Гаснут вместе с кнопкой проверки: пока идёт проверка, канал менять нельзя
+            // (ответ придёт по прежнему), а щелчок по живой кнопке молча ничего не делал.
+            _updStable = new Button { Content = "Stable", Height = 30, MinWidth = 96, IsEnabled = !_updBusy };
             _updStable.Click += delegate { SetChannel(Settings.ChannelStable); };
             switcher.Children.Add(_updStable);
 
-            _updDev = new Button { Content = "Dev", Height = 30, MinWidth = 76, Margin = new Thickness(6, 0, 0, 0) };
+            _updDev = new Button { Content = "Dev", Height = 30, MinWidth = 76,
+                                   Margin = new Thickness(6, 0, 0, 0), IsEnabled = !_updBusy };
             _updDev.Click += delegate { SetChannel(Settings.ChannelDev); };
             switcher.Children.Add(_updDev);
 
@@ -2438,9 +2486,13 @@ namespace MagicKeys
                 // нажатия незнакомой клавиши.
                 _updStatus.Text = _updSaid;
                 _updStatus.SetResourceReference(TextBlock.ForegroundProperty, "TextSec");
+                // Кнопку не гасим: «Установщик запущен» — не вечное состояние. Запрос
+                // прав администратора можно отклонить, установщик закрыть, — и человек
+                // оставался с мёртвой кнопкой до перезапуска программы, а сбросить
+                // признак было нечем. Проверить заново он вправе всегда.
                 bool launched = _updSaid == "Установщик запущен";
                 _updAction.Content = _updFound != null && !launched ? "Повторить" : "Проверить";
-                _updAction.IsEnabled = !launched;
+                _updAction.IsEnabled = true;
             }
             else if (_updFound != null)
             {

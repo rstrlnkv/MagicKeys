@@ -5,33 +5,33 @@
   <Key scan="56" iso="B00" base="º" shift="ª" opt="\" optShift="°" diff="base shift opt optShift"/>
   <Key scan="2C" iso="B01" base="z" shift="Z" opt="Ω" optShift="‹" diff="opt optShift"/>
   <Key scan="2D" iso="B02" base="x" shift="X" opt="∑" optShift="›" diff="opt optShift"/>
-  <Key scan="2E" iso="B03" base="c" shift="C" opt="©" optShift=" " diff="opt optShift"/>
+  <Key scan="2E" iso="B03" base="c" shift="C" opt="©" diff="opt"/>
   <Key scan="2F" iso="B04" base="v" shift="V" opt="√" optShift="◊" diff="opt optShift"/>
   <Key scan="30" iso="B05" base="b" shift="B" opt="ß" diff="opt"/>
-  <Key scan="31" iso="B06" base="n" shift="N" opt=" " optShift="˙" diff="opt optShift"/>
+  <Key scan="31" iso="B06" base="n" shift="N" optShift="˙" diff="optShift"/>
   <Key scan="32" iso="B07" base="m" shift="M" opt="µ" optShift="˚" diff="opt optShift"/>
   <Key scan="33" iso="B08" base="," shift=";" opt="„" diff="opt"/>
   <Key scan="34" iso="B09" base="." shift=":" opt="…" optShift="…" diff="opt optShift"/>
   <Key scan="35" iso="B10" base="-" shift="_" opt="–" optShift="—" diff="opt optShift"/>
   <Key scan="1E" iso="C01" base="a" shift="A" opt="å" optShift="Å" diff="opt optShift"/>
-  <Key scan="1F" iso="C02" base="s" shift="S" opt="∫" optShift=" " diff="opt optShift"/>
+  <Key scan="1F" iso="C02" base="s" shift="S" opt="∫" diff="opt"/>
   <Key scan="20" iso="C03" base="d" shift="D" opt="∂" optShift="∆" diff="opt optShift"/>
   <Key scan="21" iso="C04" base="f" shift="F" opt="ƒ" optShift="ﬁ" diff="opt optShift"/>
   <Key scan="22" iso="C05" base="g" shift="G" opt="" optShift="ﬂ" diff="opt optShift"/>
-  <Key scan="23" iso="C06" base="h" shift="H" opt="™" optShift=" " diff="opt optShift"/>
+  <Key scan="23" iso="C06" base="h" shift="H" opt="™" diff="opt"/>
   <Key scan="24" iso="C07" base="j" shift="J" opt="¶" optShift="¯" diff="opt optShift"/>
   <Key scan="25" iso="C08" base="k" shift="K" opt="§" optShift="ˇ" diff="opt optShift"/>
-  <Key scan="26" iso="C09" base="l" shift="L" opt=" " optShift="˘" diff="opt optShift"/>
+  <Key scan="26" iso="C09" base="l" shift="L" optShift="˘" diff="optShift"/>
   <Key scan="27" iso="C10" base="ñ" shift="Ñ" opt="~" optShift="˜" dead="opt" diff="opt optShift"/>
   <Key scan="28" iso="C11" base="´" shift="¨" opt="{" optShift="«" dead="base shift" diff="optShift"/>
   <Key scan="10" iso="D01" base="q" shift="Q" opt="œ" optShift="Œ" diff="opt optShift"/>
   <Key scan="11" iso="D02" base="w" shift="W" opt="æ" optShift="Æ" diff="opt optShift"/>
   <Key scan="12" iso="D03" base="e" shift="E" opt="€" optShift="€" diff="optShift"/>
-  <Key scan="13" iso="D04" base="r" shift="R" opt="®" optShift=" " diff="opt optShift"/>
+  <Key scan="13" iso="D04" base="r" shift="R" opt="®" diff="opt"/>
   <Key scan="14" iso="D05" base="t" shift="T" opt="†" optShift="‡" diff="opt optShift"/>
-  <Key scan="15" iso="D06" base="y" shift="Y" opt="¥" optShift=" " diff="opt optShift"/>
-  <Key scan="16" iso="D07" base="u" shift="U" opt=" " optShift=" " diff="opt optShift"/>
-  <Key scan="17" iso="D08" base="i" shift="I" opt=" " optShift=" " diff="opt optShift"/>
+  <Key scan="15" iso="D06" base="y" shift="Y" opt="¥" diff="opt"/>
+  <Key scan="16" iso="D07" base="u" shift="U"/>
+  <Key scan="17" iso="D08" base="i" shift="I"/>
   <Key scan="18" iso="D09" base="o" shift="O" opt="ø" optShift="Ø" diff="opt optShift"/>
   <Key scan="19" iso="D10" base="p" shift="P" opt="π" optShift="∏" diff="opt optShift"/>
   <Key scan="1A" iso="D11" base="`" shift="^" opt="[" optShift="ˆ" dead="base shift" diff="optShift"/>
@@ -43,7 +43,7 @@
   <Key scan="04" iso="E03" base="3" shift="·" opt="#" optShift="•" diff="optShift"/>
   <Key scan="05" iso="E04" base="4" shift="$" opt="¢" optShift="£" diff="opt optShift"/>
   <Key scan="06" iso="E05" base="5" shift="%" opt="∞" optShift="‰" diff="opt optShift"/>
-  <Key scan="07" iso="E06" base="6" shift="&amp;" opt="¬" optShift=" " diff="optShift"/>
+  <Key scan="07" iso="E06" base="6" shift="&amp;" opt="¬"/>
   <Key scan="08" iso="E07" base="7" shift="/" opt="÷" optShift="⁄" diff="opt optShift"/>
   <Key scan="09" iso="E08" base="8" shift="(" opt="“" optShift="‘" diff="opt optShift"/>
   <Key scan="0A" iso="E09" base="9" shift=")" opt="”" optShift="’" diff="opt optShift"/>

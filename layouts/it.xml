@@ -3,14 +3,14 @@
      лицензия Unicode; см. README. Исходник: it-t-k0-osx-extended.xml -->
 <AppleLayout id="it" title="Итальянская (Pro)" macName="Italian - Pro">
   <Key scan="56" iso="B00" base="\" shift="|" opt="`" optShift="ı" diff="base shift opt optShift"/>
-  <Key scan="2C" iso="B01" base="z" shift="Z" opt="∑" optShift=" " diff="opt optShift"/>
+  <Key scan="2C" iso="B01" base="z" shift="Z" opt="∑" diff="opt"/>
   <Key scan="2D" iso="B02" base="x" shift="X" opt="†" optShift="‡" diff="opt optShift"/>
   <Key scan="2E" iso="B03" base="c" shift="C" opt="©" optShift="Á" diff="opt optShift"/>
   <Key scan="2F" iso="B04" base="v" shift="V" opt="√" optShift="É" diff="opt optShift"/>
   <Key scan="30" iso="B05" base="b" shift="B" opt="∫" optShift="Í" diff="opt optShift"/>
   <Key scan="31" iso="B06" base="n" shift="N" opt="˜" optShift="Ó" dead="opt" diff="opt optShift"/>
   <Key scan="32" iso="B07" base="m" shift="M" opt="µ" optShift="Ú" diff="opt optShift"/>
-  <Key scan="33" iso="B08" base="," shift=";" opt="…" optShift=" " diff="opt optShift"/>
+  <Key scan="33" iso="B08" base="," shift=";" opt="…" diff="opt"/>
   <Key scan="34" iso="B09" base="." shift=":" opt="•" optShift="·" diff="opt optShift"/>
   <Key scan="35" iso="B10" base="-" shift="_" opt="–" optShift="—" diff="opt optShift"/>
   <Key scan="1E" iso="C01" base="a" shift="A" opt="å" optShift="Å" diff="opt optShift"/>
@@ -46,7 +46,7 @@
   <Key scan="07" iso="E06" base="6" shift="&amp;" opt="‹" optShift="›" diff="opt optShift"/>
   <Key scan="08" iso="E07" base="7" shift="/" opt="÷" optShift="⁄" diff="opt optShift"/>
   <Key scan="09" iso="E08" base="8" shift="(" opt="´" optShift="" dead="opt" diff="opt optShift"/>
-  <Key scan="0A" iso="E09" base="9" shift=")" opt="`" optShift=" " dead="opt" diff="opt optShift"/>
+  <Key scan="0A" iso="E09" base="9" shift=")" opt="`" dead="opt" diff="opt"/>
   <Key scan="0B" iso="E10" base="0" shift="=" opt="≠" optShift="≈" diff="opt optShift"/>
   <Key scan="0C" iso="E11" base="'" shift="?" opt="¡" optShift="¿" diff="opt optShift"/>
   <Key scan="0D" iso="E12" base="ì" shift="^" opt="ˆ" optShift="±" dead="opt" diff="opt optShift"/>

@@ -64,6 +64,13 @@ namespace MagicKeys
 
         public static bool AppleConnected { get { return _appleConnected; } }
 
+        /// <summary>
+        /// Прошёл ли хоть один опрос устройств. До него «путь к клавиатуре пуст» значит
+        /// «ещё не знаем», а не «такой клавиатуры нет».
+        /// </summary>
+        public static bool Scanned { get { return _scanned; } }
+        private static volatile bool _scanned;
+
         /// <summary>Модель подключённой клавиатуры Apple, если она опознана.</summary>
         public static AppleModel AppleModel { get { lock (Sync) return _appleModel; } }
 
@@ -157,6 +164,7 @@ namespace MagicKeys
                 _appleStatusPath = statusPath;
                 _mark = mark;
             }
+            _scanned = true;
 
             // Событием, а не только ответом. Ответ читает один — сторож перехвата,
             // а зовут опрос трое, и любой из них съедал признак: человек менял

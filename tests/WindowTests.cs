@@ -66,6 +66,10 @@ namespace MagicKeys
             AutostartNotice();
             StopButtonFollowsCancellable();
             MarkFollowsBuild();
+            DriverProbeReachesWindow();
+            YieldedRowIsDead();
+            FnNoteMatchesTable();
+            SelfTestForgets();
 
             Console.WriteLine();
             Console.WriteLine("прошло " + _pass + ", провалено " + _fail);
@@ -148,6 +152,150 @@ namespace MagicKeys
             foreach (ComboBox b in combos) Turn(b);
 
             Restore(saved);
+        }
+
+        /// <summary>
+        /// Прокрутить очередь потока окна. Без неё всё, что уходит через ToWindow,
+        /// в стенде не выполняется никогда — то есть ответы всякой фоновой работы
+        /// стенд не видит вовсе.
+        /// </summary>
+        static void Pump()
+        {
+            var frame = new System.Windows.Threading.DispatcherFrame();
+            _win.Dispatcher.BeginInvoke(System.Windows.Threading.DispatcherPriority.Background,
+                (Action)delegate { frame.Continue = false; });
+            System.Windows.Threading.Dispatcher.PushFrame(frame);
+        }
+
+        /// <summary>
+        /// Счёт по странице драйвера идёт в стороне — и обязан дойти до окна. Пока он
+        /// не дошёл, страница обещает «Ищу 7-Zip…», и ни кнопки «Открыть страницу 7-Zip»,
+        /// ни кнопки уборки кэша на ней нет вовсе.
+        /// </summary>
+        static void DriverProbeReachesWindow()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== счёт по странице драйвера ==");
+            BindingFlags f = BindingFlags.NonPublic | BindingFlags.Instance;
+            Type t = typeof(MainWindow);
+            FieldInfo probing = t.GetField("_probing", f);
+            FieldInfo probedFor = t.GetField("_probedFor", f);
+            FieldInfo seven = t.GetField("_sevenZip", f);
+            MethodInfo driver = t.GetMethod("PageDriver", f);
+            if (probing == null || probedFor == null || seven == null || driver == null)
+            { Check("счёт по странице драйвера доступен", false, "нет поля или метода"); return; }
+
+            probedFor.SetValue(_win, null);
+            seven.SetValue(_win, null);
+            try { driver.Invoke(_win, null); }
+            catch (Exception e) { Check("страница драйвера собирается", false, Inner(e)); return; }
+
+            for (int i = 0; i < 300 && (bool)probing.GetValue(_win); i++)
+            { Pump(); System.Threading.Thread.Sleep(50); }
+
+            Check("счёт кончился и дошёл до окна",
+                  !(bool)probing.GetValue(_win) && seven.GetValue(_win) != null,
+                  "страница осталась в состоянии «Ищу 7-Zip…»");
+
+            UIElement page = (UIElement)driver.Invoke(_win, null);
+            Check("досчитав, страница не обещает «Ищу 7-Zip…»",
+                  !Says(page, "Ищу 7-Zip"), "обещает");
+        }
+
+        /// <summary>
+        /// Ряд, отданный драйверу: списки о нём обязаны быть мертвы, и ровно они.
+        /// Живой список щёлкается стендом и сохраняется — то есть проходит там, где
+        /// человек до него не дотянется.
+        /// </summary>
+        static void YieldedRowIsDead()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== ряд, отданный драйверу ==");
+            bool yield = Engine.YieldsRow(_s, 0);
+            MethodInfo m = typeof(MainWindow).GetMethod("PageKeys",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            var boxes = new List<CheckBox>();
+            var combos = new List<ComboBox>();
+            try { Walk((UIElement)m.Invoke(_win, null), boxes, combos); }
+            catch (Exception e) { Check("страница «Клавиши» собирается", false, Inner(e)); return; }
+
+            int dead = 0;
+            foreach (ComboBox b in combos) if (!b.IsEnabled) dead++;
+
+            // Двенадцать строк F1–F12 плюс список основного режима — и ничего сверх того.
+            Check(yield ? "ряд у драйвера: F1–F12 и режим погашены"
+                        : "ряд у программы: погашенных списков нет",
+                  yield ? dead == 13 : dead == 0,
+                  "погашено списков: " + dead + " (уступаем: " + yield + ")");
+        }
+
+        /// <summary>
+        /// Сноска о навигации Fn обещает только то, чего не забрала таблица macOS.
+        /// Забирает она по-разному: у ⌥ это ←→ и Backspace, у ⌘ — ↑↓ и Backspace.
+        /// </summary>
+        static void FnNoteMatchesTable()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== сноска о навигации Fn ==");
+            Settings saved = _s.Snapshot();
+            MethodInfo m = typeof(MainWindow).GetMethod("PageKeys",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            try
+            {
+                _s.MacShortcuts = true; _s.FnNavigation = true;
+                _s.MacShortcutsOff = new string[0];
+                _s.FnSubstitute = ModKey.RAlt; _s.MapRAlt = ModKey.RAlt; _s.OptLevel = OptLevel.Off;
+                _eng.Apply(_s);
+                UIElement p = (UIElement)m.Invoke(_win, null);
+                Check("с ⌥-заменителем сноска не обещает Fn+←→",
+                      !Says(p, "Fn+←→ уводят"), "обещает начало и конец строки");
+
+                Restore(saved);
+                _s.MacShortcuts = true; _s.FnNavigation = true;
+                _s.MacShortcutsOff = new string[0];
+                _s.FnSubstitute = ModKey.RWin; _s.MapRWin = ModKey.RWin;
+                _eng.Apply(_s);
+                p = (UIElement)m.Invoke(_win, null);
+                Check("с ⌘-заменителем сноска не обещает Fn+↑↓",
+                      !Says(p, "Fn+↑↓ листают страницу"), "обещает листание страницы");
+                Check("с ⌘-заменителем сноска не обещает Fn+Backspace",
+                      !Says(p, "Fn+Backspace удаляет вперёд"), "обещает удаление вперёд");
+            }
+            catch (Exception e) { Check("страница «Клавиши» собирается", false, Inner(e)); }
+            Restore(saved);
+        }
+
+        /// <summary>
+        /// Уходя с глаз, страница проверки перестаёт слушать и забывает набранное:
+        /// список последних нажатий — это то, что человек печатал.
+        /// </summary>
+        static void SelfTestForgets()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== подписка страницы проверки ==");
+            BindingFlags f = BindingFlags.NonPublic | BindingFlags.Instance;
+            Type t = typeof(MainWindow);
+            FieldInfo test = t.GetField("_selfTest", f);
+            FieldInfo lines = t.GetField("_selfTestLines", f);
+            MethodInfo diag = t.GetMethod("PageDiag", f);
+            MethodInfo detach = t.GetMethod("DetachSelfTest", f);
+            MethodInfo forget = t.GetMethod("ForgetSelfTest", f);
+            if (test == null || lines == null || diag == null || detach == null || forget == null)
+            { Check("страница проверки доступна", false, "нет поля или метода"); return; }
+
+            try { diag.Invoke(_win, null); }
+            catch (Exception e) { Check("страница проверки собирается", false, Inner(e)); return; }
+            Check("на странице проверки подписка есть", test.GetValue(_win) != null, "подписки нет");
+
+            detach.Invoke(_win, null);
+            Check("уход со страницы снимает подписку", test.GetValue(_win) == null, "подписка осталась");
+
+            diag.Invoke(_win, null);
+            var log = (List<string>)lines.GetValue(_win);
+            log.Add("клавиша A   vk=41");
+            forget.Invoke(_win, null);
+            Check("уход с глаз стирает набранное", log.Count == 0, "осталось строк: " + log.Count);
+            Check("уход с глаз снимает подписку", test.GetValue(_win) == null, "подписка осталась");
         }
 
         /// <summary>Есть ли где-нибудь на странице такая надпись.</summary>
@@ -339,8 +487,11 @@ namespace MagicKeys
             Check("«установщик запущен» переживает пересборку",
                   box != null && box.Text == "Установщик запущен",
                   "показано «" + (box == null ? "ничего" : box.Text) + "»");
-            Check("после запуска установщика кнопка погашена",
-                  btn != null && !btn.IsEnabled, "кнопка жива");
+            // Кнопка остаётся живой: запрос прав администратора можно отклонить,
+            // установщик закрыть, — и проверить заново человек вправе всегда.
+            Check("после запуска установщика кнопка предлагает проверить заново",
+                  btn != null && btn.IsEnabled && "" + btn.Content == "Проверить",
+                  btn == null ? "нет кнопки" : "«" + btn.Content + "», жива=" + btn.IsEnabled);
 
             // Найденный выпуск без отказа: приглашение обновиться.
             said.SetValue(_win, null);

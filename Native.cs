@@ -15,7 +15,6 @@ namespace MagicKeys
         public const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
         public const int DWMWA_SYSTEMBACKDROP_TYPE = 38;
         public const int DWMSBT_MAINWINDOW = 2;       // Mica — для окон
-        public const int DWMSBT_TRANSIENTWINDOW = 3;  // акрил — для меню и всплывающих плашек
 
         [DllImport("dwmapi.dll")]
         public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
@@ -483,18 +482,6 @@ namespace MagicKeys
 
         [DllImport("user32.dll")]
         public static extern short GetKeyState(int vKey);
-
-        /// <summary>
-        /// Что дала бы эта клавиша в действующей раскладке Windows. Флаг 0x4 (Windows 10 1607
-        /// и новее) просит не трогать внутреннее состояние раскладки — иначе вызов сбивал бы
-        /// набор через мёртвые клавиши.
-        /// </summary>
-        [DllImport("user32.dll")]
-        public static extern int ToUnicodeEx(uint vk, uint scanCode, byte[] keyState,
-            [Out] char[] buff, int buffSize, uint flags, IntPtr hkl);
-
-        [DllImport("user32.dll")]
-        public static extern uint MapVirtualKeyExW(uint code, uint mapType, IntPtr hkl);
 
         // ---------- прочее ----------
 

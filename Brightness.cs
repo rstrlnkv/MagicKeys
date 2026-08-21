@@ -127,7 +127,10 @@ namespace MagicKeys
 
             if (target0 != null)
             {
-                uint range = target0.Max > target0.Min ? target0.Max - target0.Min : 100;
+                // Панель с Max не больше Min в список не попадает вовсе — её отсеивает
+                // перепись (см. «if (max <= min) continue»). Запасное значение здесь
+                // обещало разбор случая, которого нет.
+                uint range = target0.Max - target0.Min;
                 long step = (long)Math.Round(range * (delta / 100.0));
                 if (step == 0) step = delta > 0 ? 1 : -1;
                 long want = (long)target0.Cur + step;
@@ -181,7 +184,7 @@ namespace MagicKeys
             // Cur ниже Min монитор отдавать не должен, но отдаёт: вычитание беззнаковых
             // тогда уходит в переполнение, и в плашке появляется бессмыслица.
             if (p.Cur < p.Min) return 0;
-            uint range = p.Max > p.Min ? p.Max - p.Min : 1;
+            uint range = p.Max - p.Min;   // ноля не бывает: перепись такие панели отсеяла
             return (int)Math.Round((p.Cur - p.Min) * 100.0 / range);
         }
 

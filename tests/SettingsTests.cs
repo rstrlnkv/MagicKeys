@@ -61,6 +61,8 @@ namespace MagicKeys
             AppleLayout();
             ModifierChangedMidPress();
             OneOwnerPerKey();
+            SubstituteOnPlainKey();
+            LayoutLevels();
             SnapshotIndependence();
             LayoutGuess();
             OtherSettings();
@@ -180,6 +182,18 @@ namespace MagicKeys
             Clear();
         }
 
+        /// <summary>
+        /// Отправлено ровно одно нажатие с отпусканием — без вопроса о проглатывании.
+        /// Клавиша ⏏ до перехвата не доходит вовсе, и передавать за неё «проглочено»
+        /// константой значило проверять половиной проверки ничего.
+        /// </summary>
+        static void Sends(string name, int vk)
+        {
+            string want = N(vk) + "v " + N(vk) + "^";
+            Check(name, Sent() == want, "ждали «" + want + "», пришло «" + Sent() + "»");
+            Clear();
+        }
+
         /// <summary>Ничего не отправлено и ничего не проглочено — нажатие ушло как есть.</summary>
         static void Untouched(string name, bool swallowed)
         {
@@ -196,6 +210,24 @@ namespace MagicKeys
                 if (at < want.Length && ev == want[at]) at++;
             Check(name, swallowed && at == want.Length,
                   "не нашли «" + String.Join(" ", want) + "», пришло «" + Sent() + "»");
+            Clear();
+        }
+
+        /// <summary>
+        /// Ровно эти события в этом порядке и никаких других, кроме щита.
+        ///
+        /// Seq ищет подпоследовательность и про лишнее молчит — а лишнее здесь и есть
+        /// беда: возвращённый посреди удержания ⌥ проверку на подпоследовательность
+        /// проходит, потому что всё нужное в записи тоже есть.
+        /// </summary>
+        static void Only(string name, bool swallowed, params string[] want)
+        {
+            var got = new List<string>();
+            foreach (string ev in _log) if (ev != "щитv" && ev != "щит^") got.Add(ev);
+            bool same = got.Count == want.Length;
+            for (int i = 0; same && i < want.Length; i++) if (got[i] != want[i]) same = false;
+            Check(name, swallowed && same,
+                  "ждали «" + String.Join(" ", want) + "», пришло «" + Sent() + "»");
             Clear();
         }
 
@@ -416,7 +448,7 @@ namespace MagicKeys
             KeyAction a = Actions.Get(_eng.Current.EjectKey);
             Actions.Begin(a, false, Settings.BrightnessStep);
             Actions.End(a);
-            Tapped("⏏ → Delete", true, Vk.Delete);
+            Sends("⏏ → Delete", Vk.Delete);
 
             // Заводское значение спрашиваем у нового объекта: строкой ниже мы его
             // переписываем, и прежняя проверка сверяла только что записанное — она
@@ -1403,6 +1435,129 @@ namespace MagicKeys
             Clear();
         }
 
+        /// <summary>Что перехват считает снятым у Windows на время.</summary>
+        static Dictionary<ModKey, int> Lifted()
+        {
+            return (Dictionary<ModKey, int>)typeof(Engine)
+                .GetField("_modLifted", BindingFlags.NonPublic | BindingFlags.Instance)
+                .GetValue(_eng);
+        }
+
+        /// <summary>
+        /// Заменитель Fn с завода висит на правом ⌥, а тот ничем не переназначен —
+        /// то есть его нажатия перехват не берёт вовсе. Щит обязан работать и так:
+        /// снять код у Windows, а после навигации не оставить о нём записи, снять
+        /// которую потом некому.
+        /// </summary>
+        static void SubstituteOnPlainKey()
+        {
+            Head("Заменитель Fn на неразбираемой клавише");
+
+            Settings s = Fresh();
+            s.FnNavigation = true;
+            s.FnSubstitute = ModKey.RAlt;   // MapRAlt остаётся RAlt: клавиша идёт насквозь
+            s.MacShortcuts = false;         // иначе ⌥+← достанется таблице, а не навигации
+            Use(s);
+
+            DownE(Vk.RMenu);
+            bool sw = Down(Vk.Left); Up(Vk.Left);
+            Only("Fn+← даёт Home, а ⌥ снят на это время", sw,
+                 N(Vk.RMenu) + "^", N(Vk.Home) + "v", N(Vk.Home) + "^", N(Vk.RMenu) + "v");
+            UpE(Vk.RMenu); Clear();
+            Check("после Fn+← запись о снятом не остаётся", Lifted().Count == 0,
+                  "осталось записей: " + Lifted().Count +
+                  " — снять их некому, и перечёт зажатого перестаёт чинить эту клавишу");
+
+            // Пока идёт навигация, ⌥ у Windows снят. Всё, что спрашивает «что Windows
+            // держит сейчас», обязано отвечать так же: иначе готовый символ вернёт Alt
+            // нажатым посреди удержания стрелки, и следующий Page Up уйдёт Alt+Page Up.
+            Use(s);
+            DownE(Vk.RMenu);
+            Down(Vk.Up);                        // навигация началась, ⌥ снят
+            Clear();
+            Send(Vk.Clear, 0x59, true, false);  // «=» цифрового блока идёт через EmitText
+            Send(Vk.Clear, 0x59, false, false);
+            Check("во время навигации щит не возвращает ⌥ нажатым",
+                  Count(Sent(), N(Vk.RMenu) + "v") == 0,
+                  "Alt вернулся посреди удержания стрелки: " + Sent());
+            Clear();
+            Up(Vk.Up); UpE(Vk.RMenu); Clear();
+
+            // Заменитель перенажали, не отпуская F-клавишу: модификатор вернулся,
+            // а автоповтор уходит уже под ним — ⌥+F4 превращается в Alt+F4.
+            Settings f = Fresh();
+            f.MediaFirst = true;
+            f.FnSubstitute = ModKey.RAlt;
+            Use(f);
+            DownE(Vk.RMenu);
+            Down(Vk.F4);                        // настоящая F4, ⌥ снят
+            UpE(Vk.RMenu);                      // заменитель отпустили, F4 держим
+            // Спрашиваем именно про проглатывание: настоящее нажатие неразбираемой
+            // клавиши идёт в Windows мимо нас, и в записи посланного его не видно —
+            // пропустить его и значит вернуть Alt под зажатой F4, то есть Alt+F4.
+            bool again = DownE(Vk.RMenu);
+            Check("перенажатый заменитель не доходит до Windows, пока его код снят", again,
+                  "нажатие пропущено — F4 уходит под Alt, а это Alt+F4, закрытие окна");
+            Check("и код по-прежнему считается снятым", Lifted().ContainsKey(ModKey.RAlt),
+                  "запись о снятии потеряна: " + Lifted().Count);
+            Clear();
+            Down(Vk.F4);                        // автоповтор F4
+            Check("автоповтор F-клавиши не тащит за собой модификатор",
+                  Count(Sent(), N(Vk.RMenu) + "v") == 0, "" + Sent());
+            Clear();
+            Up(Vk.F4);
+            Check("проглоченное нажатие заменителя даёт проглоченное отпускание",
+                  UpE(Vk.RMenu), "отпускание ушло в Windows без пары");
+            Clear();
+            Check("после всего снятого не остаётся", Lifted().Count == 0,
+                  "осталось записей: " + Lifted().Count);
+        }
+
+        /// <summary>
+        /// Уровень раскладки, объявленный отличным от Microsoft, но состоящий из одних
+        /// пробелов, глотает нажатие и печатает пробел. Клавиша молча перестаёт делать
+        /// то, что на ней напечатано, и понять почему нельзя ничем.
+        /// </summary>
+        static void LayoutLevels()
+        {
+            Head("Уровни раскладок");
+            bool[] sh = { false, false, true, true };
+            bool[] op = { false, true, false, true };
+            string[] nm = { "base", "opt", "shift", "optShift" };
+
+            var bad = new List<string>();
+            foreach (AppleLayoutFile f in Layouts.All)
+                foreach (KeyValuePair<int, LayoutKey> p in f.Keys)
+                    for (int i = 0; i < 4; i++)
+                    {
+                        string t = p.Value.Text(sh[i], op[i]);
+                        if (t != null && t.Trim().Length == 0 && p.Value.Differs(sh[i], op[i]))
+                            bad.Add(f.Id + " " + p.Key.ToString("X2") + " " + nm[i]);
+                    }
+            Check("нет пустых уровней, объявленных отличными от Microsoft",
+                  bad.Count == 0, String.Join(", ", bad.ToArray()));
+
+            // Переход мёртвой клавиши, приставку которой не даёт ни один уровень,
+            // сработать не может: это просто мёртвая строка в файле.
+            var orphan = new List<string>();
+            foreach (AppleLayoutFile f in Layouts.All)
+            {
+                var deads = new List<string>();
+                foreach (KeyValuePair<int, LayoutKey> p in f.Keys)
+                    for (int i = 0; i < 4; i++)
+                        if (p.Value.Dead(sh[i], op[i]))
+                        {
+                            string t = p.Value.Text(sh[i], op[i]);
+                            if (t != null && !deads.Contains(t)) deads.Add(t);
+                        }
+                foreach (KeyValuePair<string, string> tr in f.Transforms)
+                    if (tr.Key.Length > 0 && !deads.Contains(tr.Key.Substring(0, 1)))
+                        orphan.Add(f.Id + " «" + tr.Key + "»");
+            }
+            Check("у каждого перехода есть мёртвая клавиша, которая его начинает",
+                  orphan.Count == 0, String.Join(", ", orphan.ToArray()));
+        }
+
         static void SnapshotIndependence()
         {
             Head("Снимок настроек");
@@ -1594,7 +1749,6 @@ namespace MagicKeys
                   " — допишите копирование в Settings.Snapshot");
         }
 
-        /// <summary>Что приходит из файла, может быть каким угодно.</summary>
         /// <summary>
         /// Правила Normalize — по одному. Каждое из них умеет отменить выбор человека,
         /// и до сих пор их «проверял» стенд окна — тем, что спрашивал у Normalize,
@@ -1694,6 +1848,7 @@ namespace MagicKeys
             return String.Join("; ", parts.ToArray());
         }
 
+        /// <summary>Что приходит из файла, может быть каким угодно.</summary>
         static void BrokenFile()
         {
             Head("Битый файл настроек");

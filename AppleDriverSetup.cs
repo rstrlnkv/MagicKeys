@@ -454,7 +454,8 @@ namespace MagicKeys
                 // если переход уводит куда угодно, — а сюда попадает пакет Apple, который
                 // потом уйдёт в pnputil с правами администратора и не проверяется больше
                 // ничем, кроме подписи драйвера. Для установщика 7-Zip требование мягче:
-                // у него своя подпись, свой подписант и корень из машинного хранилища.
+                // у него закреплена сумма, и она называет ровно один файл — куда бы
+                // переход ни увёл, чужой пакет её не пройдёт.
                 if (sameSite && !SameSite(start, at))
                 {
                     error = "загрузка увела на другой сайт: " + at.Host;
@@ -560,7 +561,8 @@ namespace MagicKeys
 
         /// <param name="sameSite">
         /// Держаться ли того же сайта на перенаправлениях. Для пакета Apple — да:
-        /// после него проверять нечем. Для установщика 7-Zip — нет: у него своя подпись.
+        /// после него проверять нечем. Для установщика 7-Zip — нет: у него закреплена
+        /// сумма, и она строже любого требования к адресу.
         /// </param>
         /// <summary>Качает пакет, докачивая начатое. report(доля 0..1, поясняющая строка).</summary>
         private static bool Download(string url, string target, Action<double, string> report,
@@ -863,11 +865,14 @@ namespace MagicKeys
             try
             {
                 string full = Path.GetFullPath(path);
+                // Только Program Files. Внутри C:\Windows есть каталоги, куда обычный
+                // пользователь пишет штатно (Temp, Tracing), — то есть послабление там
+                // шире правды. 7-Zip в C:\Windows не ставится никогда, и эта папка
+                // в списке была лишней.
                 foreach (Environment.SpecialFolder f in new[]
                 {
                     Environment.SpecialFolder.ProgramFiles,
-                    Environment.SpecialFolder.ProgramFilesX86,
-                    Environment.SpecialFolder.Windows
+                    Environment.SpecialFolder.ProgramFilesX86
                 })
                 {
                     string root = Environment.GetFolderPath(f);

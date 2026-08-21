@@ -252,12 +252,15 @@ namespace MagicKeys
                 error = "не удалось скачать установщик";
                 return null;
             }
-            catch
+            catch (Exception e)
             {
                 // Системное сообщение здесь не помогает: его читают в окне, и сделать
                 // с ним нечего. Говорим о деле — что не получилось и куда смотреть.
+                // А подробность оставляем в журнале: сюда доходит то, чему Grab имени
+                // не нашла.
+                Diag.Log("обновление: загрузка сорвалась", e);
                 Forget(path);
-                error = "не удалось сохранить установщик — проверьте место на диске";
+                error = "не удалось скачать установщик";
                 return null;
             }
         }
@@ -482,12 +485,32 @@ namespace MagicKeys
                     using (Stream from = response.GetResponseStream())
                     using (var to = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
                     {
-                        int read;
-                        while ((read = from.Read(buffer, 0, buffer.Length)) > 0)
+                        // Читаем и пишем по отдельности: беда у них разная, и назвать её
+                        // надо своим именем. Обрыв связи посреди тела ответа — самая
+                        // частая из них, а человек читал «проверьте место на диске»
+                        // и шёл чистить диск, где свободны сотни гигабайт.
+                        while (true)
                         {
+                            int read;
+                            try { read = from.Read(buffer, 0, buffer.Length); }
+                            catch (Exception e)
+                            {
+                                Diag.Log("обновление: связь оборвалась посреди загрузки", e);
+                                error = "связь оборвалась посреди загрузки";
+                                return false;
+                            }
+                            if (read <= 0) break;
+
                             total += read;
                             if (total > MaxInstaller) { error = "установщик неправдоподобно велик"; return false; }
-                            to.Write(buffer, 0, read);
+
+                            try { to.Write(buffer, 0, read); }
+                            catch (Exception e)
+                            {
+                                Diag.Log("обновление: не удалось записать установщик", e);
+                                error = "не удалось сохранить установщик — проверьте место на диске";
+                                return false;
+                            }
                         }
                     }
                     return true;

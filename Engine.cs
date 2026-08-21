@@ -846,13 +846,13 @@ namespace MagicKeys
 
             // Цифровой блок Apple: ⌧ приходит как Num Lock и невзначай выключает блок,
             // а «=» шлёт VK_CLEAR со скан-кодом 0x59, который Windows просто игнорирует.
-            if (vk == Vk.NumLock) { if (HandleSingle(s, vk, s.NumpadClear, down)) return true; }
+            if (vk == Vk.NumLock) { if (HandleSingle(vk, s.NumpadClear, down)) return true; }
             // «=» печатает «=». Второго осмысленного ответа нет: Windows не понимает
             // того, что эта клавиша шлёт на самом деле, и настройка существовала только
             // потому, что механизм внутри общий с ⌧.
             // Без «если не взяли»: «=» — готовый символ, а не выбор человека, и мимо
             // разбора одиночных клавиш он не уходит никогда.
-            else if (k.scanCode == 0x59 && vk == Vk.Clear) return HandleSingle(s, vk, "text.equals", down);
+            else if (k.scanCode == 0x59 && vk == Vk.Clear) return HandleSingle(vk, "text.equals", down);
 
             if (s.AppleLayoutEnabled)
             {
@@ -913,7 +913,11 @@ namespace MagicKeys
             // ним и отпусканием ничего не было, — а мы как раз съели то, что было между.
             // Без неё Win+E не «ничего не делает», а вываливает «Пуск» поверх работы:
             // замерено стендом, ⌘1 открывал меню и забирал фокус.
-            if (cmdMiss)
+            // Переспрашиваем: между тем местом, где выставлен cmdMiss, и этим успевает
+            // отработать разбор одиночных клавиш и завести свою запись. Глотая по
+            // устаревшему ответу, мы делали двух хозяев у одной клавиши — и запись
+            // об одиночной переживала собственное отпускание.
+            if (cmdMiss && !Busy(vk, k.scanCode))
             {
                 if (!down) return false;   // нажатия не брали — и отпускание не наше
                 if (WindowsHoldsMenuKey()) Input.Tap(VkNoop);
@@ -1060,7 +1064,12 @@ namespace MagicKeys
             {
                 // Пробел после мёртвой клавиши даёт сам знак: «´» + пробел = «´»,
                 // и сам пробел при этом не печатается.
-                if (_deadPrefix != null && down && k.vkCode == Vk.Space)
+                // И этот слой спрашивает Busy — он был единственным, кто брал нажатие себе,
+            // не спросив. Пробел, ушедший в приложение своим ходом, мы съедали повтором
+            // и потом съедали его отпускание: нажатие ушло, отпускание нет, пробел
+            // оставался зажатым.
+            if (_deadPrefix != null && down && k.vkCode == Vk.Space
+                && !Busy((int)k.vkCode, k.scanCode))
                 {
                     FlushDead(lay, true);
                     _swallowed.Add(k.scanCode);
@@ -1524,7 +1533,8 @@ namespace MagicKeys
         }
 
         /// <summary>
-        /// Клавиша с одним назначением: ⌧, «=» цифрового блока, японские.
+        /// Клавиша с одним назначением: ⌧ и «=» цифрового блока. Больше таких нет:
+        /// зовут этот разбор ровно дважды.
         ///
         /// Действие защёлкивается на первом нажатии по тем же трём причинам, что и у
         /// F-ряда: настройки меняются из окна под зажатой клавишей, автоповтор приходит
@@ -1533,7 +1543,7 @@ namespace MagicKeys
         /// умолчанию на ⌧ висит Delete, которой на Magic Keyboard физически нет,
         /// и снять её было бы нечем.
         /// </summary>
-        private bool HandleSingle(Settings s, int sourceVk, string actionId, bool down)
+        private bool HandleSingle(int sourceVk, string actionId, bool down)
         {
             string id;
             if (down)
@@ -1631,6 +1641,13 @@ namespace MagicKeys
                 _fkeyLatched[index] = false;
             }
 
+            // Alt переключателя окон — с дороги на всех выходах ряда, а не только там,
+            // где мы клавишу берём. Уступленный драйверу ряд, «настоящая F-клавиша,
+            // которую мы не берём» и медиаветка с «Оставить как есть» уходят в Windows
+            // мимо RunAction — то есть под нашим Alt: F4 становится Alt+F4, закрытием
+            // окна. С завода так ведут себя F5, F6 и весь F13–F19.
+            if (down) DropSwitcherAlt();
+
             if (_fkeyYield[index]) return false;
 
             if (!_fkeyMedia[index])
@@ -1642,12 +1659,7 @@ namespace MagicKeys
                 if (!_fkeyTake[index]) return false;
                 if (down)
                 {
-                    if (!_fkeyDown[index])
-                    {
-                        _fkeyDown[index] = true;
-                        DropSwitcherAlt();
-                        SubstituteRelease();
-                    }
+                    if (!_fkeyDown[index]) { _fkeyDown[index] = true; SubstituteRelease(); }
                     Input.Key(vk, true);
                 }
                 else
@@ -1875,6 +1887,15 @@ namespace MagicKeys
         internal static Func<int, bool> HeldProbe { get; set; }
 
         /// <summary>Держит ли Windows этот код прямо сейчас.</summary>
+        /// <summary>
+        /// Держит ли Windows этот код прямо сейчас.
+        ///
+        /// Спрашивать это МОЖНО только из очереди сообщений потока перехвата и нельзя
+        /// изнутри разбора нажатия: замерено, что внутри обработчика хука ответ
+        /// относится к состоянию ДО разбираемого события — на нажатии «не держит»,
+        /// на отпускании «держит». Все вызывающие это правило соблюдают: перечёт
+        /// зажатого приходит сообщением, выходом потока или с чужого потока.
+        /// </summary>
         private static bool Held(int vk)
         {
             Func<int, bool> probe = HeldProbe;

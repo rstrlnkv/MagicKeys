@@ -66,6 +66,7 @@ namespace MagicKeys
             RepressAfterChord();
             TwoKeysOneCode();
             SwitcherAltGetsOutOfTheWay();
+            OneOwnerForNumpadClear();
             ResetKeepsTheOwner();
             SingleKeyLatches();
             LayoutLevels();
@@ -1743,6 +1744,24 @@ namespace MagicKeys
             Clear();
             Up(Vk.Left); UpE(Vk.RMenu); Up(Vk.LWin); Clear();
 
+            // F-клавиша, которую мы НЕ берём: заменителя не держат, клавиша уходит
+            // в приложение своим ходом — и обязана уйти без нашего Alt. С завода так
+            // ведут себя F5, F6 и весь F13–F19: у них назначение «Оставить как есть».
+            Settings p = Fresh();
+            p.CmdTabSwitchesWindows = true;
+            p.MediaFirst = false;            // «сначала F-клавиши»: F4 уходит настоящей
+            p.FnSubstitute = ModKey.None;
+            Use(p);
+            Down(Vk.LWin);
+            Down(Vk.Tab); Up(Vk.Tab);
+            Clear();
+            bool through = Down(Vk.F4);
+            Check("F4, ушедшая насквозь, не уходит под нашим Alt",
+                  !through && Count(Sent(), N(Vk.LMenu) + "^") == 1,
+                  "проглочено=" + through + ", это Alt+F4, закрытие окна: " + Sent());
+            Clear();
+            Up(Vk.F4); Up(Vk.LWin); Clear();
+
             // Контрольный опыт: без переключателя снимать нечего, и лишнего Alt^ нет.
             Use(s);
             DownE(Vk.RMenu);
@@ -1886,6 +1905,48 @@ namespace MagicKeys
             bool tookUp = Up(Vk.NumLock);
             Check("контроль: с живым назначением ⌧ берут и отпускают",
                   took && tookUp, "нажатие=" + took + ", отпускание=" + tookUp);
+            Clear();
+        }
+
+        /// <summary>
+        /// У ⌧ под зажатой ⌘ один хозяин, а не два.
+        ///
+        /// Промах мимо таблицы macOS судил по ответу Busy, взятому ДО разбора одиночных
+        /// клавиш, а глотал после него: запись об одиночной клавише переживала
+        /// собственное отпускание, и второе нажатие ⌘+⌧ отправляло в Windows настоящий
+        /// Num Lock — цифровой блок становился навигационным.
+        /// </summary>
+        static void OneOwnerForNumpadClear()
+        {
+            Head("Один хозяин у ⌧ под ⌘");
+            Settings s = Fresh();
+            s.NumpadClear = "none";          // ⌧ уходит насквозь
+            s.MacShortcuts = true;
+            Use(s);
+
+            Down(Vk.LWin);
+            Clear();
+            bool first = Down(Vk.NumLock);
+            bool firstUp = Up(Vk.NumLock);
+            bool second = Down(Vk.NumLock);
+            bool secondUp = Up(Vk.NumLock);
+            // Хозяин у клавиши один — разбор одиночных, который взял её первым.
+            // Промах мимо таблицы, глотавший её вторым, делал первую пару непохожей
+            // на вторую: запись об одиночной переживала собственное отпускание.
+            Check("оба нажатия ⌧ под ⌘ одинаковы",
+                  first == second && firstUp == secondUp,
+                  "первая пара " + first + firstUp + ", вторая " + second + secondUp +
+                  ": " + Sent());
+            Clear();
+            Up(Vk.LWin); Clear();
+
+            // Контрольный опыт: без ⌘ обе пары одинаковы — значит проверка выше
+            // меряет промах мимо таблицы, а не разбор одиночных клавиш.
+            Use(s);
+            bool a1 = Down(Vk.NumLock); bool a2 = Up(Vk.NumLock);
+            bool b1 = Down(Vk.NumLock); bool b2 = Up(Vk.NumLock);
+            Check("контроль: без ⌘ оба нажатия ⌧ одинаковы",
+                  a1 == b1 && a2 == b2, "" + a1 + a2 + " против " + b1 + b2);
             Clear();
         }
 

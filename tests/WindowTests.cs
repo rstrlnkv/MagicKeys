@@ -994,14 +994,37 @@ namespace MagicKeys
             if (test == null || lines == null || diag == null || detach == null || forget == null)
             { Check("страница проверки доступна", false, "нет поля или метода"); return; }
 
+            // Спрятанное окно слушать не должно: страницу пересобирают и мимо событий
+            // «спрятали» и «потеряли фокус» — ответ о заряде приходит раз в минуту сам,
+            // щелчок по значку в трее зовёт пересборку, смена темы Windows тоже. Снять
+            // вернувшуюся подписку было бы уже нечем.
+            MainWindow.ShownProbe = delegate { return false; };
+            try
+            {
+                diag.Invoke(_win, null);
+                Check("спрятанное окно не подписывается на нажатия",
+                      test.GetValue(_win) == null,
+                      "невидимое окно снова слушает клавиатуру и копит набранное");
+            }
+            catch (Exception e) { Check("страница проверки собирается", false, Inner(e)); }
+            finally { MainWindow.ShownProbe = null; }
+
+            MainWindow.ShownProbe = delegate { return true; };
             try { diag.Invoke(_win, null); }
-            catch (Exception e) { Check("страница проверки собирается", false, Inner(e)); return; }
+            catch (Exception e)
+            {
+                Check("страница проверки собирается", false, Inner(e));
+                MainWindow.ShownProbe = null; return;
+            }
+            finally { MainWindow.ShownProbe = null; }
             Check("на странице проверки подписка есть", test.GetValue(_win) != null, "подписки нет");
 
             detach.Invoke(_win, null);
             Check("уход со страницы снимает подписку", test.GetValue(_win) == null, "подписка осталась");
 
-            diag.Invoke(_win, null);
+            MainWindow.ShownProbe = delegate { return true; };
+            try { diag.Invoke(_win, null); }
+            finally { MainWindow.ShownProbe = null; }
             var log = (List<string>)lines.GetValue(_win);
             log.Add("клавиша A   vk=41");
             forget.Invoke(_win, null);

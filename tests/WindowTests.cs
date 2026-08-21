@@ -1941,8 +1941,22 @@ namespace MagicKeys
             finally { art.SetValue(_win, hadArt); }
         }
 
-        /// <summary>Пересекаются ли две клавиши. Соприкосновение краями — не пересечение.</summary>
+        /// <summary>
+        /// Пересекаются ли две клавиши. Соприкосновение краями — не пересечение.
+        ///
+        /// Сравниваются составные части, а не описанные прямоугольники: Г-образный Enter
+        /// у ISO вписан в прямоугольник, куда попадает и соседняя клавиша среднего ряда, —
+        /// а на живой клавиатуре они не спорят, потому что Enter в этом месте уже.
+        /// </summary>
         static bool Overlap(KeyCap a, KeyCap b)
+        {
+            foreach (KeyRect ra in a.Rects())
+                foreach (KeyRect rb in b.Rects())
+                    if (Hit(ra, rb)) return true;
+            return false;
+        }
+
+        static bool Hit(KeyRect a, KeyRect b)
         {
             const double Eps = 0.001;
             return a.X + a.W > b.X + Eps && b.X + b.W > a.X + Eps

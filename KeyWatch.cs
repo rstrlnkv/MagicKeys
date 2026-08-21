@@ -330,7 +330,7 @@ namespace MagicKeys
                     var kb = (Native.RAWKEYBOARD)Marshal.PtrToStructure(
                         new IntPtr(buf.ToInt64() + headerSize), typeof(Native.RAWKEYBOARD));
                     if (kb.Message != Native.WM_KEYDOWN && kb.Message != Native.WM_SYSKEYDOWN) return;
-                    Remember(kb.VKey, kb.MakeCode);
+                    Remember(SideOf(kb.VKey, kb.MakeCode, kb.Flags), kb.MakeCode);
                 }
                 else if (header.dwType == Native.RIM_TYPEHID)
                 {
@@ -338,6 +338,28 @@ namespace MagicKeys
                 }
             }
             finally { Marshal.FreeHGlobal(buf); }
+        }
+
+        /// <summary>
+        /// Левый или правый — по скан-коду и признаку расширенности.
+        ///
+        /// Замерено: сырой ввод отдаёт про боковые модификаторы ОБЩИЙ код. Левый ⇧
+        /// (скан 0x2A) приходит как VK_SHIFT 0x10, а не как VK_LSHIFT 0xA0; так же
+        /// ведут себя control и Alt. Без поправки галочки у ⌥, control и ⇧ в карточке
+        /// «Особые клавиши» не загорались никогда — она спрашивает про 0xA0…0xA5, —
+        /// а строка в списке нажатий выглядела как «клавиша код 12 vk=12»: имени
+        /// у общего кода нет ни одного.
+        /// </summary>
+        private static ushort SideOf(ushort vk, ushort make, ushort flags)
+        {
+            bool ext = (flags & 0x02) != 0;   // RI_KEY_E0
+            switch (vk)
+            {
+                case 0x10: return make == 0x36 ? (ushort)0xA1 : (ushort)0xA0;   // ⇧
+                case 0x11: return ext ? (ushort)0xA3 : (ushort)0xA2;            // control
+                case 0x12: return ext ? (ushort)0xA5 : (ushort)0xA4;            // Alt
+                default: return vk;
+            }
         }
 
         /// <summary>Забыть устройство: его дескриптор Windows выдаст заново другому.</summary>

@@ -79,6 +79,11 @@ namespace MagicKeys
             FnNotesDoNotContradict();
             RightOptionCardStates();
             BatteryCardStates();
+            DriverCardTellsTruthAboutMode();
+            AppleLayoutNoteFollowsOptLevel();
+            DriverOutcomeSurvivesRemoval();
+            HookFailureIsSaid();
+            NoGlyphsMissingFromFont();
             ChannelButtons();
             FnNoteAboveTwelve();
             PhysNoteAnsiIsNotDetected();
@@ -535,6 +540,194 @@ namespace MagicKeys
                 takes.SetValue(null, w4); stamp.SetValue(null, w5);
                 where.SetValue(null, w6); media.SetValue(null, w7);
             }
+        }
+
+        /// <summary>
+        /// Карточка «Сейчас этим занимается драйвер Apple» не объявляет погашенным
+        /// список, который остаётся живым. Гасят его только при ровно двенадцати
+        /// клавишах, а фраза стояла безусловной — и отговаривала трогать тот самый
+        /// список, которым назначения F13–F19 и оживляют.
+        /// </summary>
+        static void DriverCardTellsTruthAboutMode()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== карточка драйвера про основной режим ==");
+            BindingFlags f = BindingFlags.NonPublic | BindingFlags.Static;
+            FieldInfo takes = typeof(AppleDriver).GetField("_takesRow", f);
+            FieldInfo media = typeof(KeyWatch).GetField("_mediaSeen", f);
+            FieldInfo maxF = typeof(KeyWatch).GetField("_maxFunctionKey", f);
+            if (takes == null || media == null || maxF == null)
+            { Check("состояние драйвера доступно", false, "нет поля"); return; }
+
+            object wasT = takes.GetValue(null), wasM = media.GetValue(null), wasX = maxF.GetValue(null);
+            Settings saved = _s.Snapshot();
+            MethodInfo m = typeof(MainWindow).GetMethod("PageKeys",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            try
+            {
+                takes.SetValue(null, true); media.SetValue(null, true);
+                maxF.SetValue(null, 19); Freeze();
+                _eng.Apply(_s);
+                Check("при клавишах выше двенадцатой режим не объявляют погашенным",
+                      !Says((UIElement)m.Invoke(_win, null), "погашен и выбор основного режима"),
+                      "объявляет, а список режима при этом живой");
+
+                maxF.SetValue(null, 12); Freeze();
+                _eng.Apply(_s);
+                Check("контроль: при ровно двенадцати про погашенный режим сказано",
+                      Says((UIElement)m.Invoke(_win, null), "погашен и выбор основного режима"),
+                      "не сказано — значит проверка выше ничего не доказывает");
+            }
+            catch (Exception e) { Check("страница «Клавиши» собирается", false, Inner(e)); }
+            finally
+            {
+                takes.SetValue(null, wasT); media.SetValue(null, wasM);
+                maxF.SetValue(null, wasX); Freeze();
+                Restore(saved);
+            }
+        }
+
+        /// <summary>
+        /// Сноска «Раскладки Apple» не обещает третий уровень, когда он выключен, —
+        /// а с завода он выключен нарочно.
+        /// </summary>
+        static void AppleLayoutNoteFollowsOptLevel()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== третий уровень в сноске о раскладках ==");
+            Settings saved = _s.Snapshot();
+            MethodInfo m = typeof(MainWindow).GetMethod("PageLayout",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            try
+            {
+                _s.AppleLayoutEnabled = true; _s.FnSubstitute = ModKey.None;
+                _s.OptLevel = OptLevel.Off; _s.Normalize(); _eng.Apply(_s);
+                Check("при выключенном третьем уровне сноска его не обещает",
+                      !Says((UIElement)m.Invoke(_win, null), "третьими, набирает ⌥"),
+                      "обещает набор символов, которых сейчас не набрать ничем");
+
+                _s.OptLevel = OptLevel.RightOption; _s.MapRAlt = ModKey.RAlt;
+                _s.Normalize(); _eng.Apply(_s);
+                Check("контроль: при включённом третьем уровне сноска про него говорит",
+                      Says((UIElement)m.Invoke(_win, null), "третьими, набирает ⌥"),
+                      "не говорит — значит проверка выше ничего не доказывает");
+            }
+            catch (Exception e) { Check("страница «Раскладка» собирается", false, Inner(e)); }
+            Restore(saved);
+        }
+
+        /// <summary>
+        /// Итог удаления драйвера показывают и тогда, когда драйвера уже нет: удача
+        /// переводит «установлен» в ложь, и отчёт вместе с требованием перезагрузиться
+        /// пропадал — а неудача отчитывалась исправно.
+        /// </summary>
+        static void DriverOutcomeSurvivesRemoval()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== итог удаления драйвера ==");
+            BindingFlags fs = BindingFlags.NonPublic | BindingFlags.Static;
+            BindingFlags fi = BindingFlags.NonPublic | BindingFlags.Instance;
+            FieldInfo inst = typeof(AppleDriver).GetField("_installed", fs);
+            FieldInfo notice = typeof(MainWindow).GetField("_fnNotice", fi);
+            MethodInfo m = typeof(MainWindow).GetMethod("PageDriver", fi);
+            if (inst == null || notice == null || m == null)
+            { Check("состояние драйвера доступно", false, "нет поля или метода"); return; }
+
+            object wasI = inst.GetValue(null), wasN = notice.GetValue(_win);
+            try
+            {
+                notice.SetValue(_win, "Драйвер удалён. Windows просит перезагрузить компьютер.");
+                inst.SetValue(null, false); Freeze();
+                Check("после удаления итог показывают",
+                      Says((UIElement)m.Invoke(_win, null), "Драйвер удалён"),
+                      "молчит: требование перезагрузиться человек не увидит никогда");
+
+                inst.SetValue(null, true); Freeze();
+                Check("контроль: при установленном драйвере итог тоже показывают",
+                      Says((UIElement)m.Invoke(_win, null), "Драйвер удалён"), "не показывают");
+            }
+            catch (Exception e) { Check("страница драйвера собирается", false, Inner(e)); }
+            finally { inst.SetValue(null, wasI); notice.SetValue(_win, wasN); Freeze(); }
+        }
+
+        /// <summary>
+        /// Сорванный перехват — важнее всего остального: без него не работает ничего,
+        /// а карточка состояния показывала настройку, а не действительность.
+        /// </summary>
+        static void HookFailureIsSaid()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== сорванный перехват на первой странице ==");
+            MethodInfo m = typeof(MainWindow).GetMethod("PageMacKeys",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            string was = _eng.Failure;
+            try
+            {
+                _eng.Failure = null;
+                Check("контроль: пока перехват жив, о нём не говорят",
+                      !Says((UIElement)m.Invoke(_win, null), "перехват клавиатуры"),
+                      "говорит на ровном месте — проверка ниже ничего не докажет");
+
+                _eng.Failure = "Windows сняла перехват клавиатуры и не дала поставить его заново.";
+                Check("при сорванном перехвате карточка состояния об этом говорит",
+                      Says((UIElement)m.Invoke(_win, null), "перехват клавиатуры"), "молчит");
+            }
+            catch (Exception e) { Check("страница «Как на маке» собирается", false, Inner(e)); }
+            finally { _eng.Failure = was; }
+        }
+
+        /// <summary>
+        /// Значков ⌫, ⌧ и ⏏ в надписях быть не должно: в системном шрифте они
+        /// не рисуются и выходят пустым прямоугольником. Правило дома.
+        /// </summary>
+        static void NoGlyphsMissingFromFont()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== значки, которых нет в шрифте ==");
+            var bad = new List<string>();
+            MethodInfo[] pages =
+            {
+                typeof(MainWindow).GetMethod("PageMacKeys", BindingFlags.NonPublic | BindingFlags.Instance),
+                typeof(MainWindow).GetMethod("PageKeys", BindingFlags.NonPublic | BindingFlags.Instance),
+                typeof(MainWindow).GetMethod("PageLayout", BindingFlags.NonPublic | BindingFlags.Instance),
+                typeof(MainWindow).GetMethod("PageDriver", BindingFlags.NonPublic | BindingFlags.Instance),
+                typeof(MainWindow).GetMethod("PageDiag", BindingFlags.NonPublic | BindingFlags.Instance),
+                typeof(MainWindow).GetMethod("PageAbout", BindingFlags.NonPublic | BindingFlags.Instance)
+            };
+            foreach (MethodInfo p in pages)
+            {
+                if (p == null) continue;
+                try { Words((UIElement)p.Invoke(_win, null), bad); }
+                catch (Exception e) { Check("страница " + p.Name + " собирается", false, Inner(e)); }
+            }
+            Check("в надписях нет значков, которых нет в шрифте", bad.Count == 0,
+                  String.Join(" | ", bad.ToArray()));
+        }
+
+        /// <summary>Собрать надписи, в которых стоят непрорисовываемые значки.</summary>
+        static void Words(object node, List<string> bad)
+        {
+            var t = node as TextBlock;
+            if (t != null)
+            {
+                string s = t.Text;
+                if (!String.IsNullOrEmpty(s) &&
+                    (s.IndexOf((char)0x23CF) >= 0 || s.IndexOf((char)0x2327) >= 0
+                     || s.IndexOf((char)0x232B) >= 0))
+                    bad.Add("«" + Short(s) + "»");
+                return;
+            }
+            var d = node as DependencyObject;
+            if (d == null) return;
+            var content = node as ContentControl;
+            if (content != null) Words(content.Content, bad);
+            var panel = node as Panel;
+            if (panel != null) foreach (UIElement c in panel.Children) Words(c, bad);
+            var border = node as Border;
+            if (border != null) Words(border.Child, bad);
+            var items = node as ItemsControl;
+            if (items != null && !(node is ComboBox))
+                foreach (object o in items.Items) Words(o, bad);
         }
 
         /// <summary>

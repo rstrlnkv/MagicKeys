@@ -98,10 +98,12 @@ namespace MagicKeys
                     StringComparison.OrdinalIgnoreCase) >= 0)
             {
                 string alive = LiveServiceKey();
-                // Сравнение целиком, а не приставкой: «KeyMagic» — приставка «KeyMagic2»,
-                // и найденное в отключённой KeyMagic2 принималось за живую KeyMagic.
-                // Ошибка была односторонней и потому незаметной.
-                bool same = alive != null && SameKey(path, alive);
+                // «Тот же ключ или лежит под ним»: сравнение целиком нужно потому, что
+                // «KeyMagic» — приставка «KeyMagic2», и найденное в отключённой KeyMagic2
+                // принималось за живую KeyMagic. А «под ним» — потому что значение может
+                // лежать в подключе \Parameters живой службы, и переводить его оттуда
+                // в родительский ключ значит писать не туда, откуда читаем.
+                bool same = alive != null && (SameKey(path, alive) || Under(path, alive));
                 if (alive == null)
                 {
                     // Все службы отключены. Найденное место не выбрасываем: писать
@@ -126,14 +128,12 @@ namespace MagicKeys
                 // Работающая служба, а не первая существующая: писать в отключённую
                 // значит сказать «Записано» о записи, которую никто не прочтёт.
                 path = LiveServiceKey();
-                // Ключ устройства — вторым, и достаётся он единственному случаю:
-                // ключа службы нет вовсе, а .inf драйвера в хранилище опубликован.
-                // Писать тогда больше некуда.
-                if (String.IsNullOrEmpty(path))
-                {
-                    string dev = DeviceKey();
-                    if (dev != null) path = @"HKLM\" + dev;
-                }
+                // Ключа устройства здесь нет нарочно. Обратно мы его читаем только при
+                // существующей службе (см. Refresh), и запись туда без службы осталась бы
+                // обещанием, которого сама программа никогда не подтвердит: человек жмёт,
+                // соглашается на запрос прав, читает «Записано» — а страница по-прежнему
+                // пишет, что значения нет. Найденное у устройства значение сюда не попадёт:
+                // оно уже лежит в _fnBehaviorPath, и ветка выше его не тронет.
             }
             if (String.IsNullOrEmpty(path))
             {
@@ -257,9 +257,13 @@ namespace MagicKeys
                     using (RegistryKey k = Registry.LocalMachine.OpenSubKey(path, false))
                     {
                         if (k == null) continue;
-                        TryBehavior(k, path, ref behavior, ref where);
-                        using (RegistryKey p = k.OpenSubKey("Parameters", false))
-                            if (p != null) TryBehavior(p, path + @"\Parameters", ref behavior, ref where);
+                        // Первый нашедший и побеждает. Прежде второй вызов молча
+                        // переписывал ответ первого: значение из \Parameters вытесняло
+                        // значение самой службы, а запись всё равно уходила в службу —
+                        // человек читал «Записано», и режим не менялся никогда.
+                        if (!TryBehavior(k, path, ref behavior, ref where))
+                            using (RegistryKey p = k.OpenSubKey("Parameters", false))
+                                if (p != null) TryBehavior(p, path + @"\Parameters", ref behavior, ref where);
                         if (behavior >= 0) break;
                     }
 
@@ -311,6 +315,14 @@ namespace MagicKeys
         // Refresh(true), и без него забвение отменялось ответом, посчитанным ДО
         // установки драйвера. Тот же приём, что у возраста в KeyboardBattery.
         private static int _devKeyAge;
+
+        /// <summary>Лежит ли первый ключ внутри второго.</summary>
+        private static bool Under(string inner, string outer)
+        {
+            if (inner == null || outer == null) return false;
+            string root = outer.TrimEnd((char)92) + (char)92;
+            return inner.StartsWith(root, StringComparison.OrdinalIgnoreCase);
+        }
 
         /// <summary>Один и тот же ключ реестра — сравнение целиком, а не приставкой.</summary>
         private static bool SameKey(string a, string b)

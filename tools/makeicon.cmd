@@ -17,3 +17,8 @@ set TOOL=%TEMP%\magickeys-makeicon.exe
 if errorlevel 1 exit /b 1
 
 "%TOOL%" "%~dp0.."
+set RC=%errorlevel%
+
+rem За собой убираем: собранный сборщик значка живёт одну команду.
+del "%TOOL%" >nul 2>&1
+exit /b %RC%

@@ -1,5 +1,4 @@
-// Стенд настроек: каждую настройку включают, шлют в перехват нажатия и смотрят,
-// что он решил отдать Windows. Ввод никуда не уходит — Input.Sink его записывает.
+// Стенд настроек: каждую настройку включают, шлют в перехват нажатия и смотрят,// что он решил отдать Windows. Ввод никуда не уходит — Input.Sink его записывает.
 //
 // Что здесь считается шумом. Когда зажата клавиша ⌘ (у пришедших с мака это Windows),
 // перехват перед посылкой отпускает то, что держит сам, и жмёт незанятый код 0xE8 —
@@ -66,6 +65,7 @@ namespace MagicKeys
             LiftedOnlyOnce();
             RepressAfterChord();
             TwoKeysOneCode();
+            SwitcherAltGetsOutOfTheWay();
             LayoutLevels();
             SnapshotIndependence();
             LayoutGuess();
@@ -444,15 +444,38 @@ namespace MagicKeys
 
         static void EjectKey()
         {
-            Head("Клавиша ⏏");   // до перехвата не доходит: её ловит перепись клавиш
+            // Приходит она переписью клавиш, а исполняется на потоке перехвата:
+            // App просит об этом через Engine.PostAction, и разбирается просьба
+            // тем же RunAction, что и всё остальное, — ради щита. Стенд потока
+            // не заводит, поэтому PostAction уходит запасным путём — а он ведёт
+            // ровно туда же, в RunAsked, и это ровно то, что надо проверить.
+            Head("Клавиша ⏏");
             Settings s = Fresh();
             s.EjectKey = "key.delete";
             _eng.Apply(s); Clear();
 
-            KeyAction a = Actions.Get(_eng.Current.EjectKey);
-            Actions.Begin(a, false, Settings.BrightnessStep);
-            Actions.End(a);
+            // Тем же путём, каким это делает программа, а не мимо него. Прежде стенд
+            // звал Actions напрямую и проверял таблицу действий, а не поведение:
+            // проверка проходила при любой поломке разбора просьбы.
+            _eng.PostAction(_eng.Current.EjectKey);
             Sends("⏏ → Delete", Vk.Delete);
+
+            // Действие вида «клавиша» обязано и отпустить нажатое: физической ⏏ нет,
+            // отпускания у неё не будет, а снять зажатую клавишу потом нечем.
+            Settings esc = Fresh(); esc.EjectKey = "key.escape";
+            _eng.Apply(esc); Clear();
+            _eng.PostAction(_eng.Current.EjectKey);
+            Sends("⏏ → Escape отпускает клавишу", Vk.Escape);
+
+            // Аккорд идёт через щит: зажатую ⌘ надо убрать с дороги и вернуть.
+            Settings ex = Fresh(); ex.EjectKey = "sys.explorer";
+            _eng.Apply(ex); Clear();
+            _eng.PostAction(_eng.Current.EjectKey);
+            Check("⏏ с аккордом посылает аккорд",
+                  Count(Sent(), N(Vk.E) + "v") == 1 && Count(Sent(), N(Vk.E) + "^") == 1,
+                  Sent());
+            Clear();
+            _eng.Apply(s); Clear();
 
             // Заводское значение спрашиваем у нового объекта: строкой ниже мы его
             // переписываем, и прежняя проверка сверяла только что записанное — она
@@ -460,10 +483,12 @@ namespace MagicKeys
             Check("⏏ по умолчанию не вмешивается",
                   Actions.Get(new Settings().EjectKey).Kind == ActionKind.PassThrough,
                   "заводское назначение ⏏ — «" + new Settings().EjectKey + "»");
+            // Выключенное ⏏ спрашиваем поведением, а не видом настройки: PassThrough
+            // у «none» верен по построению таблицы, и проверять его — проверять таблицу.
             s = Fresh(); s.EjectKey = "none";
             _eng.Apply(s); Clear();
-            a = Actions.Get(_eng.Current.EjectKey);
-            Check("выключенное ⏏ не вмешивается", a.Kind == ActionKind.PassThrough, "" + a.Kind);
+            _eng.PostAction(_eng.Current.EjectKey);
+            Check("выключенное ⏏ ничего не посылает", Sent() == "", Sent());
             Clear();
         }
 
@@ -1653,6 +1678,85 @@ namespace MagicKeys
                   Count(Sent(), N(Vk.RWin) + "^") == 0, Sent());
             Clear();
             UpE(Vk.RMenu); Clear();
+        }
+
+        /// <summary>
+        /// Alt переключателя окон убирается с дороги у всех, кто посылает в приложение.
+        ///
+        /// Он не стоит ни за какой физической клавишей: подставленную Win мы сняли,
+        /// а Alt нажали сами. Всё посланное под ним меняет смысл: настоящая F4
+        /// становится Alt+F4 — закрытием окна, синтетическая Home — Alt+Home, то есть
+        /// уходом браузера на домашнюю страницу.
+        /// </summary>
+        static void SwitcherAltGetsOutOfTheWay()
+        {
+            Head("Переключатель окон и то, что мы посылаем");
+
+            // Верхний ряд: настоящая F4 при открытом переключателе.
+            Settings s = Fresh();
+            s.CmdTabSwitchesWindows = true;
+            s.MediaFirst = true;
+            s.FnSubstitute = ModKey.RAlt;
+            Use(s);
+            Down(Vk.LWin);                      // ⌘ зажата: подставлена Win
+            Down(Vk.Tab); Up(Vk.Tab);           // переключатель открыт, Alt наш
+            DownE(Vk.RMenu);                    // заменитель Fn
+            Clear();
+            Down(Vk.F4);
+            Check("F4 при открытом переключателе не уходит под нашим Alt",
+                  Count(Sent(), N(Vk.LMenu) + "^") == 1,
+                  "это Alt+F4, закрытие окна: " + Sent());
+            Clear();
+            Up(Vk.F4); UpE(Vk.RMenu); Up(Vk.LWin); Clear();
+
+            // Навигация Fn: синтетическая Home при открытом переключателе.
+            Settings n = Fresh();
+            n.CmdTabSwitchesWindows = true;
+            n.FnNavigation = true;
+            n.MacShortcuts = false;
+            n.FnSubstitute = ModKey.RAlt;
+            Use(n);
+            Down(Vk.LWin);
+            Down(Vk.Tab); Up(Vk.Tab);
+            DownE(Vk.RMenu);
+            Clear();
+            Down(Vk.Left);
+            Check("Fn+← при открытом переключателе не уходит под нашим Alt",
+                  Count(Sent(), N(Vk.LMenu) + "^") == 1,
+                  "это Alt+Home, уход браузера на домашнюю страницу: " + Sent());
+            Clear();
+            Up(Vk.Left); UpE(Vk.RMenu); Up(Vk.LWin); Clear();
+
+            // Контрольный опыт: без переключателя снимать нечего, и лишнего Alt^ нет.
+            Use(s);
+            DownE(Vk.RMenu);
+            Clear();
+            Down(Vk.F4);
+            Check("контроль: без переключателя лишнего Alt^ не посылают",
+                  Count(Sent(), N(Vk.LMenu) + "^") == 0, Sent());
+            Clear();
+            Up(Vk.F4); UpE(Vk.RMenu); Clear();
+
+            // Заменитель Fn на ⌘ поверх открытого переключателя: возвращать Win нельзя,
+            // её сняли насовсем — иначе следующий Tab уйдёт как Win+Alt+Tab.
+            Settings c = Fresh();
+            c.CmdTabSwitchesWindows = true;
+            c.FnNavigation = true;
+            c.MacShortcuts = false;
+            c.FnSubstitute = ModKey.LWin;
+            Use(c);
+            Down(Vk.LWin);
+            Down(Vk.Tab); Up(Vk.Tab);           // переключатель открыт, Win снята насовсем
+            Down(Vk.Left);                      // Fn+← : снимать нечего
+            Down(Vk.LWin);                      // автоповтор ⌘
+            Clear();
+            Up(Vk.Left);
+            Check("после ⌘+Tab заменитель не возвращает Win",
+                  Count(Sent(), N(Vk.LWin) + "v") == 0,
+                  "Win нажата поверх переключателя: следующий Tab уйдёт как Win+Alt+Tab, "
+                  + "а любая буква как Win+буква: " + Sent());
+            Clear();
+            Up(Vk.LWin); Clear();
         }
 
         /// <summary>Что перехват считает снятым у Windows на время.</summary>

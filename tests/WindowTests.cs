@@ -77,6 +77,9 @@ namespace MagicKeys
             ChannelButtons();
             FnNoteAboveTwelve();
             PhysNoteAnsiIsNotDetected();
+            ManualChoiceDoesNotInventDetection();
+            SpaceCardFollowsCmd();
+            FnBehaviorUnknownIsNotRegistry();
 
             Console.WriteLine();
             Console.WriteLine("прошло " + _pass + ", провалено " + _fail);
@@ -159,6 +162,128 @@ namespace MagicKeys
             foreach (ComboBox b in combos) Turn(b);
 
             Restore(saved);
+        }
+
+        /// <summary>
+        /// Ручной выбор исполнения не отменяет правила «ANSI — это не распознанное».
+        /// </summary>
+        static void ManualChoiceDoesNotInventDetection()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== ANSI как «распознанное» при ручном выборе ==");
+            BindingFlags f = BindingFlags.NonPublic | BindingFlags.Static;
+            FieldInfo det = typeof(KeyWatch).GetField("_detectedPhys", f);
+            if (det == null) { Check("признак распознанного доступен", false, "нет поля"); return; }
+            object was = det.GetValue(null);
+            Settings saved = _s.Snapshot();
+            MethodInfo m = typeof(MainWindow).GetMethod("PageLayout",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            try
+            {
+                _s.Physical = PhysLayout.Iso; _eng.Apply(_s);
+
+                det.SetValue(null, (int)PhysLayout.Ansi);
+                Check("при ручном выборе ANSI не выдают за распознанное",
+                      !Says((UIElement)m.Invoke(_win, null), "Распознанное по нажатиям (ANSI"),
+                      "уверяет, что по нажатиям распознано ANSI, — а не встретилось ничего");
+
+                // Контроль: настоящее распознанное при ручном выборе называть надо.
+                det.SetValue(null, (int)PhysLayout.Jis);
+                Check("контроль: распознанное JIS при ручном выборе называют",
+                      Says((UIElement)m.Invoke(_win, null), "Распознанное по нажатиям (JIS"),
+                      "не называют — значит проверка выше ничего не доказывает");
+            }
+            catch (Exception e) { Check("страница «Раскладка» собирается", false, Inner(e)); }
+            finally { det.SetValue(null, was); Restore(saved); }
+        }
+
+        /// <summary>
+        /// Роли ⌘Space и ⌃Space перехват раздаёт по назначению клавиши, а не по надписи.
+        /// После схемы «⌘ работает как Ctrl» поиск открывает control+пробел, а карточка
+        /// показывала «⌘ + пробел» и молчала об этом.
+        /// </summary>
+        static void SpaceCardFollowsCmd()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== чья клавиша открывает поиск ==");
+            Settings saved = _s.Snapshot();
+            MethodInfo m = typeof(MainWindow).GetMethod("PageMacKeys",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            try
+            {
+                _s.MacShortcuts = true; _s.SpaceSearch = Settings.SpaceCmd;
+                _s.MapLWin = ModKey.LWin; _s.MapLCtrl = ModKey.LCtrl; _s.MapRWin = ModKey.RWin;
+                _eng.Apply(_s);
+                Check("контроль: пока ⌘ на своей клавише, оговорки о поиске нет",
+                      !Says((UIElement)m.Invoke(_win, null), "поиск открывает"),
+                      "оговорка стоит на ровном месте — проверка ниже ничего не докажет");
+
+                // Схема «⌘ работает как Ctrl»: ⌘ приходит в Windows клавишей Ctrl.
+                _s.MapLCtrl = ModKey.LWin; _s.MapLWin = ModKey.LCtrl; _s.MapRWin = ModKey.RCtrl;
+                _eng.Apply(_s);
+                Check("когда ⌘ увели, карточка поиска об этом говорит",
+                      Says((UIElement)m.Invoke(_win, null), "поиск открывает"),
+                      "обещает поиск по ⌘+пробел, а он открывается по control+пробел");
+            }
+            catch (Exception e) { Check("страница «Как на маке» собирается", false, Inner(e)); }
+            Restore(saved);
+        }
+
+        /// <summary>
+        /// Драйвер установлен, а OSXFnBehavior в реестре нет: программа считает такой
+        /// драйвер забирающим ряд по умолчанию Apple. Ссылаться при этом на реестр —
+        /// выдавать собственную догадку за прочитанное.
+        /// </summary>
+        static void FnBehaviorUnknownIsNotRegistry()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== драйвер есть, а значения в реестре нет ==");
+            BindingFlags f = BindingFlags.NonPublic | BindingFlags.Static;
+            Type d = typeof(AppleDriver);
+            FieldInfo inst = d.GetField("_installed", f), en = d.GetField("_enabled", f),
+                      fb = d.GetField("_fnBehavior", f), takes = d.GetField("_takesRow", f),
+                      stamp = d.GetField("_stamp", f), where = d.GetField("_fnBehaviorPath", f);
+            FieldInfo media = typeof(KeyWatch).GetField("_mediaSeen", f);
+            MethodInfo m = typeof(MainWindow).GetMethod("PageDriver",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            if (inst == null || en == null || fb == null || takes == null || stamp == null
+                || where == null || media == null || m == null)
+            { Check("состояние драйвера доступно", false, "нет поля или метода"); return; }
+
+            object w1 = inst.GetValue(null), w2 = en.GetValue(null), w3 = fb.GetValue(null),
+                   w4 = takes.GetValue(null), w5 = stamp.GetValue(null),
+                   w6 = where.GetValue(null), w7 = media.GetValue(null);
+            try
+            {
+                // Свежая отметка: иначе Refresh перечитает настоящий реестр машины.
+                stamp.SetValue(null, DateTime.UtcNow);
+                inst.SetValue(null, true); en.SetValue(null, true);
+                fb.SetValue(null, -1); where.SetValue(null, null);
+                takes.SetValue(null, true); media.SetValue(null, false);
+
+                UIElement page = (UIElement)m.Invoke(_win, null);
+                Check("о ненайденном значении не говорят «в реестре сказано»",
+                      !Says(page, "В реестре сказано"),
+                      "ссылается на реестр, в котором значения нет");
+                Check("режим, которого в реестре нет, назван предположением",
+                      Says(page, "в реестре не задано"),
+                      "о догадке молчат вовсе — и обе кнопки режима без отметки");
+
+                // Контрольный опыт: значение прочитано — тогда о реестре говорить можно.
+                stamp.SetValue(null, DateTime.UtcNow);
+                fb.SetValue(null, 1);
+                where.SetValue(null, "HKLM" + (char)92 + "SYSTEM" + (char)92 + "KeyMagic2");
+                Check("контроль: с прочитанным значением о реестре говорят",
+                      Says((UIElement)m.Invoke(_win, null), "В реестре сказано"),
+                      "не говорят — значит проверка выше ничего не доказывает");
+            }
+            catch (Exception e) { Check("страница драйвера собирается", false, Inner(e)); }
+            finally
+            {
+                inst.SetValue(null, w1); en.SetValue(null, w2); fb.SetValue(null, w3);
+                takes.SetValue(null, w4); stamp.SetValue(null, w5);
+                where.SetValue(null, w6); media.SetValue(null, w7);
+            }
         }
 
         /// <summary>
@@ -249,7 +374,8 @@ namespace MagicKeys
                 Check("с клавишами выше двенадцатой сказано, что заменитель нужен",
                       Says(big, "Для F13 и дальше он нужен"), "не сказано");
                 Check("и «не нужен» сказано про F1–F12, а не про весь ряд",
-                      !Says(big, "для верхнего ряда заменитель не нужен"),
+                      Says(big, "для F1–F12 заменитель не нужен")
+                          && !Says(big, "для верхнего ряда заменитель не нужен"),
                       "отменяет карточку выше, которая советует его выбрать");
 
                 // Контрольный опыт: ровно двенадцать клавиш — и говорить о F13 нечего.

@@ -710,16 +710,34 @@ namespace MagicKeys
                 Directory.CreateDirectory(workFolder);
                 var queue = new List<string>();
                 queue.Add(package);
+                string failed = null;   // первая неудача распаковки, если была
 
+                int nth = 0;
                 for (int level = 0; level < 6 && queue.Count > 0; level++)
                 {
                     var next = new List<string>();
                     foreach (string archive in queue)
                     {
-                        string outDir = Path.Combine(workFolder, "l" + level + "_" +
+                        // Порядковый номер в имени папки обязателен. Внутри BootCampESD
+                        // под-пакетов несколько, и файл Payload в каждом называется
+                        // одинаково: без номера два дерева распаковывались одно поверх
+                        // другого, а обход клал файлы обоих в очередь второй раз —
+                        // тот же архив разбирался на следующем слое дважды, и запас
+                        // в шесть слоёв переставал быть запасом.
+                        string outDir = Path.Combine(workFolder, "l" + level + "_" + (nth++) + "_" +
                             Path.GetFileNameWithoutExtension(archive));
                         report(0, "распаковка: " + Path.GetFileName(archive));
-                        if (!Run7z(sevenZip, "x -y -o\"" + outDir + "\" -- \"" + archive + "\"", out error)) continue;
+                        // Неудачу запоминаем, но перебор не бросаем: посторонний .gz
+                        // рядом с нужным слоем — не повод сдаваться. А вот подменять
+                        // ею итог нельзя: не найдя .inf, человек читал «7-Zip не смог
+                        // распаковать пакет» вместо «внутри пакета нет файла драйвера»,
+                        // то есть вину перекладывали на 7-Zip и на Apple.
+                        string one;
+                        if (!Run7z(sevenZip, "x -y -o\"" + outDir + "\" -- \"" + archive + "\"", out one))
+                        {
+                            if (failed == null) failed = one;
+                            continue;
+                        }
 
                         string inf = FindInf(outDir);
                         if (inf != null) return inf;
@@ -736,7 +754,12 @@ namespace MagicKeys
                     queue = next;
                 }
 
-                if (error == null) error = "внутри пакета не нашлось файла драйвера клавиатуры";
+                // Ни один слой не дал .inf. Если при этом что-то не распаковалось —
+                // скажем и это: беда может быть и в неполной закачке.
+                error = failed == null
+                    ? "внутри пакета не нашлось файла драйвера клавиатуры"
+                    : "внутри пакета не нашлось файла драйвера клавиатуры (и распаковать "
+                      + "часть содержимого не вышло: " + failed + ")";
                 return null;
             }
             catch (Exception e) { error = Why("распаковать пакет не вышло", e); return null; }
@@ -1106,7 +1129,12 @@ namespace MagicKeys
                 Process started = Process.Start(psi);
                 if (started == null)
                 {
-                    output = "Запрос прав администратора отклонён.";
+                    // Пусто ShellExecute отдаёт, когда новый процесс не понадобился, —
+                    // документ открыла уже запущенная программа. Для pnputil такого
+                    // не бывает, и отказ от повышения прав приходит не сюда, а
+                    // исключением 1223 ниже. Говорить здесь «вы отклонили запрос» значит
+                    // отправлять человека искать ошибку у себя за то, чего он не видел.
+                    output = "Не удалось запустить установщик драйверов Windows.";
                     return false;
                 }
                 using (Process p = started)

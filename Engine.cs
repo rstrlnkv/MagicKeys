@@ -277,11 +277,9 @@ namespace MagicKeys
         /// <summary>
         /// Набор клавиатур стал другим — кто бы его ни опросил. Подписка, а не ответ
         /// своего вызова: опрос зовут трое, и любой из них съедал признак у остальных.
-        /// </summary>
-        /// <summary>
-        /// Набор клавиатур стал другим. Вместе с прочим это второй случай спросить про
-        /// цифровой блок: при запуске опрос ещё не проходил, и «клавиатуры Apple нет»
-        /// значило «ещё не знаем».
+        ///
+        /// Вместе с прочим это второй случай спросить про цифровой блок: при запуске
+        /// опрос ещё не проходил, и «клавиатуры Apple нет» значило «ещё не знаем».
         /// </summary>
         private void OnDevicesChanged()
         {
@@ -366,7 +364,7 @@ namespace MagicKeys
             _threadId = 0;
         }
 
-        // WM_APP + 1 и + 2: свои сообщения потоку хука, чужим кодом не заняты.
+        // WM_APP + 1 … + 4: свои сообщения потоку хука, чужим кодом не заняты.
         private const uint WmRelease = 0x8000 + 1;
         private const uint WmApply = 0x8000 + 3;
         private const uint WmAction = 0x8000 + 4;
@@ -470,16 +468,41 @@ namespace MagicKeys
             uint id = _threadId;
             if (id == 0 || !Native.PostThreadMessageW(id, WmAction, IntPtr.Zero, IntPtr.Zero))
             {
-                // Потока нет — до Start или после Stop. Тогда и держать нечего:
-                // щит убирал бы то, о чём мы всё равно ничего не знаем.
-                string one = TakeAsked();
-                while (one != null)
+                // Потока нет — до Start или после Stop. Исполняем здесь же и ровно тем
+                // же способом: две двери обязаны вести в одно место, иначе проверять
+                // одну значит не проверять другую.
+                RunAsked();
+            }
+        }
+
+        /// <summary>
+        /// Исполнить накопленные просьбы — руками того потока, который сюда пришёл.
+        ///
+        /// Отдельным методом ради двух дверей: сообщение потоку перехвата и запасной
+        /// путь, когда потока нет. И ради стенда: поток перехвата он не заводит,
+        /// а проверять надо разбор просьбы, а не таблицу действий.
+        /// </summary>
+        private void RunAsked()
+        {
+            string one = TakeAsked();
+            while (one != null)
+            {
+                KeyAction a = Actions.Get(one);
+                try
                 {
-                    KeyAction a = Actions.Get(one);
-                    try { Actions.Begin(a, false, Settings.BrightnessStep); Actions.End(a); }
-                    catch (Exception e) { Diag.Log("действие мимо потока перехвата: сбой", e); }
-                    one = TakeAsked();
+                    // Через тот же RunAction, что и всё остальное: щит, отпускание
+                    // зажатого и возврат безобидного — одним местом на всю программу.
+                    RunAction(a, false);
+                    // И отпускаем. У действия вида «клавиша» RunAction только нажимает:
+                    // отпускание ему приносит отпускание настоящей клавиши, а у ⏏ его
+                    // нет вовсе — ни физического, ни нашего. Без этой строки первое же
+                    // нажатие ⏏ с назначением «Delete», «Escape» или «Без звука»
+                    // оставляло клавишу зажатой навсегда: снять её было нечем, о ней
+                    // не знало ни одно множество и не знал общий сброс.
+                    Actions.End(a);
                 }
+                catch (Exception e) { Diag.Log("действие клавиши ⏏: сбой", e); }
+                one = TakeAsked();
             }
         }
 
@@ -561,19 +584,7 @@ namespace MagicKeys
                         if (shot != null) _cfg = shot;
                         continue;
                     }
-                    if (msg.hwnd == IntPtr.Zero && msg.message == WmAction)
-                    {
-                        // Через тот же RunAction, что и всё остальное: щит, отпускание
-                        // зажатого и возврат безобидного — одним местом на всю программу.
-                        string one = TakeAsked();
-                        while (one != null)
-                        {
-                            try { RunAction(Actions.Get(one), false); }
-                            catch (Exception e) { Diag.Log("действие клавиши ⏏: сбой", e); }
-                            one = TakeAsked();
-                        }
-                        continue;
-                    }
+                    if (msg.hwnd == IntPtr.Zero && msg.message == WmAction) { RunAsked(); continue; }
                     if (msg.hwnd == IntPtr.Zero && msg.message == WmCheck) { CheckHookAlive(); continue; }
                     Native.TranslateMessage(ref msg);
                     Native.DispatchMessageW(ref msg);
@@ -1264,9 +1275,14 @@ namespace MagicKeys
                 if (down && _subReleased > 0 && _fnPhys != ModKey.None)
                 {
                     _modTaken.Add(phys);
-                    // Что mod — модификатор, уже сказано: _fnPhys выставлен именно
-                    // по этому вопросу, а он проверен строкой выше.
-                    if (!_modLifted.ContainsKey(phys)) { _modLifted[phys] = mod; _subLifted = phys; }
+                    // Записываем снятие заново — но только если снимали его мы. Счётчик
+                    // растёт и тогда, когда снимать было нечего: ветка ⌘+Tab уже сняла
+                    // подставленную Win насовсем и запись о снятии стёрла. Записав тут
+                    // снятие из воздуха, мы «возвращали» Win поверх открытого
+                    // переключателя окон — и следующий Tab уходил как Win+Alt+Tab,
+                    // а любая буква как Win+буква: Win+L запирает экран.
+                    if (_subLifted == phys && !_modLifted.ContainsKey(phys))
+                        _modLifted[phys] = mod;
                     return true;
                 }
             }
@@ -1363,11 +1379,29 @@ namespace MagicKeys
             }
         }
 
+        /// <summary>
+        /// Закрыть переключатель окон, если его открыли мы. Всё, что мы посылаем
+        /// в приложение, уходит под этот Alt: синтетическая Home становится Alt+Home
+        /// (браузер уходит на домашнюю страницу), настоящая F4 — Alt+F4, то есть
+        /// закрытием окна. В MacSend и EmitText этот случай закрыт давно, а навигация
+        /// и верхний ряд про Alt переключателя не знали вовсе.
+        ///
+        /// Отпускаем без возврата — как и везде: вернуть его значит оставить висеть,
+        /// а переключатель всё равно уже закрылся и переключил окно.
+        /// </summary>
+        private void DropSwitcherAlt()
+        {
+            if (!_cmdTabAlt) return;
+            Input.Tap(VkNoop);
+            Input.Key(Vk.LMenu, false);
+            _cmdTabAlt = false;
+        }
+
         private bool HandleNav(int sourceVk, int targetVk, bool down)
         {
             if (down)
             {
-                if (_navActive.Add(sourceVk)) SubstituteRelease();
+                if (_navActive.Add(sourceVk)) { DropSwitcherAlt(); SubstituteRelease(); }
                 Input.Key(targetVk, true);
             }
             else
@@ -1582,7 +1616,12 @@ namespace MagicKeys
                 if (!_fkeyTake[index]) return false;
                 if (down)
                 {
-                    if (!_fkeyDown[index]) { _fkeyDown[index] = true; SubstituteRelease(); }
+                    if (!_fkeyDown[index])
+                    {
+                        _fkeyDown[index] = true;
+                        DropSwitcherAlt();
+                        SubstituteRelease();
+                    }
                     Input.Key(vk, true);
                 }
                 else

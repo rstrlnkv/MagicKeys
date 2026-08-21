@@ -99,14 +99,15 @@ namespace MagicKeys
                 // ничем. Поэтому «Записано» здесь и значит только «записано». Забирает
                 // ли драйвер ряд на деле, видно по приходящим медиакодам — это отдельный
                 // и честный признак, и страница «Драйвер Apple» показывает его рядом.
-                foreach (string p in ServiceKeys)
-                    using (RegistryKey k = Registry.LocalMachine.OpenSubKey(p, false))
-                        if (k != null) { path = @"HKLM\" + p; break; }
-                // Ключ устройства — вторым: там значения не нашлось, но если драйвер
-                // держит настройки у устройства, писать в пустую службу бессмысленно.
+                // Работающая служба, а не первая существующая: писать в отключённую
+                // значит сказать «Записано» о записи, которую никто не прочтёт.
+                path = LiveServiceKey();
+                // Ключ устройства — вторым, и достаётся он единственному случаю:
+                // ключа службы нет вовсе, а .inf драйвера в хранилище опубликован.
+                // Писать тогда больше некуда.
                 if (String.IsNullOrEmpty(path))
                 {
-                    string dev = DeviceKeyOfDriver();
+                    string dev = DeviceKey();
                     if (dev != null) path = @"HKLM\" + dev;
                 }
             }
@@ -170,11 +171,15 @@ namespace MagicKeys
             {
                 if (!force && (DateTime.UtcNow - _stamp) < TimeSpan.FromSeconds(30)) return;
                 _stamp = DateTime.UtcNow;
+                // По просьбе «перечитать» забываем и запомненный ключ устройства:
+                // ровно тогда драйвер и мог появиться или исчезнуть.
+                if (force) _devKeyKnown = false;
             }
 
             bool installed = false, enabled = false;
             int behavior = -1;
             string where = null;
+            string live = null;   // первая работающая служба
 
             try
             {
@@ -193,15 +198,28 @@ namespace MagicKeys
                         object start = k.GetValue("Start");
                         // 4 — служба отключена; всё остальное считаем рабочим.
                         // Рабочей считаем, если рабочая хоть одна.
-                        if (!(start is int) || ((int)start) != 4) enabled = true;
+                        if (!(start is int) || ((int)start) != 4)
+                        {
+                            enabled = true;
+                            if (live == null) live = path;
+                        }
                     }
                 }
+
+                // Порядок обхода: сперва работающая служба, потом все прочие. Список
+                // ServiceKeys начинается с KeyMagic2, а он вполне может остаться
+                // от прошлой клавиатуры и быть отключён — при работающем KeyMagic.
+                // Читая значение у мёртвой службы и записывая туда же, программа
+                // сообщала «Записано» о записи, которую никто не прочтёт.
+                var order = new List<string>();
+                if (live != null) order.Add(live);
+                foreach (string path in ServiceKeys) if (path != live) order.Add(path);
 
                 // Ищем в трёх местах, в порядке достоверности. Первое — ключ службы:
                 // именно там значение и лежит на этой машине, замерено. Второе — ключ
                 // устройства драйвера. Третье — перебор класса клавиатур, оставшийся
                 // от прежней догадки: пусть будет, стоит он дёшево.
-                foreach (string path in ServiceKeys)
+                foreach (string path in order)
                     using (RegistryKey k = Registry.LocalMachine.OpenSubKey(path, false))
                     {
                         if (k == null) continue;
@@ -211,9 +229,15 @@ namespace MagicKeys
                         if (behavior >= 0) break;
                     }
 
-                if (behavior < 0)
+                // Только когда драйвер вообще установлен. Поиск ключа устройства идёт
+                // через опубликованное имя .inf, а оно добывается перебором всего
+                // %WINDIR%\INF с чтением каждого файла: замерено 112 файлов, 8 МБ,
+                // 80 мс на четыре имени. На машине без драйвера ответ гарантированно
+                // пуст, и повторять эту работу каждые тридцать секунд — молотить диск
+                // ради невозможного.
+                if (behavior < 0 && installed)
                 {
-                    string dev = DeviceKeyOfDriver();
+                    string dev = DeviceKey();
                     if (dev != null)
                         using (RegistryKey k = OpenLocal(dev))
                             if (k != null) TryBehavior(k, dev, ref behavior, ref where);
@@ -235,10 +259,49 @@ namespace MagicKeys
 
 
         /// <summary>
-        /// Ключ устройства под классом клавиатур, которым занимается драйвер Apple, —
-        /// или null. Узнаётся по InfPath: там записано имя, под которым .inf драйвера
-        /// опубликован в хранилище Windows, а его добывает AppleDriverSetup.
+        /// Ключ устройства, которым занимается драйвер Apple, — или null. Ищется под
+        /// обоими классами: замер показал устройство под классом HID («Apple Keyboard»),
+        /// а не под классом клавиатур. Узнаётся по InfPath: там записано имя, под которым
+        /// .inf драйвера опубликован в хранилище Windows, а его добывает AppleDriverSetup.
         /// </summary>
+        // Ответ помним: перебор %WINDIR%\INF стоит десятки миллисекунд, а меняется он
+        // только вместе с установкой или удалением драйвера — то есть по Refresh(true),
+        // который зовут обе кнопки.
+        private static bool _devKeyKnown;
+        private static string _devKey;
+
+        /// <summary>
+        /// Первая работающая служба драйвера с приставкой «HKLM\», или null. Отключённая
+        /// служба (Start = 4) не в счёт: запись в неё не прочтёт никто.
+        /// </summary>
+        private static string LiveServiceKey()
+        {
+            foreach (string p in ServiceKeys)
+                using (RegistryKey k = Registry.LocalMachine.OpenSubKey(p, false))
+                {
+                    if (k == null) continue;
+                    object start = k.GetValue("Start");
+                    if (!(start is int) || ((int)start) != 4) return @"HKLM\" + p;
+                }
+            return null;
+        }
+
+        /// <summary>Ключ устройства драйвера, с памятью на один ответ.</summary>
+        private static string DeviceKey()
+        {
+            lock (Sync)
+            {
+                if (_devKeyKnown) return _devKey;
+            }
+            string found = DeviceKeyOfDriver();
+            lock (Sync)
+            {
+                _devKey = found;
+                _devKeyKnown = true;
+            }
+            return found;
+        }
+
         private static string DeviceKeyOfDriver()
         {
             try

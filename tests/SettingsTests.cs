@@ -42,6 +42,7 @@ namespace MagicKeys
             FKeysActions();
             NumpadClear();
             EjectKey();
+            ActionsUnderModifiers();
             Modifiers();
             FnNavigation();
             CmdTab();
@@ -56,6 +57,7 @@ namespace MagicKeys
             Tables();
             SnapshotByReflection();
             BrokenFile();
+            NormalizeRules();
 
             Console.WriteLine();
             Console.WriteLine("прошло " + _pass + ", провалено " + _fail);
@@ -78,6 +80,14 @@ namespace MagicKeys
                 else what = Vk.Name(k.wVk);
                 _log.Add(what + (up ? "^" : "v"));
             }
+        }
+
+        /// <summary>Считает ли перехват, что AltGr привёл призрачный control.</summary>
+        static bool PhantomCtrl()
+        {
+            return (bool)typeof(Engine)
+                .GetField("_phantomCtrl", BindingFlags.NonPublic | BindingFlags.Instance)
+                .GetValue(_eng);
         }
 
         /// <summary>Что перехват считает зажатым прямо сейчас.</summary>
@@ -347,6 +357,43 @@ namespace MagicKeys
             sw = Down(Vk.NumLock); Up(Vk.NumLock);
             Check("⌧ → отключить клавишу", sw && Sent() == "", Sent());
             Clear();
+        }
+
+        /// <summary>
+        /// Готовый символ и готовый аккорд из списка действий уходят под зажатыми
+        /// модификаторами не туда: текст под Alt приходит как WM_SYSCHAR, а аккорд
+        /// в конце отпускает Win, которую держит человек.
+        /// </summary>
+        static void ActionsUnderModifiers()
+        {
+            Head("Действия под зажатыми модификаторами");
+            Settings s = Fresh();
+            Use(s);
+
+            Down(Vk.LMenu); Clear();
+            Send(Vk.Clear, 0x59, true, false);
+            Send(Vk.Clear, 0x59, false, false);
+            int altUp = Sent().IndexOf(N(Vk.LMenu) + "^");
+            int sign = Sent().IndexOf("=");
+            Check("«=» цифрового блока не печатается под зажатым Alt",
+                  altUp >= 0 && sign > altUp, Sent());
+            Clear();
+            Up(Vk.LMenu); Clear();
+
+            // Готовый аккорд поверх зажатой ⌘: Input.Chord в конце отпустит Win, которую
+            // держит человек, и она молча перестанет работать до следующего нажатия.
+            s = Fresh();
+            s.MediaFirst = true;
+            s.FKeys[3] = "sys.search";           // Win+S
+            Use(s);
+            Down(Vk.LWin); Clear();
+            Down(Vk.F1 + 3); Up(Vk.F1 + 3);
+            int winUp = Sent().IndexOf(N(Vk.LWin) + "^");
+            int sKey = Sent().IndexOf(N(0x53));
+            Check("аккорд не жмёт Win поверх той, что держит человек",
+                  winUp >= 0 && sKey > winUp, Sent());
+            Clear();
+            Up(Vk.LWin); Clear();
         }
 
         static void EjectKey()
@@ -859,7 +906,7 @@ namespace MagicKeys
             DownE(Vk.RMenu);                    // теперь держим заменитель Fn
             bool fnDown = Down(Vk.F1 + 3);
             bool fnUp = Up(Vk.F1 + 3);
-            Check("после ⌘+F4 ветка F4 выбирается заново",
+            Check("защёлку F-клавиши снимает верхний ряд, и следующая ветка выбирается заново",
                   fnDown && fnUp && Sent().IndexOf(N(Vk.MediaPrev)) >= 0,
                   "нажатие=" + fnDown + ", отпускание=" + fnUp + ", пришло «" + Sent() + "»");
             Clear();
@@ -896,6 +943,42 @@ namespace MagicKeys
                   "остался в множестве — снять его оттуда некому");
             Send(Vk.LControl, 0x21D, false, false);  // призрак ушёл вместе с AltGr
             Clear();
+
+            // Заменитель Fn на переназначенной клавише: Windows держит подставленный код,
+            // а перечёт после сброса спрашивает про собственный. Стерев множество нажатого
+            // и перечитав его, мы теряли такую клавишу навсегда — а с ней и заменитель.
+            s = Fresh();
+            s.FnSubstitute = ModKey.CapsLock;
+            s.MapCapsLock = ModKey.LCtrl;
+            s.MediaFirst = true;
+            s.FKeys[1] = "media.play";
+            Use(s);
+            Down(Vk.Capital);                     // держим заменитель
+            Engine.HeldProbe = delegate(int probe) { return probe == Vk.LControl; };
+            try { _release.Invoke(_eng, null); }
+            finally { Engine.HeldProbe = null; }
+            Clear();
+            Down(Vk.F1 + 1); Up(Vk.F1 + 1);
+            Check("заменитель Fn на переназначенной клавише переживает общий сброс",
+                  Sent().IndexOf(N(Vk.MediaPlay)) < 0,
+                  "после сброса F2 снова дала медиа — заменитель забыт: «" + Sent() + "»");
+            Clear();
+            Up(Vk.Capital); Clear();
+
+            // Признак призрачного Ctrl снимается только его же отпусканием, а оно приходит
+            // мимо разбора, когда переназначения выключены. Оставшись стоять, он заставлял
+            // EmitText вернуть control нажатым — тот, которого Windows не держит.
+            s = Fresh();
+            Use(s);
+            Send(Vk.LControl, 0x21D, true, false);   // AltGr привёл призрака
+            Settings paused = Fresh();
+            paused.Enabled = false;
+            _eng.Apply(paused);
+            Send(Vk.LControl, 0x21D, false, false);  // отпускание пришло на паузе
+            _eng.Apply(Fresh());
+            Clear();
+            Check("признак призрачного Ctrl не остаётся после паузы", !PhantomCtrl(),
+                  "признак стоит — раскладка Apple вернёт control нажатым");
 
             // Вторая клавиша на Caps Lock жмёт уже нажатый Caps Lock: для Windows это
             // повтор, переключателем он не считается. Наш счёт регистра не должен
@@ -1168,6 +1251,22 @@ namespace MagicKeys
                   "нажатие=" + hd + ", повтор=" + hr + ", отпускание=" + hu);
             Clear();
             Up(Vk.LControl); Clear();
+
+            // Таблица раскладки составлена по тем скан-кодам, которых ждёт Windows,
+            // а ISO-клавиатура Apple шлёт две клавиши наоборот. Спросив таблицу сырым
+            // скан-кодом, мы брали строку соседней клавиши: слева от «Z» печаталось то,
+            // что напечатано слева от «1».
+            Settings isoLay = Fresh();
+            isoLay.AppleLayoutEnabled = true;
+            isoLay.Physical = PhysLayout.Iso;
+            isoLay.SetLayoutFor(lang, "en");
+            Use(isoLay);
+            Send(Vk.Oem3, 0x29, true, false);
+            Check("раскладка и перестановка ISO не спорят за одну клавишу",
+                  Sent().IndexOf("scan56") < 0,
+                  "таблица отступила, и клавиша ушла переставленной: " + Sent());
+            Send(Vk.Oem3, 0x29, false, false);
+            Clear();
         }
 
         static void SnapshotIndependence()
@@ -1362,6 +1461,105 @@ namespace MagicKeys
         }
 
         /// <summary>Что приходит из файла, может быть каким угодно.</summary>
+        /// <summary>
+        /// Правила Normalize — по одному. Каждое из них умеет отменить выбор человека,
+        /// и до сих пор их «проверял» стенд окна — тем, что спрашивал у Normalize,
+        /// выполнил ли Normalize своё же правило.
+        /// </summary>
+        static void NormalizeRules()
+        {
+            Head("Normalize: приведение к допустимому");
+
+            Settings s = new Settings();
+            s.FnSubstitute = ModKey.LShift;                 // такого окно не предлагает
+            s.Normalize();
+            Check("недопустимый заменитель Fn обнуляется", s.FnSubstitute == ModKey.None, "" + s.FnSubstitute);
+
+            s = new Settings(); s.SpaceSearch = "чепуха"; s.Normalize();
+            Check("неизвестный ответ про пробел — это ⌘", s.SpaceSearch == Settings.SpaceCmd, s.SpaceSearch);
+
+            s = new Settings(); s.UpdateChannel = "nightly"; s.Normalize();
+            Check("неизвестный канал — это stable", s.UpdateChannel == Settings.ChannelStable, s.UpdateChannel);
+
+            s = new Settings(); s.NumpadClear = "нет.такого"; s.EjectKey = "и.такого"; s.Normalize();
+            Check("неизвестные действия отдельных клавиш обнуляются",
+                  s.NumpadClear == "none" && s.EjectKey == "none", s.NumpadClear + " / " + s.EjectKey);
+
+            // Одна клавиша — одно дело, и спрашивается это по назначению, а не по надписи.
+            s = new Settings();
+            s.FnSubstitute = ModKey.CapsLock; s.MapCapsLock = ModKey.RAlt;
+            s.OptLevel = OptLevel.RightOption; s.Normalize();
+            Check("заменитель Fn, приходящий правым ⌥, гасит третий уровень",
+                  s.OptLevel == OptLevel.Off, "" + s.OptLevel);
+
+            s = new Settings();
+            s.FnSubstitute = ModKey.RWin; s.MapRWin = ModKey.LAlt;
+            s.OptLevel = OptLevel.AnyOption; s.Normalize();
+            Check("заменитель Fn, приходящий левым ⌥, гасит «любой ⌥»",
+                  s.OptLevel == OptLevel.Off, "" + s.OptLevel);
+
+            // Достижимость, а не поле: правый Alt, уведённый на Caps Lock, настройку не режет.
+            s = new Settings();
+            s.MapRAlt = ModKey.RCtrl; s.MapCapsLock = ModKey.RAlt;
+            s.OptLevel = OptLevel.RightOption; s.Normalize();
+            Check("правый ⌥ на Caps Lock третий уровень сохраняет",
+                  s.OptLevel == OptLevel.RightOption, "" + s.OptLevel);
+
+            s = new Settings();
+            s.FnSubstitute = ModKey.None;
+            s.MapRAlt = ModKey.RCtrl;
+            s.OptLevel = OptLevel.RightOption; s.Normalize();
+            Check("недостижимый правый ⌥ гасит третий уровень", s.OptLevel == OptLevel.Off, "" + s.OptLevel);
+
+            // Заменитель Fn с завода висит на правом ⌥ и сам погасил бы третий уровень —
+            // здесь проверяется другое правило, поэтому его убираем.
+            s = new Settings();
+            s.FnSubstitute = ModKey.None;
+            s.MapLAlt = ModKey.LCtrl;
+            s.OptLevel = OptLevel.AnyOption; s.Normalize();
+            Check("«любой ⌥» без левого Alt опускается до правого",
+                  s.OptLevel == OptLevel.RightOption, "" + s.OptLevel);
+
+            s = new Settings();
+            s.FnSubstitute = ModKey.None;
+            s.MapLAlt = ModKey.LCtrl; s.MapRAlt = ModKey.RCtrl;
+            s.OptLevel = OptLevel.AnyOption; s.Normalize();
+            Check("«любой ⌥» без обоих Alt выключается", s.OptLevel == OptLevel.Off, "" + s.OptLevel);
+
+            s = new Settings();
+            s.FnSubstitute = ModKey.None;
+            s.MapLAlt = ModKey.LCtrl; s.MapCapsLock = ModKey.LAlt;
+            s.OptLevel = OptLevel.AnyOption; s.Normalize();
+            Check("«любой ⌥» держится, когда левый Alt переехал на Caps Lock",
+                  s.OptLevel == OptLevel.AnyOption, "" + s.OptLevel);
+
+            // Normalize должен быть идемпотентен: его зовут на каждой правке из окна,
+            // и правило, качающее настройку туда-обратно, дало бы вечную пересборку.
+            s = new Settings();
+            s.MapLAlt = ModKey.LCtrl; s.OptLevel = OptLevel.AnyOption;
+            s.FnSubstitute = ModKey.CapsLock; s.MapCapsLock = ModKey.RAlt;
+            s.Normalize();
+            string once = Snapshot(s);
+            s.Normalize();
+            Check("второй Normalize ничего не меняет", Snapshot(s) == once, Snapshot(s));
+        }
+
+        /// <summary>Все поля настроек одной строкой — чтобы сравнить два состояния.</summary>
+        static string Snapshot(Settings s)
+        {
+            var parts = new List<string>();
+            foreach (FieldInfo f in typeof(Settings).GetFields(BindingFlags.Public | BindingFlags.Instance))
+            {
+                object v = f.GetValue(s);
+                var arr = v as Array;
+                if (arr == null) { parts.Add(f.Name + "=" + v); continue; }
+                var items = new List<string>();
+                foreach (object o in arr) items.Add("" + o);
+                parts.Add(f.Name + "=[" + String.Join(",", items.ToArray()) + "]");
+            }
+            return String.Join("; ", parts.ToArray());
+        }
+
         static void BrokenFile()
         {
             Head("Битый файл настроек");

@@ -155,11 +155,23 @@ rem ровно одному отпечатку и чужой пакет отве
 rem Лучше узнать это здесь, чем от человека.
 powershell -NoProfile -Command "$want=(Get-Content '%HERE%sign.thumbprint').Trim(); $s = Get-AuthenticodeSignature '%ROOT%\MagicKeys-%VERSION%-x64.msi'; exit [int](($s.SignerCertificate -eq $null) -or ($s.Status -eq 'HashMismatch') -or ($s.SignerCertificate.Thumbprint -ne $want))"
 if errorlevel 1 (
-  echo Готово, НО ПАКЕТ НЕ ПОДПИСАН: %ROOT%\MagicKeys-%VERSION%-x64.msi
-  echo Выкладывать такой нельзя — обновление его отвергнет.
-  rem И код возврата — тоже отказ: человеку сказали правду, а машина считала
-  rem сборку удачной.
-  exit /b 1
+  rem Отказ это или отсутствие ключа — разные вещи, и путать их нельзя. Репозиторий
+  rem открытый, а сертификат один: у всех, кроме владельца ключа, пакет выйдет
+  rem неподписанным, и это не поломка сборки. Поломка — когда ключ есть, а подпись
+  rem не легла: вот тогда отказ.
+  powershell -NoProfile -Command "$want=(Get-Content '%HERE%sign.thumbprint').Trim(); exit [int](-not (Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -ErrorAction SilentlyContinue ^| Where-Object { $_.Thumbprint -eq $want }))"
+  if errorlevel 1 (
+    echo Готово, без подписи: %ROOT%\MagicKeys-%VERSION%-x64.msi
+    echo Сертификата выпуска на этой машине нет — так и должно быть у всех, кроме
+    echo владельца ключа. Ставится такой пакет как обычно; обновиться на него
+    echo программа откажется, потому что сверяет отпечаток.
+  ) else (
+    echo Готово, НО ПАКЕТ НЕ ПОДПИСАН: %ROOT%\MagicKeys-%VERSION%-x64.msi
+    echo Сертификат на месте, а подпись не легла — выкладывать такой нельзя.
+    rem И код возврата — тоже отказ: человеку сказали правду, а машина считала
+    rem сборку удачной.
+    exit /b 1
+  )
 ) else (
   echo Готово: %ROOT%\MagicKeys-%VERSION%-x64.msi
 )

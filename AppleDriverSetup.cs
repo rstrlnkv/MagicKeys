@@ -708,6 +708,13 @@ namespace MagicKeys
 
                 string sUrl, sSha; long sLen;
                 bool state = ReadState(target, out sUrl, out sLen, out sSha);
+                // Точку повторного разбора убираем, а не пишем сквозь неё: FileMode.Create
+                // открыл бы и обрезал цель ссылки — чужой файл в чужом каталоге.
+                if (File.Exists(target) && IsLink(target))
+                {
+                    Diag.Log("в кэше вместо файла точка повторного разбора — убираю");
+                    try { File.Delete(target); } catch { }
+                }
                 long have = File.Exists(target) && !IsLink(target) ? new FileInfo(target).Length : 0;
                 // Тем же правилом, что и сама закачка: иначе для 7-Zip длина не узнавалась
                 // бы вовсе, а без неё молча отключаются и докачка, и проверка целостности.

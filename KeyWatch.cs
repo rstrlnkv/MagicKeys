@@ -131,10 +131,18 @@ namespace MagicKeys
             // только на свежих, а Bluetooth переподключается на каждом пробуждении.
             // Обнулив одно и оставив другое, мы теряли счёт навсегда — после первого
             // же выхода из сна строки F13-F19 пропадали до перезапуска программы.
-            lock (Sync) { SeenKeys.Clear(); SeenUsages.Clear(); }
-            _maxFunctionKey = 0;
-            _mediaSeen = false;
-            _ejectSeen = false;
+            // Всё под одним замком. Обнулив счёт снаружи, мы оставляли щель: поток
+            // переписи успевал добавить свежую F13 и поднять счёт до 19, а следующая
+            // строка возвращала ноль — клавиша при этом уже в наборе и свежей больше
+            // не станет никогда, и строки F13–F19 пропадали из окна до смены набора.
+            lock (Sync)
+            {
+                SeenKeys.Clear();
+                SeenUsages.Clear();
+                _maxFunctionKey = 0;
+                _mediaSeen = false;
+                _ejectSeen = false;
+            }
         }
 
         private static void NoteScan(int scan)

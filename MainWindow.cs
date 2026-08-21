@@ -206,8 +206,10 @@ namespace MagicKeys
                        + KeyWatch.MediaSeen + "|" + KeyWatch.EjectSeen + "|"
                        + KeyWatch.AllUsages().Length + "|" + AppleDriver.TakesFunctionRow;
             if (now == _deviceMark) return;
-            _deviceMark = now;
+            // Отметку ставим ПОСЛЕ сборки: BuildPage умеет промолчать, если сборка уже
+            // идёт, — и тогда изменение терялось бы навсегда, потому что отметка уже новая.
             BuildPage();
+            _deviceMark = now;
         }
 
         // ------------------------------------------------------------------
@@ -385,8 +387,13 @@ namespace MagicKeys
                 // сперва пообещать, потом отобрать: список сразу называет то, что работает.
                 Note(!_s.FnNavigation
                         ? "Навигация выключена: Fn со стрелками, Backspace и Enter сейчас " +
-                          "не работают. Заменитель при этом остаётся нужен — им вызывают " +
-                          "верхний ряд."
+                          "не работают." +
+                          // Про «заменитель всё равно нужен» — только когда это правда.
+                          // При отданном драйверу ряде вызывать заменителем нечего,
+                          // а сноска ниже прямо говорит, что он не нужен: две фразы
+                          // подряд спорили друг с другом, и обе стояли в одной карточке.
+                          (YieldingNow ? "" : " Заменитель при этом остаётся нужен — " +
+                                              "им вызывают верхний ряд.")
                     : _s.FnSubstitute == ModKey.None
                         ? "Пока заменителя нет, нажать эти сочетания нечем: настоящая Fn " +
                           "до Windows не доходит."
@@ -664,9 +671,18 @@ namespace MagicKeys
                           ". Без драйвера Apple настоящая Fn до Windows не доходит, поэтому нужна замена.")
                 : now == "symbols"
                     ? "Набирает символы, напечатанные на клавише третьими. Работает, только когда " +
-                      "включены раскладки Apple."
+                      "включены раскладки Apple." +
+                      // Назвать условие мало — надо сказать, выполнено ли оно сейчас.
+                      // С заводскими настройками раскладки выключены, и эта роль отбирала
+                      // заменитель Fn, не давая взамен ничего.
+                      (_s.AppleLayoutEnabled
+                        ? ""
+                        : "\n\nСейчас они выключены — символы набираться не будут. " +
+                          "Включить их можно на странице «Раскладка».")
                 : _s.MapRAlt == ModKey.RAlt
                     ? "Ничего не забирает: обычный Alt, и AltGr системной раскладки работает как всегда."
+                    : _s.MapRAlt == ModKey.None
+                    ? "Ничего не забирает: клавиша выключена и в Windows не приходит вовсе."
                     : "Ничего не забирает и приходит в Windows как " + comes + ".";
 
             var rows = new StackPanel();
@@ -1239,8 +1255,13 @@ namespace MagicKeys
             {
                 Style = (Style)Application.Current.Resources["Switch"],
                 IsChecked = _s.MacEnabled(id),
-                VerticalAlignment = VerticalAlignment.Center
+                VerticalAlignment = VerticalAlignment.Center,
+                // Подпись самому переключателю, а не только соседней надписи: без неё
+                // до неё не дотянуться ни чтению с экрана, ни стенду — полсотни строк
+                // отчитывались как «переключатель без подписи».
+                ToolTip = sc.Mac + "   " + sc.Title
             };
+            System.Windows.Automation.AutomationProperties.SetName(cb, sc.Mac + "   " + sc.Title);
             // Перестраиваем: над строками стоит переключатель всей группы, и он считает
             // себя по ним. Без перестройки он оставался выключенным над включённой строкой.
             cb.Checked += delegate { if (!_building) { _s.MacSet(id, true); Save(); BuildPage(); } };
@@ -1641,7 +1662,11 @@ namespace MagicKeys
             {
                 Content = "Остановить",
                 Margin = new Thickness(0, 0, 8, 8),
-                Visibility = SetupBusy ? Visibility.Visible : Visibility.Collapsed
+                // По добыче, а не по SetupBusy: остановить можно только закачку,
+                // у которой есть просьба об отмене. Работу с драйвером не остановить
+                // ничем — а кнопка появлялась и над ней, гасла от щелчка и молчала.
+                Visibility = _setupThread != null && _setupThread.IsAlive
+                    ? Visibility.Visible : Visibility.Collapsed
             };
             _setupStop.SetResourceReference(StyleProperty, "Btn");
             _setupStop.Click += delegate
@@ -1652,7 +1677,12 @@ namespace MagicKeys
             };
             buttons.Children.Add(_setupStop);
 
-            var pick = new Button { Content = "Указать распакованную папку…", Margin = new Thickness(0, 0, 8, 8) };
+            var pick = new Button
+            {
+                Content = "Указать распакованную папку…",
+                Margin = new Thickness(0, 0, 8, 8),
+                IsEnabled = !SetupBusy
+            };
             pick.SetResourceReference(StyleProperty, "Btn");
             pick.Click += delegate
             {
@@ -1674,10 +1704,10 @@ namespace MagicKeys
                     Margin = new Thickness(0, 0, 8, 8)
                 };
                 wipe.SetResourceReference(StyleProperty, "Btn");
-                wipe.IsEnabled = _setupThread == null || !_setupThread.IsAlive;
+                wipe.IsEnabled = !SetupBusy;
                 wipe.Click += delegate
                 {
-                    if (_setupThread != null && _setupThread.IsAlive)
+                    if (SetupBusy)
                     {
                         SetupSay("Сейчас идёт работа — дождитесь конца, иначе распаковка " +
                                  "останется без 7-Zip посреди дела.");
@@ -1791,6 +1821,15 @@ namespace MagicKeys
         /// <summary>Последнее сказанное о ходе работы — чтобы пережить перестройку страницы.</summary>
         private volatile string _setupText;
 
+        /// <summary>
+        /// Чем кончилась последняя проверка или загрузка обновления. Отдельным полем
+        /// по той же причине, что и всё в этой карточке: страница пересобирается сама —
+        /// от ответа о заряде, от впервые нажатой клавиши, — и сообщение об отказе
+        /// исчезало, а на его месте появлялось «Проверено N дней назад», хотя проверка
+        /// только что не удалась и отметку о ней никто не ставил.
+        /// </summary>
+        private string _updSaid;
+
         /// <summary>Идёт долгая работа с драйвером: удаление или запись его настройки.</summary>
         private bool _driverBusy;
 
@@ -1831,7 +1870,9 @@ namespace MagicKeys
         /// </summary>
         private void StartSetup(bool install, string readyFolder)
         {
-            if (_setupThread != null && _setupThread.IsAlive) { SetupSay("Уже идёт работа, дождитесь конца."); return; }
+            // SetupBusy, а не только свой поток: удаление драйвера и распаковка ходят
+            // в один каталог, а запрос прав администратора уже висит наверху.
+            if (SetupBusy) { SetupSay("Уже идёт работа, дождитесь конца."); return; }
 
             // Прежний освобождаем: дескриптор ожидания — вещь неуправляемая,
             // и копить их по одному на каждое нажатие кнопки незачем.
@@ -1909,13 +1950,18 @@ namespace MagicKeys
                     bool ok = AppleDriverSetup.Install(inf, out output);
                     AppleDriver.Refresh(true);
 
+                    // Совет один. При коде 3010 pnputil просит перезагрузиться, и это
+                    // вместо «переподключите клавиатуру», а не в придачу к нему: два
+                    // совета подряд, да ещё противоположных, хуже одного.
                     string tail = ok
-                        ? "Готово. Драйвер установлен: " + inf +
-                          "\n\nПереподключите клавиатуру, чтобы он вступил в силу."
+                        ? "Готово. Драйвер установлен: " + inf + "\n\n" +
+                          (String.IsNullOrEmpty(output)
+                            ? "Переподключите клавиатуру, чтобы он вступил в силу."
+                            : output.Trim())
                         : "Установить не удалось. Чаще всего это значит, что запрос прав администратора " +
                           "был отклонён — тогда в системе ничего не изменилось. Можно повторить " +
-                          "или поставить вручную: правый щелчок по Keymagic2.inf → «Установить».";
-                    if (!String.IsNullOrEmpty(output)) tail += "\n\n" + output.Trim();
+                          "или поставить вручную: правый щелчок по Keymagic2.inf → «Установить»." +
+                          (String.IsNullOrEmpty(output) ? "" : "\n\n" + output.Trim());
                     SetupSay(tail);
 
                     // По ключу, а не по номеру: номер остался от прежней нумерации
@@ -2260,6 +2306,17 @@ namespace MagicKeys
                 _updAction.Content = "Обновить";
                 _updAction.IsEnabled = true;
             }
+            else if (!String.IsNullOrEmpty(_updSaid))
+            {
+                // Сказанное в прошлый раз — отказ или «установщик запущен». Без этого
+                // первая же самопроизвольная пересборка стирала его и подставляла
+                // «Проверено N дней назад» — прямо после проверки, которая не удалась
+                // и отметки о себе не оставила.
+                _updStatus.Text = _updSaid;
+                _updStatus.SetResourceReference(TextBlock.ForegroundProperty, "TextSec");
+                _updAction.Content = "Проверить";
+                _updAction.IsEnabled = _updSaid != "Установщик запущен";
+            }
             else ShowIdle();
 
             return new Border
@@ -2281,6 +2338,7 @@ namespace MagicKeys
             _s.UpdateChannel = channel;
             Save();
             _updFound = null;
+            _updSaid = null;
             ShowChannel();
             ShowIdle();
         }
@@ -2315,6 +2373,7 @@ namespace MagicKeys
 
         private void UpdateCheck()
         {
+            _updSaid = null;
             _updBusy = true;
             _updAction.IsEnabled = false;
             _updBusyText = "Проверяю…";
@@ -2343,7 +2402,7 @@ namespace MagicKeys
                         _updStatus.Text = "Есть новый выпуск " + found.Tag;
                         _updAction.Content = "Обновить";
                     }
-                    else if (error != null) _updStatus.Text = error;
+                    else if (error != null) { _updSaid = error; _updStatus.Text = error; }
                     else
                     {
                         _updStatus.Text = "Установлена последняя версия";
@@ -2358,6 +2417,7 @@ namespace MagicKeys
             Updater.Release release = _updFound;
             if (release == null) return;
 
+            _updSaid = null;
             _updBusy = true;
             _updAction.IsEnabled = false;
             _updBusyText = "Скачиваю…";
@@ -2378,11 +2438,22 @@ namespace MagicKeys
                     _updAction.IsEnabled = true;
                     if (path == null)
                     {
+                        _updSaid = error;
                         _updStatus.Text = error;
                         _updAction.Content = "Повторить";
                     }
-                    else if (error != null) _updStatus.Text = error;
-                    else _updStatus.Text = "Установщик запущен";
+                    else if (error != null) { _updSaid = error; _updStatus.Text = error; }
+                    else
+                    {
+                        // Выпуск забываем и кнопку гасим: установщик уже запущен, и вторая
+                        // загрузка того же пакета стёрла бы файл, который в этот миг читает
+                        // msiexec. А пересборка страницы иначе снова предложила бы обновиться
+                        // на выпуск, который ставится прямо сейчас.
+                        _updFound = null;
+                        _updSaid = "Установщик запущен";
+                        _updStatus.Text = _updSaid;
+                        _updAction.IsEnabled = false;
+                    }
                 });
             });
         }

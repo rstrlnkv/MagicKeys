@@ -125,6 +125,10 @@ namespace MagicKeys
         {
             string statusPath;
             List<KeyboardInfo> found = Enumerate(out statusPath);
+            // Опрос не удался — это не «клавиатур нет ни одной». Прежнее состояние вернее
+            // пустого: от пустого подсказка значка мигает на «ожидание Magic Keyboard»,
+            // зажатое отпускается, угаданное исполнение теряется, заряд пропадает.
+            if (found == null) return;
             bool apple = false;
             AppleModel model = null;
             foreach (KeyboardInfo k in found)
@@ -178,6 +182,7 @@ namespace MagicKeys
         /// другому. Заряд после этого спрашивался у только что отключённой клавиатуры
         /// и объявлялся неизвестным при подключённой.
         /// </summary>
+        /// <remarks>null — опрос не удался. Пустой список — устройств правда нет.</remarks>
         private static List<KeyboardInfo> Enumerate(out string statusPath)
         {
             List<KeyboardInfo> result = new List<KeyboardInfo>();
@@ -196,8 +201,8 @@ namespace MagicKeys
             for (int attempt = 0; attempt < 4; attempt++)
             {
                 uint want = 0;
-                if (Native.GetRawInputDeviceList(null, ref want, stride) == uint.MaxValue) return result;
-                if (want == 0) return result;
+                if (Native.GetRawInputDeviceList(null, ref want, stride) == uint.MaxValue) return null;
+                if (want == 0) return result;   // а вот это настоящий ответ: устройств нет
                 var buf = new Native.RAWINPUTDEVICELIST[want + 8];
                 count = (uint)buf.Length;
                 uint got = Native.GetRawInputDeviceList(buf, ref count, stride);
@@ -206,7 +211,8 @@ namespace MagicKeys
                 count = got;
                 break;
             }
-            if (list == null) return result;
+            // Четыре промаха подряд — тоже отказ, а не «клавиатур нет».
+            if (list == null) return null;
 
             // Заодно ищем вендорную коллекцию Apple «Device Management»: через неё
             // спрашивается заряд. Её путь — обычный путь интерфейса HID, его можно открыть.

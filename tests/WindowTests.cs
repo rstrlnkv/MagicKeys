@@ -59,6 +59,7 @@ namespace MagicKeys
             foreach (string p in pages) Buttons(p);
 
             RightOptionSymbols();
+            MacRowsInGroups();
 
             Console.WriteLine();
             Console.WriteLine("прошло " + _pass + ", провалено " + _fail);
@@ -78,11 +79,14 @@ namespace MagicKeys
             Settings saved = _s.Snapshot();
 
             _s.FnSubstitute = ModKey.None;
-            _s.OptLevel = OptLevel.AnyOption;
+            _s.OptLevel = OptLevel.RightOption;
             _s.MapRAlt = ModKey.RAlt;
             _s.MapLAlt = ModKey.LAlt;
             _s.MapCapsLock = ModKey.CapsLock;
             _eng.Apply(_s);
+            // Состояние, под которое собрана страница: к нему и возвращаемся между
+            // случаями, а не к тому, с которым сюда пришли.
+            Settings symbols = _s.Snapshot();
 
             MethodInfo m = typeof(MainWindow).GetMethod("PageKeys",
                 BindingFlags.NonPublic | BindingFlags.Instance);
@@ -102,11 +106,73 @@ namespace MagicKeys
             Check("переключатель «Любой ⌥» есть, когда правый ⌥ набирает символы",
                   found, "его нет на странице");
 
+            // Отдельно и прямо: «любой ⌥» держится, пока левый Alt хоть чем-то достижим,
+            // и опускается, когда его уводят. Через списки этого не спросить — там роль
+            // проходит через «Fn», а тот третий уровень выключает по праву.
+            Restore(saved);
+            _s.FnSubstitute = ModKey.None;
+            _s.OptLevel = OptLevel.AnyOption;
+            _s.MapRAlt = ModKey.RAlt;
+            _s.MapLAlt = ModKey.LAlt;
+            _eng.Apply(_s);
+            Check("«любой ⌥» держится, пока левый Alt на месте",
+                  Normalized() == "", "Normalize поправил " + Normalized());
+
+            _s.OptLevel = OptLevel.AnyOption;
+            _s.MapLAlt = ModKey.LCtrl;          // левый ⌥ увели
+            _s.MapCapsLock = ModKey.LAlt;       // но левый Alt достижим с Caps Lock
+            _eng.Apply(_s);
+            Check("«любой ⌥» держится, когда левый Alt переехал на другую клавишу",
+                  Normalized() == "", "Normalize поправил " + Normalized());
+
+            _s.OptLevel = OptLevel.AnyOption;
+            _s.MapCapsLock = ModKey.CapsLock;   // а теперь левого Alt не даёт никто
+            _eng.Apply(_s);
+            _s.Normalize();
+            Check("«любой ⌥» без левого Alt опускается до правого",
+                  _s.OptLevel == OptLevel.RightOption, "" + _s.OptLevel);
+
+            // Со свежего места: проверка выше нарочно уводила левый ⌥, а страница
+            // собрана под роль «символы» — к ней и возвращаемся.
+            Restore(symbols);
+
             // И списки той же страницы: под ролью «символы» их не касался никто,
             // а среди них — те пять строк, что решают, до какого модификатора вообще
             // можно дотянуться. Именно они молча отменяли «любой ⌥».
             foreach (ComboBox b in combos) Turn(b);
 
+            Restore(saved);
+        }
+
+        /// <summary>
+        /// Строки отдельных сочетаний. Без раскрытой группы они не строятся вовсе —
+        /// стенда не касались. А над ними стоит переключатель всей группы, который
+        /// считает себя по ним: строка, не пересобравшая страницу, оставляет его лгать.
+        /// </summary>
+        static void MacRowsInGroups()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== отдельные сочетания macOS ==");
+            FieldInfo open = typeof(MainWindow).GetField("_macOpen",
+                                 BindingFlags.NonPublic | BindingFlags.Instance);
+            MethodInfo m = typeof(MainWindow).GetMethod("PageMacKeys",
+                                 BindingFlags.NonPublic | BindingFlags.Instance);
+            if (open == null || m == null) { Check("страница сочетаний доступна", false, "нет поля или метода"); return; }
+
+            string[] groups = { MacKeys.GroupEdit, MacKeys.GroupText, MacKeys.GroupSystem };
+            Settings saved = _s.Snapshot();
+            foreach (string g in groups)
+            {
+                open.SetValue(_win, g);
+                var boxes = new List<CheckBox>();
+                var combos = new List<ComboBox>();
+                try { Walk((UIElement)m.Invoke(_win, null), boxes, combos); }
+                catch (Exception e) { Check("группа «" + g + "» раскрывается", false, Inner(e)); continue; }
+                Check("группа «" + g + "»: строки показаны", boxes.Count > 1, "строк нет");
+                foreach (CheckBox cb in boxes) Flip(cb);
+                Restore(saved);
+            }
+            open.SetValue(_win, null);
             Restore(saved);
         }
 
@@ -178,20 +244,21 @@ namespace MagicKeys
                 Restore(saved);
                 Dictionary<string, string> before = Snap();
                 int applied = _applied;
+                object shownBtn = Shown();
                 try { b.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); }
                 catch (Exception e) { Check("кнопка «" + title + "»", false, "щелчок сорвался: " + Inner(e)); continue; }
 
                 // «Ничего не изменила» — законный ответ: «Настроить программу под драйвер»
                 // при отсутствующем драйвере честно говорит, что менять нечего. Незаконно
                 // другое: изменить настройки и не отдать их перехвату.
+                bool btnRebuilt = !ReferenceEquals(shownBtn, Shown());
                 string diff = Diff(before, Snap());
                 Check("кнопка «" + title + "»: изменённое дошло до перехвата",
                       diff == "" || _applied > applied, "изменила " + diff + ", а перехвату не отдала");
-                string undone = Undone(diff);
-                Check("кнопка «" + title + "»: выбранное переживает Normalize", undone == "",
-                      "Normalize вернул " + undone);
-                string wrong = Wrong();
-                Check("кнопка «" + title + "»: настройки не разошлись", wrong == "", wrong);
+                string touched = Normalized();
+                Check("кнопка «" + title + "»: правки Normalize видны в окне",
+                      touched == "" || btnRebuilt,
+                      "Normalize поправил " + touched + ", а страницу никто не пересобрал");
             }
             Restore(saved);
         }
@@ -224,46 +291,33 @@ namespace MagicKeys
         }
 
         /// <summary>
-        /// Что разошлось в настройках — или пусто, если всё сошлось. Отвечает строкой,
-        /// а не отчётом: спрашивают это на каждый пункт каждого списка, и по строке
-        /// на каждый ответ прогон распухал до тысяч строк, в которых ничего не видно.
-        ///
-        /// Достижимость, а не поле: перехват узнаёт ⌥ перебором зажатых клавиш
-        /// с вопросом «во что она превращается», и третий уровень работает, когда Alt
-        /// живёт хоть на Caps Lock.
+        /// Что показано в окне прямо сейчас. Признак пересборки: BuildPage кладёт в _host
+        /// новый объект, а другого способа спросить «звали ли BuildPage» у окна нет.
         /// </summary>
-        static string Wrong()
+        static object Shown()
         {
-            if (_s.FnSubstitute != ModKey.None && _s.OptLevel != OptLevel.Off)
-            {
-                // По назначению, а не по надписи: третий уровень даёт всякая клавиша,
-                // приходящая в Windows как ⌥.
-                ModKey t = _s.TargetOf(_s.FnSubstitute);
-                if (t == ModKey.RAlt || (_s.OptLevel == OptLevel.AnyOption && t == ModKey.LAlt))
-                    return "заменитель Fn (" + ModNames.Of(_s.FnSubstitute) +
-                           ") сам даёт ⌥ третьего уровня: одна клавиша делает два дела";
-            }
-            if (_s.OptLevel != OptLevel.Off && !_s.Reaches(ModKey.RAlt))
-                return "третьего уровня не набрать: правого Alt не даёт ни одна клавиша";
-            if (_s.OptLevel == OptLevel.AnyOption && !_s.Reaches(ModKey.LAlt))
-                return "«любой ⌥» обещан, а левого Alt не даёт ни одна клавиша";
-            return "";
+            if (_hostCtl == null)
+                _hostCtl = (ContentControl)typeof(MainWindow)
+                    .GetField("_host", BindingFlags.NonPublic | BindingFlags.Instance)
+                    .GetValue(_win);
+            return _hostCtl.Content;
         }
+        static ContentControl _hostCtl;
 
         /// <summary>
-        /// Переживает ли выбор человека Normalize. Программа применяет настройки не так,
-        /// как стенд: ApplyAndSave сперва зовёт Normalize. Не переживает — значит окно
-        /// показывает одно, а держит другое: галочка стоит, настройка сброшена,
-        /// и ни одна надпись об этом не сказала.
+        /// Всё, что Normalize поправит после правки, — не только своё поле.
+        ///
+        /// Спрашивать надо именно так. Прежняя проверка требовала, чтобы Normalize
+        /// не трогал поле самого органа управления, — и врала в обе стороны: пропускала
+        /// строку, сбросившую соседний OptLevel, и ругалась на законный случай, когда
+        /// правило срабатывает, а страница это показывает. Договор зоны другой: правило,
+        /// отменяющее выбор человека, обязано быть видно в окне.
         /// </summary>
-        static string Undone(string own)
+        static string Normalized()
         {
             Dictionary<string, string> before = Snap();
             _s.Normalize();
-            // Поправить соседнее поле правило вправе — на то оно и правило, и страница
-            // после правки пересобирается, так что человек это увидит. Нельзя другое:
-            // отменить ровно то, что человек только что выбрал.
-            return Only(Diff(before, Snap()), Names(own));
+            return Diff(before, Snap());
         }
 
         static void Walk(object node, List<CheckBox> boxes, List<ComboBox> combos)
@@ -354,7 +408,10 @@ namespace MagicKeys
             {
                 var t = cb.Content as TextBlock;
                 if (t != null) return t.Text;
-                return "" + cb.Content;
+                if (cb.Content != null) return "" + cb.Content;
+                // У строк отдельных сочетаний подпись лежит не в Content, а рядом —
+                // и продублирована для чтения с экрана. Оттуда её и берём.
+                return "" + System.Windows.Automation.AutomationProperties.GetName(cb);
             }
             return null;
         }
@@ -369,19 +426,20 @@ namespace MagicKeys
             Settings saved = _s.Snapshot();
             Dictionary<string, string> before = Snap();
             int applied = _applied;
+            object shown = Shown();
 
             try { cb.IsChecked = !was; }
             catch (Exception e) { Check(name, false, "щелчок сорвался: " + Inner(e)); Restore(saved); return; }
 
             string diff = Diff(before, Snap());
+            bool rebuilt = !ReferenceEquals(shown, Shown());
             bool ok = diff != "" && _applied > applied;
             Check("«" + Short(name) + "» → " + (diff == "" ? "ничего не изменил" : diff),
                   ok, diff == "" ? "ни одно поле настроек не изменилось" : "настройки не применились");
-            string undone = Undone(diff);
-            Check("«" + Short(name) + "»: выбранное переживает Normalize", undone == "",
-                  "Normalize вернул " + undone);
-            string wrong = Wrong();
-            Check("«" + Short(name) + "»: настройки не разошлись", wrong == "", wrong);
+            string touched = Normalized();
+            Check("«" + Short(name) + "»: правки Normalize видны в окне",
+                  touched == "" || rebuilt,
+                  "Normalize поправил " + touched + ", а страницу никто не пересобрал");
 
             // Возвращаем как было: следующая проверка должна начинаться с чистого места.
             try { cb.IsChecked = was; } catch { }
@@ -411,19 +469,19 @@ namespace MagicKeys
                 Restore(saved);              // каждый пункт — с того же места, что и остальные
                 Dictionary<string, string> before = Snap();
                 int applied = _applied;
+                object shownItem = Shown();
                 try { box.SelectedIndex = i; }
                 catch (Exception e) { ok = false; why = "выбор сорвался: " + Inner(e); break; }
 
+                bool itemRebuilt = !ReferenceEquals(shownItem, Shown());
                 string diff = Diff(before, Snap());
                 if (diff == "") { dead.Add(Text(box, i)); continue; }
                 if (_applied == applied) { ok = false; why = "пункт «" + Text(box, i) + "» не применился"; break; }
                 seen.Add(diff);
-                string undone = Undone(diff);
-                if (undone != "" && badItem == "")
-                    badItem = "пункт «" + Text(box, i) + "»: Normalize вернул " + undone;
-                string wrong = Wrong();
-                if (wrong != "" && badItem == "")
-                    badItem = "пункт «" + Text(box, i) + "»: " + wrong;
+                string touched = Normalized();
+                if (touched != "" && !itemRebuilt && badItem == "")
+                    badItem = "пункт «" + Text(box, i) + "»: Normalize поправил " + touched +
+                              ", а страницу никто не пересобрал";
             }
             if (ok && dead.Count > 0)
             {
@@ -433,7 +491,7 @@ namespace MagicKeys
 
             string field = seen.Count > 0 ? Field(seen[0]) : "?";
             Check("список «" + field + "»: " + seen.Count + " пунктов меняют настройки", ok, why);
-            Check("список «" + field + "»: ни один пункт не разошёлся с Normalize",
+            Check("список «" + field + "»: правки Normalize видны в окне",
                   badItem == "", badItem);
 
             // Возвращаемся к тому пункту, который список показывал с самого начала.
@@ -453,8 +511,27 @@ namespace MagicKeys
                 // мы проходим через соседний, а у соседнего бывают законные последствия
                 // (выбрав правый ⌥ заменителем Fn, третий уровень выключают — одна
                 // клавиша делает одно дело). Список отвечает за то, что показывает.
+                // Спрашиваем про то поле, которым список себя и опознаёт, — первое
+                // из тех, что меняет каждый его пункт.
+                //
+                // Дальше этого проверка не идёт нарочно. Чтобы вернуться к показанному
+                // пункту, надо пройти через соседний, а у соседнего бывают законные
+                // последствия для чужих полей: выбрав правый ⌥ заменителем Fn, третий
+                // уровень выключают — и, вернувшись к прежнему пункту, его предлагают
+                // выбрать заново, а не включают молча. Требовать от списка отменять
+                // такое значит требовать от него помнить то, чего он не показывает.
                 var mine = new List<string>();
-                mine.Add(field);
+                if (seen.Count > 0)
+                {
+                    foreach (string nm in Names(seen[0])) mine.Add(nm);
+                    for (int j = 1; j < seen.Count; j++)
+                    {
+                        List<string> also = Names(seen[j]);
+                        for (int m = mine.Count - 1; m >= 0; m--)
+                            if (!also.Contains(mine[m])) mine.RemoveAt(m);
+                    }
+                    while (mine.Count > 1) mine.RemoveAt(1);
+                }
                 string moved = Only(Diff(Snap(saved), Snap()), mine);
                 Check("список «" + field + "»: показанный пункт совпадает с настройками",
                       moved == "", "возврат к «" + Text(box, was) + "» меняет " + moved);

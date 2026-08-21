@@ -524,9 +524,6 @@ namespace MagicKeys
             bool ext = (k.flags & Native.LLKHF_EXTENDED) != 0;
             int vk = (int)k.vkCode;
 
-            if (!s.Enabled) return false;
-            if (s.PauseWhenAppleAbsent && !Devices.AppleConnected) return false;
-
             // Призрачный Ctrl, который Windows добавляет к правому Alt на раскладках с AltGr.
             // Настоящим нажатием Ctrl он не является, и считать его таковым нельзя:
             // иначе третий уровень раскладки перестанет набираться.
@@ -546,6 +543,13 @@ namespace MagicKeys
                 // а получалось наоборот: свой третий уровень оставался, чужой пропадал.
                 return false;
             }
+
+            // Выключатель и пауза — уже после призрака. Стояв выше, они съедали его
+            // отпускание, и признак оставался стоять до перезапуска: EmitText после
+            // этого «возвращал» левый control нажатым — тот, которого Windows не держит,
+            // — и снять его было нечем. Заодно ⌃Space и ⌃⌘Q переставали узнаваться.
+            if (!s.Enabled) return false;
+            if (s.PauseWhenAppleAbsent && !Devices.AppleConnected) return false;
 
             ModKey phys;
             if (TryPhysical(vk, ext, out phys))
@@ -784,16 +788,6 @@ namespace MagicKeys
                 if (!down) return false;   // нажатия не брали — и отпускание не наше
                 if (WindowsHoldsMenuKey()) Input.Tap(VkNoop);
                 _chordTaken[vk] = null;
-                // Верхний ряд стоит выше и успел защёлкнуть ветку, прежде чем отказаться
-                // от нажатия. Отпускание после этого уходит сюда, а не к нему, — значит
-                // защёлку снимаем мы. Иначе она стоит до перезапуска, и следующее нажатие
-                // той же клавиши идёт по вчерашней ветке: ⌥+F4 давало Alt+F4, а одна и та
-                // же клавиша при зажатой ⌘ срабатывала через раз.
-                if (vk >= Vk.F1 && vk <= Vk.F24)
-                {
-                    _fkeyLatched[vk - Vk.F1] = false;
-                    _fkeyTake[vk - Vk.F1] = false;
-                }
                 return true;
             }
 
@@ -854,6 +848,18 @@ namespace MagicKeys
             return file;
         }
 
+        /// <summary>
+        /// Скан-код, которого ждёт Windows. Отличается от присланного ровно на двух
+        /// клавишах ISO-клавиатур Apple — тех, что подключены наоборот.
+        /// </summary>
+        private uint LogicalScan(Settings s, uint scan)
+        {
+            // Скан-код спрашиваем первым: Physical идёт в Devices.AppleModel, а там замок.
+            if (scan != 0x29 && scan != 0x56) return scan;
+            if (Physical(s) != PhysLayout.Iso) return scan;
+            return scan == 0x29 ? 0x56u : 0x29u;
+        }
+
         /// <summary>Выпустить висящий знак ударения, пока для него ещё есть раскладка.</summary>
         private void DropDead(Settings s)
         {
@@ -909,7 +915,12 @@ namespace MagicKeys
                 return -1;
             }
 
-            LayoutKey key = lay.Key((int)k.scanCode);
+            // Таблица раскладки составлена по тем скан-кодам, которых ждёт Windows:
+            // 0x29 — клавиша слева от «1» (E00), 0x56 — левая нижняя ISO (B00).
+            // ISO-клавиатура Apple шлёт их наоборот — ту самую аппаратную особенность,
+            // которую правит перестановка ниже. Спрашивать таблицу сырым скан-кодом
+            // значит взять строку соседней клавиши: слева от «1» печаталось «§».
+            LayoutKey key = lay.Key((int)LogicalScan(s, k.scanCode));
             if (key == null)
             {
                 // Пробел после мёртвой клавиши даёт сам знак: «´» + пробел = «´»,
@@ -1294,12 +1305,12 @@ namespace MagicKeys
                     id = actionId;
                     if (Actions.Get(id).Kind == ActionKind.PassThrough) return false;
                     _singleAction[sourceVk] = id;
-                    Actions.Begin(Actions.Get(id), false, Settings.BrightnessStep);
+                    RunAction(Actions.Get(id), false);
                     return true;
                 }
                 // Автоповтор: то же действие, но повтором — аккорды и запуск программ
                 // на нём не срабатывают, иначе удержание плодило бы окна калькулятора.
-                Actions.Begin(Actions.Get(id), true, Settings.BrightnessStep);
+                RunAction(Actions.Get(id), true);
                 return true;
             }
 
@@ -1399,7 +1410,7 @@ namespace MagicKeys
             {
                 bool repeat = _fkeyDown[index];
                 _fkeyDown[index] = true;
-                Actions.Begin(a, repeat, Settings.BrightnessStep);
+                RunAction(a, repeat);
             }
             else
             {
@@ -1492,7 +1503,29 @@ namespace MagicKeys
             // флагам его не видно. ⌃Space уходил как Ctrl+Win+Space и язык не переключал,
             // ⌃⌘Q — как Ctrl+Win+L и экран не блокировал; а «выключенная» клавиша,
             // наоборот, возвращалась нажатой, и снять её было уже нечем.
+            // Windows открывает «Пуск», если клавишу Win нажали и отпустили, ничего
+            // между ними не нажав. У нас выходит именно так: саму букву мы съели,
+            // а Win пришлось отпустить перед отправкой аккорда — для Windows это
+            // одиночное нажатие. Поэтому пока Win ещё зажата, подсовываем незанятый
+            // код: он ничего не делает, но снимает признак одиночного нажатия.
+            // Тот же приём спасает от строки меню, которую открывает одиночный Alt.
+            // Alt переключателя окон снимаем там же и без возврата: за физической
+            // клавишей он не стоит, перебором _modsDown его не найти, — и не сняв его,
+            // мы посылали ⌘C как Alt+Ctrl+C. Переключатель при этом закрывается —
+            // ровно то, чего человек и просил, нажав сочетание поверх него.
             var held = new List<KeyValuePair<ModKey, int>>();
+            ClearHeld(held);
+
+            MacKeys.Send(sc);
+            RestoreHeld(held);
+        }
+
+        /// <summary>
+        /// Снять с дороги то, что Windows держит, — и вернуть безобидное. Общее у двух
+        /// отправителей: сочетаний macOS и готовых аккордов из списка действий.
+        /// </summary>
+        private void ClearHeld(List<KeyValuePair<ModKey, int>> held)
+        {
             foreach (ModKey phys in _modsDown)
             {
                 if (_phantomCtrl && (phys == ModKey.LCtrl || phys == ModKey.RCtrl)) continue;
@@ -1500,24 +1533,43 @@ namespace MagicKeys
                 if (vk != 0) held.Add(new KeyValuePair<ModKey, int>(phys, vk));
             }
 
-            // Windows открывает «Пуск», если клавишу Win нажали и отпустили, ничего
-            // между ними не нажав. У нас выходит именно так: саму букву мы съели,
-            // а Win пришлось отпустить перед отправкой аккорда — для Windows это
-            // одиночное нажатие. Поэтому пока Win ещё зажата, подсовываем незанятый
-            // код: он ничего не делает, но снимает признак одиночного нажатия.
-            // Тот же приём спасает от строки меню, которую открывает одиночный Alt.
             bool menu = _cmdTabAlt;
             foreach (KeyValuePair<ModKey, int> p in held) if (IsMenuKey(p.Value)) menu = true;
             if (menu) Input.Tap(VkNoop);
 
             foreach (KeyValuePair<ModKey, int> p in held) Input.Key(p.Value, false);
-            // Alt переключателя окон снимаем здесь же и без возврата: за физической
-            // клавишей он не стоит, перебором _modsDown его не найти, — и не сняв его,
-            // мы посылали ⌘C как Alt+Ctrl+C. Переключатель при этом закрывается —
-            // ровно то, чего человек и просил, нажав сочетание поверх него.
             if (_cmdTabAlt) { Input.Key(Vk.LMenu, false); _cmdTabAlt = false; }
+        }
 
-            MacKeys.Send(sc);
+        /// <summary>
+        /// Запустить действие из списка, убрав с дороги то, что Windows держит.
+        ///
+        /// Actions про зажатые модификаторы не знает, а знать надо. Готовый символ
+        /// под зажатым Alt приходит как WM_SYSCHAR: пропадает сам и открывает строку
+        /// меню — ровно то, ради чего щит и заведён в EmitText, только «=» цифрового
+        /// блока шло мимо него. А готовый аккорд в конце отпускает те же модификаторы,
+        /// что нажал, — в том числе Win, которую человек держит своей ⌘: она молча
+        /// переставала работать до следующего нажатия.
+        /// </summary>
+        private void RunAction(KeyAction a, bool repeat)
+        {
+            if (a == null) return;
+            if (repeat && !a.Repeats) return;
+
+            if (a.Kind == ActionKind.Text) { EmitText(a.Target); return; }
+            if (a.Kind == ActionKind.Chord)
+            {
+                var held = new List<KeyValuePair<ModKey, int>>();
+                ClearHeld(held);
+                Input.Chord(a.Mods == null ? new int[0] : a.Mods, a.Vk);
+                RestoreHeld(held);
+                return;
+            }
+            Actions.Begin(a, repeat, Settings.BrightnessStep);
+        }
+
+        private void RestoreHeld(List<KeyValuePair<ModKey, int>> held)
+        {
 
             // Возвращаем безобидное — ⇧ и control, — и ровно то, что и держали. Клавишу
             // Windows и Alt не возвращаем: сами по себе они открывают «Пуск» и строку
@@ -1582,7 +1634,6 @@ namespace MagicKeys
                 _swallowed.Clear();
                 _capsSources.Clear();
                 _modTaken.Clear();
-                _modsDown.Clear();
 
                 // Отпускаем то, что держим ЗА человека, а не только модификаторы.
                 // Синтетическая Home от Fn+← — такая же зажатая клавиша, и снять её
@@ -1631,12 +1682,17 @@ namespace MagicKeys
                 // требует точного совпадения набора модификаторов.
                 _capsOn = (Native.GetKeyState(Vk.Capital) & 1) != 0;
 
-                // И множества тоже. Обнулить их и перечитать одни флаги значило забыть
-                // половину состояния, пока человек держит модификатор: после сброса
-                // ⌥+← уходило как Ctrl+Alt+← (на видеокартах Intel это ещё и поворот
-                // экрана), зажатая ⌘ переставала узнаваться, а раскладка Apple переставала
-                // отступать при зажатой Win. Всё, что мы подставляли, к этому мигу уже
-                // отпущено, — значит Windows держит ровно то, что человек нажал сам.
+                // Множество нажатого не стираем вовсе, а сверяем с Windows. Стереть
+                // и перечитать нельзя: у переназначенной клавиши Windows держит
+                // подставленный код, а спросить её про собственный — значит получить
+                // «нет». Caps Lock, уведённая на control, выпадала из множества навсегда,
+                // и вместе с ней — заменитель Fn, если он висел на ней же: до отпускания
+                // клавиши F2 давала яркость вместо настоящей F2.
+                //
+                // Поэтому только две поправки: добавить то, что Windows держит, а мы
+                // прозевали (отпускания проходили мимо, пока перехват стоял на паузе),
+                // и убрать то, чего она не держит, — но лишь у клавиш, идущих насквозь:
+                // про остальных она ничего сказать не может.
                 Settings cur = _cfg;
                 foreach (ModKey phys in new[]
                 {
@@ -1645,7 +1701,12 @@ namespace MagicKeys
                 })
                 {
                     int own = ModNames.VirtualKey(phys);
-                    if (own == 0 || !Held(own)) continue;
+                    if (own == 0) continue;
+                    if (!Held(own))
+                    {
+                        if (cur == null || cur.TargetOf(phys) == phys) _modsDown.Remove(phys);
+                        continue;
+                    }
                     // Призрачный Ctrl от AltGr Windows держит по-настоящему, и Held
                     // отвечает про него правдой. Но нажатия его мы не берём и отпускания
                     // не увидим: оно отсекается раньше. Записанный сюда, он оставался

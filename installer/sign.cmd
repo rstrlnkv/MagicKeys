@@ -15,6 +15,16 @@ if not defined THUMB (
   exit /b 0
 )
 
+rem Сертификата с этим отпечатком у большинства нет — репозиторий открытый, а ключ один.
+rem Спрашиваем хранилище заранее: без этого signtool отказывал, отказ поднимался в
+rem build-msi.cmd, и установщик не собирался ни у кого, кроме владельца ключа. Обещание
+rem «сборка не должна ломаться у того, у кого сертификата нет» не выполнялось.
+powershell -NoProfile -Command "exit [int](-not (Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq '%THUMB%' }))"
+if errorlevel 1 (
+  echo Подпись пропущена: сертификата %THUMB% нет в хранилище этой машины.
+  exit /b 0
+)
+
 rem signtool приходит с Windows SDK. Искать сразу по маске пути нельзя — dir не
 rem подставляет звёздочку в середине; ищем по имени во всём дереве и отбираем x64,
 rem последний по сортировке и есть самый свежий выпуск SDK.

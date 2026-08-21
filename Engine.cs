@@ -864,18 +864,27 @@ namespace MagicKeys
                 if (target != 0) return HandleNav(vk, target, down);
             }
 
-            if (vk >= Vk.F1 && vk <= Vk.F24)
+            // Клавиша, чьё нажатие ушло в приложение, — его до отпускания. Спрашиваем
+            // именно эту запись, а не Busy целиком: Busy отвечает про верхний ряд по его
+            // же защёлке, и слой не пустили бы к собственной клавише. Без вопроса ряд
+            // берегал чужие клавиши, а свою у приложения забирал: пауза «Только
+            // с Magic Keyboard» кончается сама, между нажатием и его автоповтором, —
+            // нажатие F7 ушло насквозь, отпускание съели мы, и в приложении F7 осталась
+            // зажатой навсегда.
+            if (vk >= Vk.F1 && vk <= Vk.F24 && !_letThrough.Contains(vk))
                 return HandleFunctionKey(s, vk - Vk.F1, vk, down);
 
             // Цифровой блок Apple: ⌧ приходит как Num Lock и невзначай выключает блок,
             // а «=» шлёт VK_CLEAR со скан-кодом 0x59, который Windows просто игнорирует.
-            if (vk == Vk.NumLock) { if (HandleSingle(vk, s.NumpadClear, down)) return true; }
+            if (vk == Vk.NumLock && !_letThrough.Contains(vk))
+            { if (HandleSingle(vk, s.NumpadClear, down)) return true; }
             // «=» печатает «=». Второго осмысленного ответа нет: Windows не понимает
             // того, что эта клавиша шлёт на самом деле, и настройка существовала только
             // потому, что механизм внутри общий с ⌧.
             // Без «если не взяли»: «=» — готовый символ, а не выбор человека, и мимо
             // разбора одиночных клавиш он не уходит никогда.
-            else if (k.scanCode == 0x59 && vk == Vk.Clear) return HandleSingle(vk, "text.equals", down);
+            else if (k.scanCode == 0x59 && vk == Vk.Clear && !_letThrough.Contains(vk))
+                return HandleSingle(vk, "text.equals", down);
 
             if (s.AppleLayoutEnabled)
             {
@@ -1332,14 +1341,14 @@ namespace MagicKeys
                 }
             }
 
-            // Клавиши Win берём под контроль и без переназначения, если включён ⌘+Tab:
-            // иначе настоящее нажатие Win уже ушло в систему и отменить его нечем.
             // Нажатие этой клавиши ушло в приложение — и до отпускания она его.
             // Отобрав автоповтор, мы съедим потом и отпускание: нажатие уже ушло,
             // а снять зажатый в Windows код будет нечем.
             if (down && _modThrough.Contains(phys)) return false;
 
-            // Взятое нажатие делает клавишу нашей и на отпускании, каким бы ни было
+            // Клавиши Win берём под контроль и без переназначения, если включён ⌘+Tab:
+            // иначе настоящее нажатие Win уже ушло в систему и отменить его нечем.
+            // А взятое нажатие делает клавишу нашей и на отпускании, каким бы ни было
             // её назначение: заменитель Fn мы берём и у клавиши, которую не разбираем.
             bool managed = target != phys
                         || (s.CmdTabSwitchesWindows && (phys == ModKey.LWin || phys == ModKey.RWin))
@@ -1707,7 +1716,18 @@ namespace MagicKeys
             }
 
             KeyAction a = Actions.Get(_fkeyAction[index]);
-            if (a.Kind == ActionKind.PassThrough) return false;
+            if (a.Kind == ActionKind.PassThrough)
+            {
+                // «Оставить как есть» — но без нашего заменителя на дороге. Сюда попадают
+                // ровно тогда, когда его держат (ветка переворачивается им же), и клавиша
+                // уходила в приложение как Alt+F5 вместо F5.
+                if (down)
+                {
+                    if (!_fkeyDown[index]) { _fkeyDown[index] = true; SubstituteRelease(); }
+                }
+                else { _fkeyDown[index] = false; SubstituteRestore(); }
+                return false;
+            }
 
             if (down)
             {
@@ -1768,7 +1788,36 @@ namespace MagicKeys
             ModKey phys;
             if (TryPhysical(vk, ext, out phys))
             {
-                if (down) _modThrough.Add(phys); else _modThrough.Remove(phys);
+                if (down)
+                {
+                    _modThrough.Add(phys);
+                    // Множество нажатого правим и здесь: разбор ниже правит его на каждом
+                    // событии, а сюда события приходят тоже — просто мы их не разбираем.
+                    _modsDown.Add(phys);
+                    return;
+                }
+
+                _modThrough.Remove(phys);
+                // Отпускание мы ВИДЕЛИ — значит и записать его обязаны. Прежде оно
+                // терялось целиком: множество нажатого продолжало держать клавишу,
+                // которую человек отпустил. Caps Lock в роли control — снять галочку,
+                // отпустить клавишу, поставить галочку обратно, — и возврат зажатого
+                // нажимал control, которого никто не держит: снять его было нечем,
+                // и каждая буква уходила Ctrl+буквой. А ⌘, живущая на ⌥, оставалась
+                // «зажатой» навсегда: каждая буква становилась сочетанием macOS,
+                // то есть «c» копировало, «q» закрывало окно.
+                _modsDown.Remove(phys);
+                _modLifted.Remove(phys);
+                if (!_modTaken.Remove(phys)) return;
+
+                // И подставленный код, если он ещё висит: отпустить его больше некому.
+                int had;
+                if (!_injected.TryGetValue(phys, out had)) return;
+                _injected.Remove(phys);
+                bool other = false;
+                foreach (KeyValuePair<ModKey, int> p in _injected)
+                    if (WindowsHolds(p.Key) == had) other = true;
+                if (!other) Input.Key(had, false);
                 return;
             }
             if (down) _letThrough.Add(vk); else _letThrough.Remove(vk);
@@ -2048,7 +2097,12 @@ namespace MagicKeys
                 foreach (ModKey one in new List<ModKey>(_modThrough))
                 {
                     int own = ModNames.VirtualKey(one);
-                    if (own == 0 || !Held(own)) _modThrough.Remove(one);
+                    // Про то, что сами только что сняли, Windows не спрашиваем — то же
+                    // правило, что у перечёта нажатого ниже. Заводской заменитель Fn
+                    // на время навигации снят нами, и любой сброс в этот миг выбрасывал
+                    // его из множества, хотя человек клавишу держит.
+                    if (own == 0 || (!letGo.Contains(own) && !Held(own)))
+                        _modThrough.Remove(one);
                 }
 
 

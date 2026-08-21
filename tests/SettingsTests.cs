@@ -68,6 +68,8 @@ namespace MagicKeys
             SwitcherAltGetsOutOfTheWay();
             OneOwnerForNumpadClear();
             ModifierThroughStaysThrough();
+            RowKeepsTheOwner();
+            ReleaseWhilePausedIsSeen();
             MediaActionDropsSubstitute();
             ResetKeepsTheOwner();
             SingleKeyLatches();
@@ -2056,6 +2058,117 @@ namespace MagicKeys
                   sw && Count(Sent(), N(Vk.RMenu) + "^") == 1, Sent());
             Clear();
             Up(Vk.F1 + 4); UpE(Vk.RMenu); Clear();
+        }
+
+        /// <summary>
+        /// Верхний ряд и одиночные клавиши не отбирают то, чьё нажатие уже ушло
+        /// в приложение. Пауза кончается сама, между нажатием и его автоповтором.
+        /// </summary>
+        static void RowKeepsTheOwner()
+        {
+            Head("Верхний ряд не отбирает клавишу у приложения");
+
+            Settings s = new Settings();
+            s.PauseWhenAppleAbsent = true;
+            s.MediaFirst = true;
+            s.FKeys[6] = "media.prev";
+            Apple(false); Use(s);
+            bool went = Down(Vk.F1 + 6);       // на паузе — мимо нас, в приложение
+            Apple(true); Clear();
+            bool repeat = Down(Vk.F1 + 6);     // автоповтор уже не на паузе
+            bool up = Up(Vk.F1 + 6);
+            Check("проснувшаяся клавиатура не отбирает F7, нажатие которой ушло",
+                  !went && !repeat && !up,
+                  "нажатие=" + went + ", повтор=" + repeat + ", отпускание=" + up +
+                  ", пришло «" + Sent() + "»: F7 осталась зажатой в приложении");
+            Clear(); Apple(false);
+
+            // Контрольный опыт: без паузы ряд берёт клавишу с первого нажатия.
+            Settings live = Fresh(); live.MediaFirst = true; live.FKeys[6] = "media.prev";
+            Use(live);
+            bool took = Down(Vk.F1 + 6); bool tookUp = Up(Vk.F1 + 6);
+            Check("контроль: без паузы F7 берут с первого нажатия", took && tookUp,
+                  "нажатие=" + took + ", отпускание=" + tookUp);
+            Clear();
+
+            // ⌧ — тем же правилом и тем же слоем.
+            Settings n = new Settings();
+            n.PauseWhenAppleAbsent = true;
+            n.NumpadClear = "key.delete";
+            Apple(false); Use(n);
+            bool w2 = Down(Vk.NumLock);
+            Apple(true); Clear();
+            bool r2 = Down(Vk.NumLock);
+            bool u2 = Up(Vk.NumLock);
+            Check("проснувшаяся клавиатура не отбирает ⌧, нажатие которой ушло",
+                  !w2 && !r2 && !u2,
+                  "нажатие=" + w2 + ", повтор=" + r2 + ", отпускание=" + u2 +
+                  ", пришло «" + Sent() + "»");
+            Clear(); Apple(false);
+        }
+
+        /// <summary>Так настройки применяет поток перехвата: сброс «держим дальше» и подмена снимка.</summary>
+        static void WmApply(Settings s)
+        {
+            _releaseKeep.Invoke(_eng, new object[] { s, true });
+            typeof(Engine).GetField("_cfg", BindingFlags.NonPublic | BindingFlags.Instance)
+                          .SetValue(_eng, s);
+        }
+
+        /// <summary>
+        /// Отпускание, ушедшее мимо разбора, обязано быть замечено: иначе множество
+        /// зажатого держит клавишу, которую человек отпустил, а возврат зажатого
+        /// нажимает подставленный код, снять который потом нечем.
+        /// </summary>
+        static void ReleaseWhilePausedIsSeen()
+        {
+            Head("Отпускание мимо разбора не теряется");
+
+            Settings on = Fresh(); on.MapCapsLock = ModKey.LCtrl;
+            Settings off = Fresh(); off.MapCapsLock = ModKey.LCtrl; off.Enabled = false;
+            Use(on);
+            Down(Vk.Capital);
+            Engine.HeldProbe = delegate(int p) { return p == Vk.Capital; };
+            try { WmApply(off); } finally { Engine.HeldProbe = null; }
+            Up(Vk.Capital);                       // отпустил на выключенной программе
+            Clear();
+            Engine.HeldProbe = delegate(int p) { return false; };
+            try { WmApply(on); } finally { Engine.HeldProbe = null; }
+            Check("включённая обратно программа не жмёт control за отпущенную Caps Lock",
+                  Count(Sent(), N(Vk.LControl) + "v") == 0,
+                  "control нажат, а клавишу никто не держит: " + Sent());
+            Clear();
+
+            // Контрольный опыт: под ЗАЖАТОЙ клавишей код возвращать надо — иначе
+            // Caps Lock в роли control молча перестаёт работать до перенажатия.
+            Use(on);
+            Down(Vk.Capital);
+            Clear();
+            Engine.HeldProbe = delegate(int p) { return p == Vk.Capital; };
+            try { WmApply(on); } finally { Engine.HeldProbe = null; }
+            Check("контроль: под зажатой Caps Lock control возвращают",
+                  Count(Sent(), N(Vk.LControl) + "v") == 1, Sent());
+            Clear(); Up(Vk.Capital); Clear();
+
+            // И то же паузой: ⌘, живущая на ⌥, не остаётся зажатой навсегда.
+            Settings pz = new Settings();
+            pz.PauseWhenAppleAbsent = true;
+            pz.MacShortcuts = true;
+            pz.MapLAlt = ModKey.LWin;
+            Apple(true); Use(pz);
+            Down(Vk.LMenu);
+            Apple(false);
+            Engine.HeldProbe = delegate(int q) { return q == Vk.LMenu; };
+            try { _release.Invoke(_eng, null); } finally { Engine.HeldProbe = null; }
+            Up(Vk.LMenu);                          // отпустил на паузе
+            Apple(true);
+            Engine.HeldProbe = delegate(int q) { return false; };
+            try { _release.Invoke(_eng, null); } finally { Engine.HeldProbe = null; }
+            Clear();
+            bool c = Down(Vk.C); Up(Vk.C);
+            Check("отпущенная на паузе ⌘ не остаётся зажатой навсегда", !c,
+                  "буква ушла как ⌘C, хотя ⌘ никто не держит: " + Sent());
+            Clear(); Apple(false);
         }
 
         /// <summary>Что перехват считает снятым у Windows на время.</summary>

@@ -90,6 +90,8 @@ namespace MagicKeys
 
         /// <summary>Сколько раз забывали. По нему видно, не устарел ли идущий запрос.</summary>
         private static int _age;
+        /// <summary>Сколько опросов было к тому мигу, когда ответ забыли.</summary>
+        private static int _scanMark;
 
         /// <summary>
         /// Забыть ответ. Не только срок: число тоже, иначе заряд прежней клавиатуры
@@ -98,7 +100,19 @@ namespace MagicKeys
         /// </summary>
         public static void Invalidate()
         {
-            lock (Sync) { _stamp = DateTime.MinValue; _percent = Unknown; _age++; }
+            lock (Sync)
+            {
+                _stamp = DateTime.MinValue;
+                _percent = Unknown;
+                _age++;
+                // И отметку опроса: «спрашивать некого» можно говорить только про набор
+                // устройств, который уже прочитали целиком. Прежде тут стоял признак
+                // «опрос вообще когда-то был», а он защёлкивается навсегда — и после
+                // каждого пробуждения человек читал «ждать нечего» на клавиатуре,
+                // которая заряд отдаёт прекрасно: по Bluetooth вендорная коллекция
+                // поднимается на секунду позже клавиатурной.
+                _scanMark = Devices.ScanCount;
+            }
         }
 
         /// <summary>
@@ -150,7 +164,7 @@ namespace MagicKeys
                 // не сообщает, ждать нечего» — значит утверждать непроверенное, ради чего
                 // три состояния и заведены.
                 if (String.IsNullOrEmpty(path))
-                    _percent = Devices.Scanned ? NoSource : Unknown;
+                    _percent = Devices.ScanCount > _scanMark ? NoSource : Unknown;
                 else if (percent >= 0) _percent = percent;
                 else if (_percent < 0) _percent = -1;   // ждали ответа — не дождались
                 // Иначе не трогаем: известное число промах не стирает.

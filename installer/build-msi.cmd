@@ -59,7 +59,12 @@ set NUGET=%HERE%obj\nuget.exe
 if not exist "%HERE%obj" mkdir "%HERE%obj"
 if not exist "%NUGET%" (
   echo === nuget.exe ===
-  powershell -NoProfile -Command "Invoke-WebRequest https://dist.nuget.org/win-x86-commandline/latest/nuget.exe -OutFile '%NUGET%' -UseBasicParsing" || exit /b 1
+  rem Качаем во временное имя и переименовываем: оборванная закачка оставляла
+  rem обрезанный nuget.exe на месте, повтор его уже не перекачивал, а проверка
+  rem подписи говорила «подписан не Microsoft» — то есть называла подменой то,
+  rem что было недокачано, и выхода из этого не было.
+  powershell -NoProfile -Command "Invoke-WebRequest https://dist.nuget.org/win-x86-commandline/latest/nuget.exe -OutFile '%NUGET%.part' -UseBasicParsing" || (del "%NUGET%.part" >nul 2>&1 & exit /b 1)
+  move /y "%NUGET%.part" "%NUGET%" >nul || exit /b 1
 )
 
 rem Скачанным отсюда собирается всё, что потом подписывается настоящим ключом.
@@ -67,7 +72,9 @@ rem TLS защищает дорогу, но не отвечает за то, ч�
 rem — а проверить подпись Microsoft стоит одной строки.
 powershell -NoProfile -Command "$s = Get-AuthenticodeSignature '%NUGET%'; exit [int](($s.Status -ne 'Valid') -or ($s.SignerCertificate.Subject -notlike '*Microsoft*'))"
 if errorlevel 1 (
-  echo nuget.exe подписан не Microsoft — сборка остановлена.
+  del "%NUGET%" >nul 2>&1
+  echo nuget.exe подписан не Microsoft — сборка остановлена. Файл удалён,
+  echo запустите сборку заново.
   exit /b 1
 )
 

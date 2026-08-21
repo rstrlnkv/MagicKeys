@@ -74,6 +74,7 @@ namespace MagicKeys
             FnNoteChecksBothArrows();
             PhysNoteFollowsChoice();
             OffMeansOff();
+            EjectWithoutActionIsNotPraised();
             SpaceNoteOnlyWhenRoleMoved();
             CmdNoteThreeStates();
             FnNotesDoNotContradict();
@@ -540,6 +541,42 @@ namespace MagicKeys
                 takes.SetValue(null, w4); stamp.SetValue(null, w5);
                 where.SetValue(null, w6); media.SetValue(null, w7);
             }
+        }
+
+        /// <summary>
+        /// Карточка ⏏ не хвалится работающим назначением, когда назначения нет вовсе.
+        /// Заводское значение — «Оставить как есть», и обработчик на нём уходит молча.
+        /// </summary>
+        static void EjectWithoutActionIsNotPraised()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== ⏏ без назначения ==");
+            BindingFlags f = BindingFlags.NonPublic | BindingFlags.Static;
+            FieldInfo seen = typeof(KeyWatch).GetField("_ejectSeen", f);
+            if (seen == null) { Check("признак прихода ⏏ доступен", false, "нет поля"); return; }
+            object was = seen.GetValue(null);
+            Settings saved = _s.Snapshot();
+            MethodInfo m = typeof(MainWindow).GetMethod("PageKeys",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            try
+            {
+                seen.SetValue(null, true);
+                _s.Enabled = true; _s.PauseWhenAppleAbsent = false;
+                _s.EjectKey = "none"; _eng.Apply(_s);
+                UIElement none = (UIElement)m.Invoke(_win, null);
+                Check("без назначения не обещают, что назначение работает",
+                      !Says(none, "назначение работает"),
+                      "хвалится назначением, которого человек не задавал");
+                Check("а предлагают его выбрать",
+                      Says(none, "выберите, что она должна делать"), "не предлагают");
+
+                _s.Enabled = false; _eng.Apply(_s);
+                Check("и не пугают поломкой настройки, которой нет",
+                      !Says((UIElement)m.Invoke(_win, null), "не срабатывает"),
+                      "предупреждает о поломке ненастроенного");
+            }
+            catch (Exception e) { Check("страница «Клавиши» собирается", false, Inner(e)); }
+            finally { seen.SetValue(null, was); Restore(saved); }
         }
 
         /// <summary>
@@ -1018,6 +1055,9 @@ namespace MagicKeys
             try
             {
                 seen.SetValue(null, true);
+                // Назначение обязано быть: без него карточка честно предлагает выбрать,
+                // и хвалиться работающим назначением ей нечем.
+                _s.EjectKey = "key.delete";
                 _s.Enabled = true; _s.PauseWhenAppleAbsent = false; _eng.Apply(_s);
                 Check("контроль: при включённых переназначениях так и сказано",
                       Says((UIElement)m.Invoke(_win, null), "назначение работает"),

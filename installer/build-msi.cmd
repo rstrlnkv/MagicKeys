@@ -1,7 +1,9 @@
 @echo off
 chcp 65001>nul
-rem Сборка установщика MagicKeys.msi. Сеть нужна только при первом запуске:
-rem набор WiX подтягивается пакетом, ставить в систему ничего не надо.
+rem Сборка установщика MagicKeys.msi. Ставить в систему ничего не надо: набор WiX
+rem подтягивается пакетом. Сеть нужна не только при первом запуске — nuget сверяет
+rem подпись пакета на каждой сборке, а у владельца ключа метка времени подписи идёт
+rem на сервер DigiCert. Без сети сборка встанет на них.
 rem
 rem   build-msi.cmd            версия из BuildInfo.cs
 rem   build-msi.cmd 0.1.0      то же, но со сверкой: не та версия — сборка встаёт
@@ -70,7 +72,16 @@ if not exist "%NUGET%" (
 rem Скачанным отсюда собирается всё, что потом подписывается настоящим ключом.
 rem TLS защищает дорогу, но не отвечает за то, что лежит на другом её конце,
 rem — а проверить подпись Microsoft стоит одной строки.
-powershell -NoProfile -Command "$s = Get-AuthenticodeSignature '%NUGET%'; exit [int](($s.Status -ne 'Valid') -or ($s.SignerCertificate.Subject -notlike '*Microsoft*'))"
+rem Разделяем две беды: «подписан не тем» и «цепочку не удалось построить».
+rem Второе бывает без сети или при недоступном списке отзыва — и удалять из-за
+rem этого курьера нельзя: скачать его тогда уже нечем, а совет «запустите заново»
+rem невыполним. Удаляем только когда подписант правда чужой.
+powershell -NoProfile -Command "$s = Get-AuthenticodeSignature '%NUGET%'; if ($s.SignerCertificate -eq $null) { exit 2 }; if ($s.SignerCertificate.Subject -notlike '*Microsoft*') { exit 2 }; if ($s.Status -ne 'Valid') { exit 3 }; exit 0"
+if errorlevel 3 (
+  echo Подпись nuget.exe проверить не удалось — цепочку сертификатов не построить.
+  echo Чаще всего это отсутствие сети. Файл оставлен, повторите сборку со связью.
+  exit /b 1
+)
 if errorlevel 1 (
   del "%NUGET%" >nul 2>&1
   echo nuget.exe подписан не Microsoft — сборка остановлена. Файл удалён,
@@ -162,13 +173,16 @@ rem Сверяем и отпечаток: sign.cmd читает sign.thumbprint 
 rem всегда, — то есть подписать другим ключом можно только убрав файл. Обновление верит
 rem ровно одному отпечатку и чужой пакет отвергнет словами «подписан чужим ключом».
 rem Лучше узнать это здесь, чем от человека.
-powershell -NoProfile -Command "$want=(Get-Content '%HERE%sign.thumbprint').Trim(); $s = Get-AuthenticodeSignature '%ROOT%\MagicKeys-%VERSION%-x64.msi'; exit [int](($s.SignerCertificate -eq $null) -or ($s.Status -eq 'HashMismatch') -or ($s.SignerCertificate.Thumbprint -ne $want))"
+rem Отпечаток берём так же, как его берёт sign.cmd: файл первым, переменная запасной.
+rem Читая только файл, проверка падала у того, кто подписал переменной окружения,
+rem и говорила «пакет не подписан» про правильно подписанный пакет.
+powershell -NoProfile -Command "$want = $env:MAGICKEYS_SIGN_THUMBPRINT; if (Test-Path '%HERE%sign.thumbprint') { $want = (Get-Content '%HERE%sign.thumbprint').Trim() }; $s = Get-AuthenticodeSignature '%ROOT%\MagicKeys-%VERSION%-x64.msi'; exit [int]([string]::IsNullOrEmpty($want) -or ($s.SignerCertificate -eq $null) -or ($s.Status -eq 'HashMismatch') -or ($s.SignerCertificate.Thumbprint -ne $want))"
 if errorlevel 1 (
   rem Отказ это или отсутствие ключа — разные вещи, и путать их нельзя. Репозиторий
   rem открытый, а сертификат один: у всех, кроме владельца ключа, пакет выйдет
   rem неподписанным, и это не поломка сборки. Поломка — когда ключ есть, а подпись
   rem не легла: вот тогда отказ.
-  powershell -NoProfile -Command "$want=(Get-Content '%HERE%sign.thumbprint').Trim(); exit [int](-not (Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq $want }))"
+  powershell -NoProfile -Command "$want = $env:MAGICKEYS_SIGN_THUMBPRINT; if (Test-Path '%HERE%sign.thumbprint') { $want = (Get-Content '%HERE%sign.thumbprint').Trim() }; if ([string]::IsNullOrEmpty($want)) { exit 1 }; exit [int](-not (Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq $want }))"
   if errorlevel 1 (
     echo Готово, без подписи: %ROOT%\MagicKeys-%VERSION%-x64.msi
     echo Сертификата выпуска на этой машине нет — так и должно быть у всех, кроме

@@ -321,7 +321,15 @@ namespace MagicKeys
             try
             {
                 Gdi.Icon old = _tray.Icon;
-                _tray.Icon = Fluent.MakeTrayIcon(!_settings.Enabled);
+                // Приглушённый — не только на выключенных переназначениях. Сорванный
+                // перехват важнее всего остального: подсказка это уже знает, а значок
+                // горел ровно так же, как у исправно работающей программы, и единственный
+                // намёк был спрятан под наведением мыши. Пауза без клавиатуры Apple —
+                // то же самое: правил в этот миг никаких.
+                bool live = _settings.Enabled
+                         && String.IsNullOrEmpty(_engine == null ? null : _engine.Failure)
+                         && !(_settings.PauseWhenAppleAbsent && !Devices.AppleConnected);
+                _tray.Icon = Fluent.MakeTrayIcon(!live);
                 if (old != null) old.Dispose();
             }
             catch (Exception e) { Diag.Log("значок в трее: не удалось обновить", e); }

@@ -69,6 +69,9 @@ namespace MagicKeys
             OneOwnerForNumpadClear();
             ModifierThroughStaysThrough();
             RowKeepsTheOwner();
+            SubstituteReleasedWhilePaused();
+            SubstituteStaysAliveUnderFKey();
+            OwnedKeyGetsNoSecondOwner();
             ReleaseWhilePausedIsSeen();
             MediaActionDropsSubstitute();
             ResetKeepsTheOwner();
@@ -2169,6 +2172,117 @@ namespace MagicKeys
             Check("отпущенная на паузе ⌘ не остаётся зажатой навсегда", !c,
                   "буква ушла как ⌘C, хотя ⌘ никто не держит: " + Sent());
             Clear(); Apple(false);
+        }
+
+        /// <summary>
+        /// Заменитель Fn, отпущенный на паузе, перестаёт считаться зажатым.
+        ///
+        /// Прежде отметку ставил только разбор, а событие до него не доходило: FnHoldsVk
+        /// отвечал про клавишу, которую никто не держит, первое же нажатие F-клавиши
+        /// слало непарное отпускание Alt, а её отпускание — нажатие. Alt оставался
+        /// зажатым навсегда, и записи о нём не было ни одной.
+        /// </summary>
+        static void SubstituteReleasedWhilePaused()
+        {
+            Head("Заменитель Fn, отпущенный на паузе");
+
+            Settings s = new Settings();
+            s.PauseWhenAppleAbsent = true;
+            Apple(true); Use(s);
+            DownE(Vk.RMenu);                 // заменитель зажат
+            Apple(false);                    // клавиатура уснула
+            UpE(Vk.RMenu);                   // отпустили на паузе
+            Apple(true);                     // и проснулась от нажатия
+            Clear();
+            Down(Vk.F1 + 4); Up(Vk.F1 + 4);
+            Check("после паузы F-клавиша не жмёт Alt за отпущенный заменитель",
+                  Count(Sent(), N(Vk.RMenu) + "v") == 0,
+                  "Alt нажат и не отпущен, записи о нём нет ни одной: " + Sent());
+            Clear();
+
+            // Контрольный опыт: пока заменитель ПРАВДА держат, снимать его надо —
+            // иначе Fn+F5 уходит как Alt+F5.
+            Use(s);
+            DownE(Vk.RMenu); Clear();
+            Down(Vk.F1 + 4);
+            Check("контроль: под зажатым заменителем его снимают",
+                  Count(Sent(), N(Vk.RMenu) + "^") == 1, Sent());
+            Clear();
+            Up(Vk.F1 + 4); UpE(Vk.RMenu); Clear();
+            Apple(false);
+        }
+
+        /// <summary>
+        /// Под зажатой клавишей ряда заменитель Fn остаётся живой клавишей.
+        ///
+        /// Верхний ряд зовёт снятие безусловно, в том числе когда снимать нечего.
+        /// По счётчику снятий выходило, что нажатие правого ⌥ под зажатой F5 берётся
+        /// себе и никуда не посылается: ни третьего уровня раскладки, ни ⌥+щелчка.
+        /// </summary>
+        static void SubstituteStaysAliveUnderFKey()
+        {
+            Head("Заменитель Fn под зажатой клавишей ряда");
+
+            Settings s = Fresh();            // заводское: медиа сразу, F5 — «как есть»
+            Use(s);
+            bool alone = DownE(Vk.RMenu);
+            UpE(Vk.RMenu); Clear();
+            Check("контроль: сам по себе заменитель проходит насквозь", !alone, "" + alone);
+
+            Down(Vk.F1 + 4); Clear();        // F5 держим
+            bool under = DownE(Vk.RMenu);
+            bool underUp = UpE(Vk.RMenu);
+            Check("под зажатой F5 заменитель по-прежнему доходит до Windows",
+                  !under && !underUp,
+                  "нажатие=" + under + ", отпускание=" + underUp +
+                  ": ни третьего уровня, ни ⌥+щелчка — Windows нажатия не видит");
+            Clear();
+            Up(Vk.F1 + 4); Clear();
+        }
+
+        /// <summary>
+        /// У клавиши, которой уже владеет слой, второго хозяина не заводится.
+        ///
+        /// Разбор одиночных клавиш при «Оставить как есть» отвечает «не взял», а запись
+        /// о себе оставляет — и хвост разбора заводил вторую. Снималась потом только
+        /// одна: Busy отвечал «занята приложением» до ближайшего сброса.
+        /// </summary>
+        static void OwnedKeyGetsNoSecondOwner()
+        {
+            Head("Второго хозяина у клавиши не заводится");
+
+            Settings s = Fresh();
+            s.NumpadClear = "none";          // ⌧ уходит насквозь, но запись о себе оставляет
+            Use(s);
+            Down(Vk.NumLock); Up(Vk.NumLock);
+            Check("после отпускания ⌧ не остаётся ничьей записи",
+                  Singles().Count == 0 && !Through().Contains(Vk.NumLock),
+                  "одиночных: " + Singles().Count + ", ушедших: " + Through().Count);
+            Clear();
+
+            // Контрольный опыт: с живым назначением запись тоже не остаётся.
+            Settings d = Fresh(); d.NumpadClear = "key.delete";
+            Use(d);
+            Down(Vk.NumLock); Up(Vk.NumLock);
+            Check("контроль: с назначением записи тоже не остаётся",
+                  Singles().Count == 0, "одиночных: " + Singles().Count);
+            Clear();
+        }
+
+        /// <summary>Клавиши, за которыми перехват держит одиночное действие.</summary>
+        static Dictionary<int, string> Singles()
+        {
+            return (Dictionary<int, string>)typeof(Engine)
+                .GetField("_singleAction", BindingFlags.NonPublic | BindingFlags.Instance)
+                .GetValue(_eng);
+        }
+
+        /// <summary>Клавиши, чьё нажатие ушло в приложение.</summary>
+        static HashSet<int> Through()
+        {
+            return (HashSet<int>)typeof(Engine)
+                .GetField("_letThrough", BindingFlags.NonPublic | BindingFlags.Instance)
+                .GetValue(_eng);
         }
 
         /// <summary>Что перехват считает снятым у Windows на время.</summary>

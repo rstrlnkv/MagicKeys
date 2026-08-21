@@ -91,6 +91,7 @@ namespace MagicKeys
             ManualChoiceDoesNotInventDetection();
             SpaceCardFollowsCmd();
             FnBehaviorUnknownIsNotRegistry();
+            NarrowWindowKeepsWordsWhole();
 
             Console.WriteLine();
             Console.WriteLine("прошло " + _pass + ", провалено " + _fail);
@@ -228,7 +229,7 @@ namespace MagicKeys
                 Check("контроль: при настоящем обмене оговорка есть",
                       Says((UIElement)m.Invoke(_win, null), "поиск открывает"), "её нет");
             }
-            catch (Exception e) { Check("страница «Как на маке» собирается", false, Inner(e)); }
+            catch (Exception e) { Check("страница «Основные» собирается", false, Inner(e)); }
             Restore(saved);
         }
 
@@ -264,7 +265,7 @@ namespace MagicKeys
                 Check("когда ⌘ нет вовсе — об этом сказано",
                       Says((UIElement)m.Invoke(_win, null), "нечем"), "не сказано");
             }
-            catch (Exception e) { Check("страница «Как на маке» собирается", false, Inner(e)); }
+            catch (Exception e) { Check("страница «Основные» собирается", false, Inner(e)); }
             Restore(saved);
         }
 
@@ -482,7 +483,7 @@ namespace MagicKeys
                       Says((UIElement)m.Invoke(_win, null), "поиск открывает"),
                       "обещает поиск по ⌘+пробел, а он открывается по control+пробел");
             }
-            catch (Exception e) { Check("страница «Как на маке» собирается", false, Inner(e)); }
+            catch (Exception e) { Check("страница «Основные» собирается", false, Inner(e)); }
             Restore(saved);
         }
 
@@ -709,7 +710,7 @@ namespace MagicKeys
                 Check("при сорванном перехвате карточка состояния об этом говорит",
                       Says((UIElement)m.Invoke(_win, null), "перехват клавиатуры"), "молчит");
             }
-            catch (Exception e) { Check("страница «Как на маке» собирается", false, Inner(e)); }
+            catch (Exception e) { Check("страница «Основные» собирается", false, Inner(e)); }
             finally { _eng.Failure = was; }
         }
 
@@ -1524,6 +1525,134 @@ namespace MagicKeys
         {
             if (ok) { _pass++; Console.WriteLine("  + " + name); }
             else { _fail++; _fails.Add(name + " — " + got); Console.WriteLine("  ! " + name + " — " + got); }
+        }
+
+
+        /// <summary>
+        /// Ширина, которая достаётся содержимому страницы, когда окно сжато до
+        /// предела: заявленный минимум окна минус левая колонка (248), отступы
+        /// прокрутки (28 и 22), полоса прокрутки (17) и рамка окна (16).
+        ///
+        /// Считается от MinWidth самого окна, а не числом. Опустив минимум, окно
+        /// само себе ужесточает проверку — иначе вёрстку можно было бы «починить»
+        /// тем, что её перестали проверять на узком месте.
+        /// </summary>
+        static double NarrowPage { get { return _win.MinWidth - 248 - 28 - 22 - 17 - 16; } }
+
+        /// <summary>
+        /// Вёрстка при сжатом окне: слова не рвутся посередине и текст не вылезает
+        /// за край карточки.
+        ///
+        /// Меряем, а не смотрим. Каждая надпись знает свою ширину после раскладки;
+        /// рядом считаем ширину самого длинного слова в ней тем же шрифтом. Слово
+        /// шире отведённого места — значит, WPF разорвёт его по буквам: ровно то,
+        /// что видно на экране как «Переназначен / ия». Правый край надписи за краем
+        /// страницы — значит, её обрежет карточка, как обрезало подписи переключателей,
+        /// пока те лежали в StackPanel.
+        /// </summary>
+        static void NarrowWindowKeepsWordsWhole()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== вёрстка при сжатом окне ==");
+
+            string[] pages = { "PageMacKeys", "PageKeys", "PageLayout", "PageDriver", "PageAbout", "PageDiag" };
+            int torn = 0, spilled = 0, seen = 0;
+            string firstTorn = null, firstSpill = null;
+
+            foreach (string p in pages)
+            {
+                MethodInfo m = typeof(MainWindow).GetMethod(p, BindingFlags.NonPublic | BindingFlags.Instance);
+                if (m == null) continue;
+                UIElement page;
+                try { page = (UIElement)m.Invoke(_win, null); }
+                catch { continue; }
+
+                var host = new Border { Width = NarrowPage, Child = page as UIElement };
+                host.Measure(new Size(NarrowPage, 4000));
+                host.Arrange(new Rect(0, 0, NarrowPage, host.DesiredSize.Height));
+                host.UpdateLayout();
+
+                var texts = new List<TextBlock>();
+                Texts(host, texts);
+                foreach (TextBlock tb in texts)
+                {
+                    if (String.IsNullOrEmpty(tb.Text)) continue;
+                    double room = tb.ActualWidth - tb.Padding.Left - tb.Padding.Right;
+                    if (room <= 1) continue;
+                    seen++;
+
+                    if (tb.TextWrapping != TextWrapping.NoWrap)
+                    {
+                        double word = LongestWord(tb);
+                        if (word > room + 1)
+                        {
+                            torn++;
+                            if (firstTorn == null)
+                                firstTorn = p + ": «" + Short(tb.Text) + "» — слову нужно " +
+                                            Math.Round(word) + ", а места " + Math.Round(room);
+                        }
+                    }
+
+                    double right;
+                    try { right = tb.TransformToAncestor(host).Transform(new Point(tb.ActualWidth, 0)).X; }
+                    catch { continue; }
+                    if (right > NarrowPage + 1)
+                    {
+                        spilled++;
+                        if (firstSpill == null)
+                            firstSpill = p + ": «" + Short(tb.Text) + "» кончается на " +
+                                         Math.Round(right) + " при ширине " + NarrowPage;
+                    }
+                }
+            }
+
+            Check("надписи вообще нашлись и померились", seen > 200, "померилось всего " + seen);
+            Check("при сжатом окне слова не рвутся посередине", torn == 0,
+                  "порвано " + torn + ", первое — " + firstTorn);
+            Check("при сжатом окне надписи не вылезают за карточку", spilled == 0,
+                  "вылезло " + spilled + ", первая — " + firstSpill);
+        }
+
+        /// <summary>Все надписи в разложенном дереве — по видимому дереву, а не логическому:
+        /// подписи переключателей и списков живут в шаблонах.</summary>
+        static void Texts(DependencyObject node, List<TextBlock> found)
+        {
+            var tb = node as TextBlock;
+            if (tb != null) found.Add(tb);
+            int n = VisualTreeHelper.GetChildrenCount(node);
+            for (int i = 0; i < n; i++) Texts(VisualTreeHelper.GetChild(node, i), found);
+        }
+
+        /// <summary>
+        /// Ширина самого длинного неразрывного куска надписи. Разрывать строку WPF
+        /// умеет по пробелу, а также после дефиса и косой черты — эти места здесь
+        /// считаются законными, иначе проверка ругалась бы на «F1–F12» и на пути.
+        /// </summary>
+        static double LongestWord(TextBlock tb)
+        {
+            var typeface = new Typeface(tb.FontFamily, tb.FontStyle, tb.FontWeight, tb.FontStretch);
+            double widest = 0;
+            var word = new StringBuilder();
+            string s = tb.Text;
+            for (int i = 0; i <= s.Length; i++)
+            {
+                bool end = i == s.Length;
+                char c = end ? ' ' : s[i];
+                bool space = c == ' ' || c == '\n' || c == '\r' || c == '\t' || c == ' ';
+                bool after = c == '-' || c == '/' || c == '–' || c == '—';
+                if (!space) word.Append(c);
+                if (space || after || end)
+                {
+                    if (word.Length > 0)
+                    {
+                        var ft = new FormattedText(word.ToString(), System.Globalization.CultureInfo.CurrentUICulture,
+                                                   FlowDirection.LeftToRight, typeface, tb.FontSize, Brushes.Black);
+                        if (ft.Width > widest) widest = ft.Width;
+                    }
+                    word.Length = 0;
+                }
+            }
+            return widest;
         }
 
         static void Page(string method)

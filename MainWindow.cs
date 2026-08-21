@@ -56,7 +56,7 @@ namespace MagicKeys
             Title = "MagicKeys";
             Width = 940;
             Height = 660;
-            MinWidth = 780;
+            MinWidth = 840;
             MinHeight = 540;
             WindowStartupLocation = WindowStartupLocation.Manual;
             SetResourceReference(BackgroundProperty, "Bg");
@@ -242,7 +242,7 @@ namespace MagicKeys
             // замечает не F5, а что ⌘C не копирует. И она единственная, которая не умеет
             // быть пустой: страница функционального ряда при работающем драйвере честно
             // сообщает, что ни на что не влияет, — такая первой быть не может.
-            AddPage("mac", "Как на маке");
+            AddPage("mac", "Основные");
             AddPage("keys", "Клавиши");
             AddPage("layout", "Раскладка");
             AddPage("driver", "Драйвер Apple");
@@ -300,7 +300,7 @@ namespace MagicKeys
             {
                 switch (CurrentPage)
                 {
-                    case "mac": Head("Как на маке", "⌘C, ⌘←, ⌘Q и ещё полсотни привычек — чтобы пальцы не переучивались."); _host.Content = PageMacKeys(); break;
+                    case "mac": Head("Основные", "⌘C, ⌘←, ⌘Q и ещё полсотни привычек — чтобы пальцы не переучивались."); _host.Content = PageMacKeys(); break;
                     case "keys": Head("Клавиши", "Что делает каждая клавиша, которая на маке устроена иначе."); _host.Content = PageKeys(); break;
                     case "layout": Head("Раскладка", "Какие символы печатаются — те, что напечатаны на клавишах Apple."); _host.Content = PageLayout(); break;
                     case "driver": Head("Драйвер Apple", "Родной драйвер Boot Camp и как программа с ним уживается."); _host.Content = PageDriver(); break;
@@ -477,8 +477,12 @@ namespace MagicKeys
             int fcount = Models.FunctionKeyCount();
             var table = new Grid { Margin = new Thickness(0, 2, 0, 0) };
             table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(56) });
-            table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
-            table.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            // Надпись клавиши — по содержимому, но не шире 150: при сужении окна
+            // жёсткая ширина рвала её посередине слова.
+            table.ColumnDefinitions.Add(new ColumnDefinition
+            { Width = GridLength.Auto, MinWidth = 96, MaxWidth = 150 });
+            table.ColumnDefinitions.Add(new ColumnDefinition
+            { Width = new GridLength(1, GridUnitType.Star), MinWidth = 200 });
 
             for (int i = 0; i < fcount; i++)
             {
@@ -556,8 +560,9 @@ namespace MagicKeys
             // одной странице.
             {
                 var padGrid = new Grid();
-                padGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                padGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });
+                padGrid.ColumnDefinitions.Add(new ColumnDefinition
+                { Width = new GridLength(1, GridUnitType.Star), MinWidth = 176 });
+                padGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
                 AddSingleRow(padGrid, 0, "Clear", "Верхняя левая на цифровом блоке, у Apple помечена значком очистки",
                     _s.NumpadClear, delegate(string id) { _s.NumpadClear = id; Save(); });
@@ -586,8 +591,9 @@ namespace MagicKeys
             if (KeyWatch.EjectSeen || ejectSet || (fm != null && fm.Eject) || fm == null)
             {
                 var ejGrid = new Grid();
-                ejGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                ejGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });
+                ejGrid.ColumnDefinitions.Add(new ColumnDefinition
+                { Width = new GridLength(1, GridUnitType.Star), MinWidth = 176 });
+                ejGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 AddSingleRow(ejGrid, 0, "Eject", "Верхний правый угол, со значком извлечения",
                     // Пересобираем: сноска под этой же строкой построена на том, есть ли
                     // назначение вовсе. Без пересборки окно продолжало просить выбрать
@@ -693,8 +699,9 @@ namespace MagicKeys
             // и строки, которой это видно, в карточке нет: при роли «символы» её прячут.
 
             var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(280) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition
+            { Width = new GridLength(1, GridUnitType.Star), MinWidth = 176 });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
             // Каждая строка пересобирает страницу. Эти пять полей решают, до какого
             // модификатора вообще можно дотянуться, — а от этого зависят и правила
@@ -832,8 +839,9 @@ namespace MagicKeys
             if (now != "symbols")
             {
                 var comesGrid = new Grid();
-                comesGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-                comesGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(280) });
+                comesGrid.ColumnDefinitions.Add(new ColumnDefinition
+                { Width = new GridLength(1, GridUnitType.Star), MinWidth = 176 });
+                comesGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 AddModRow(comesGrid, 0, "Приходит в Windows как", null, _s.MapRAlt,
                     delegate(ModKey m) { _s.MapRAlt = m; Save(); BuildPage(); });
                 rows.Children.Add(comesGrid);
@@ -946,8 +954,9 @@ namespace MagicKeys
 
             // ---- языки ----
             var langGrid = new Grid();
-            langGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            langGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });
+            langGrid.ColumnDefinitions.Add(new ColumnDefinition
+            { Width = new GridLength(1, GridUnitType.Star), MinWidth = 176 });
+            langGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
             IList<KeyValuePair<int, string>> langs = InputLanguages();
             int row = 0;
@@ -1622,7 +1631,8 @@ namespace MagicKeys
         {
             var grid = new Grid { Margin = new Thickness(0, 3, 0, 3) };
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(64) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition
+            { Width = new GridLength(1, GridUnitType.Star), MinWidth = 200 });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(190) });
 
             string id = sc.Id;
@@ -3085,8 +3095,13 @@ namespace MagicKeys
         private static UIElement Row(string label, string hint, UIElement control)
         {
             var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(300) });
+            // Левый столбец звёздный, но не уже читаемого; правый — по содержимому.
+            // Прежде правый был жёстко 300 точек, и при сужении окна левый схлопывался
+            // так, что слова рвались посередине: «Переназначен / ия».
+            grid.ColumnDefinitions.Add(new ColumnDefinition
+            { Width = new GridLength(1, GridUnitType.Star), MinWidth = 176 });
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            Fit(control, 300);
 
             var left = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 16, 0) };
             left.Children.Add(new TextBlock { Text = label, TextWrapping = TextWrapping.Wrap });
@@ -3101,6 +3116,21 @@ namespace MagicKeys
             grid.Children.Add(left);
             grid.Children.Add(control);
             return grid;
+        }
+
+        /// <summary>
+        /// Задать органу управления разумную ширину: не шире заданной и не уже двух
+        /// третей от неё. Столбец под ним при этом «по содержимому» — так левая
+        /// половина строки получает всё, что осталось, и переносит слова по-человечески,
+        /// а не по буквам.
+        /// </summary>
+        private static void Fit(UIElement control, double width)
+        {
+            var e = control as FrameworkElement;
+            if (e == null) return;
+            e.MaxWidth = width;
+            e.MinWidth = Math.Round(width * 2 / 3);
+            e.HorizontalAlignment = HorizontalAlignment.Stretch;
         }
 
         private void AddModRow(Grid grid, int row, string label, string hint, ModKey current, Action<ModKey> onSet)
@@ -3158,6 +3188,7 @@ namespace MagicKeys
         private ComboBox ActionCombo(string currentId, Action<string> onSet)
         {
             var box = new ComboBox { Style = (Style)Application.Current.Resources["Combo"] };
+            Fit(box, 300);
 
             var view = new System.Windows.Data.CollectionViewSource();
             var items = new List<KeyAction>(Actions.All);
@@ -3205,6 +3236,7 @@ namespace MagicKeys
         private ComboBox Combo(Choice[] choices, object current, Action<object> onSet)
         {
             var box = new ComboBox { Style = (Style)Application.Current.Resources["Combo"] };
+            Fit(box, 300);
             int selected = 0;
             for (int i = 0; i < choices.Length; i++)
             {
@@ -3424,12 +3456,31 @@ namespace MagicKeys
 
         private static UIElement KeyValue(string key, string value)
         {
-            var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             var k = new TextBlock { Text = key };
             k.SetResourceReference(StyleProperty, "Caption");
             var v = new TextBlock { Text = value, TextWrapping = TextWrapping.Wrap };
+
+            // Значение без единого пробела перенести негде: путь в реестре
+            // HKLM\SYSTEM\CurrentControlSet\Services\KeyMagic2 в узкий столбец
+            // не помещается, а разрывать его WPF станет посреди слова. Такому
+            // значению отдаём всю строку целиком — подпись уходит наверх.
+            // Не сокращаем и не вставляем невидимых переносов нарочно: путь
+            // показан затем, чтобы его скопировать в regedit, и он должен
+            // копироваться ровно тем, чем он является.
+            bool unbreakable = !String.IsNullOrEmpty(value) && value.IndexOf(' ') < 0 && value.Length > 28;
+            if (unbreakable)
+            {
+                var stack = new StackPanel();
+                k.Margin = new Thickness(0, 0, 0, 1);
+                stack.Children.Add(k);
+                stack.Children.Add(v);
+                return stack;
+            }
+
+            var grid = new Grid();
+            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+            grid.ColumnDefinitions.Add(new ColumnDefinition
+            { Width = new GridLength(1, GridUnitType.Star), MinWidth = 200 });
             Grid.SetColumn(k, 0);
             Grid.SetColumn(v, 1);
             grid.Children.Add(k);

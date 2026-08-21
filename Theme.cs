@@ -348,14 +348,25 @@ namespace MagicKeys
     <Setter Property='Template'>
       <Setter.Value>
         <ControlTemplate TargetType='CheckBox'>
-          <StackPanel Orientation='Horizontal'>
-            <Border x:Name='Track' Width='40' Height='20' CornerRadius='10' Background='Transparent'
-                    BorderBrush='{StaticResource TextSec}' BorderThickness='1' VerticalAlignment='Center'>
+          <!--
+            Сетка, а не StackPanel: тот раскладывает вдоль строки и даёт содержимому
+            бесконечную ширину — надпись не переносилась никогда, а просто обрезалась
+            краем карточки. Второй столбец звёздный, поэтому ширину он получает
+            настоящую и перенос работает.
+          -->
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width='Auto'/>
+              <ColumnDefinition Width='*'/>
+            </Grid.ColumnDefinitions>
+            <Border x:Name='Track' Grid.Column='0' Width='40' Height='20' CornerRadius='10'
+                    Background='Transparent' BorderBrush='{StaticResource TextSec}'
+                    BorderThickness='1' VerticalAlignment='Center'>
               <Ellipse x:Name='Knob' Width='12' Height='12' Fill='{StaticResource Text}'
                        HorizontalAlignment='Left' Margin='4,0,0,0'/>
             </Border>
-            <ContentPresenter Margin='10,0,0,0' VerticalAlignment='Center'/>
-          </StackPanel>
+            <ContentPresenter Grid.Column='1' Margin='10,0,0,0' VerticalAlignment='Center'/>
+          </Grid>
           <ControlTemplate.Triggers>
             <Trigger Property='IsChecked' Value='True'>
               <Setter TargetName='Track' Property='Background' Value='{StaticResource Accent}'/>

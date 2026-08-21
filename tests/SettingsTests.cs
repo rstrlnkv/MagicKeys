@@ -1030,20 +1030,32 @@ namespace MagicKeys
             Check("признак призрачного Ctrl не остаётся после паузы", !PhantomCtrl(),
                   "признак стоит — раскладка Apple вернёт control нажатым");
 
-            // Вторая клавиша на Caps Lock жмёт уже нажатый Caps Lock: для Windows это
-            // повтор, переключателем он не считается. Наш счёт регистра не должен
-            // расходиться с лампочкой.
+            // Счёт регистра идёт по тому, держит ли Capital сама Windows. За неё здесь
+            // отвечает шов: настоящую клавиатуру стенд не трогает.
             s = Fresh();
             s.MapRAlt = ModKey.CapsLock;        // и сам Caps Lock остаётся Caps Lock
             Use(s);
             bool caps0 = CapsOn();
-            Down(Vk.Capital);
+            Engine.HeldProbe = delegate(int probe) { return false; };
+            Down(Vk.Capital);                   // Windows Capital ещё не держала
             bool caps1 = CapsOn();
-            DownE(Vk.RMenu);
+            Engine.HeldProbe = delegate(int probe) { return probe == Vk.Capital; };
+            DownE(Vk.RMenu);                    // вторая клавиша: для Windows это повтор
             bool caps2 = CapsOn();
             Check("вторая клавиша на Caps Lock не переворачивает регистр второй раз",
                   caps1 != caps0 && caps2 == caps1,
                   "было=" + caps0 + ", после Caps Lock=" + caps1 + ", после ⌥=" + caps2);
+
+            // Настоящую Caps Lock отпустили — Windows сняла Capital за всех. Следующее
+            // её нажатие она переворачивает, и наш счёт обязан пойти следом: своё
+            // множество источников на это не отвечало, и лампочка расходилась со счётом.
+            Engine.HeldProbe = delegate(int probe) { return false; };
+            Up(Vk.Capital);
+            bool caps3 = CapsOn();
+            Down(Vk.Capital);
+            Check("после отпускания настоящей Caps Lock счёт идёт за лампочкой",
+                  CapsOn() != caps3, "счёт остался прежним, а Windows перевернула");
+            Engine.HeldProbe = null;
             UpE(Vk.RMenu); Up(Vk.Capital); Clear();
 
             // Верхний ряд взят — аккорд его не отнимает.

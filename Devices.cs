@@ -187,6 +187,7 @@ namespace MagicKeys
         {
             List<KeyboardInfo> result = new List<KeyboardInfo>();
             statusPath = null;
+            var statusPaths = new List<KeyValuePair<int, string>>();
             uint stride = (uint)Marshal.SizeOf(typeof(Native.RAWINPUTDEVICELIST));
 
             // Спрашиваем дважды — сперва размер, потом сам список, — и между двумя
@@ -223,8 +224,12 @@ namespace MagicKeys
                 if (!Info(list[i].hDevice, out hi) || hi.dwType != Native.RIM_TYPEHID) continue;
                 if (hi.hid.usUsagePage != 0xFF00 || hi.hid.usUsage != 0x0014) continue;
                 if (hi.hid.dwVendorId != AppleUsb && hi.hid.dwVendorId != AppleBluetooth) continue;
-                statusPath = DeviceName(list[i].hDevice);
-                break;
+                // Вендорных коллекций Apple рядом бывает несколько: мышь и трекпад
+                // с мака идут в комплекте с клавиатурой чаще, чем поодиночке. Первая
+                // попавшаяся — это заряд неизвестно чего, а называем мы его «заряд
+                // клавиатуры». Запоминаем все и выберем ту, что от нашей клавиатуры.
+                statusPaths.Add(new KeyValuePair<int, string>(
+                    (int)hi.hid.dwProductId, DeviceName(list[i].hDevice)));
             }
             for (int i = 0; i < count; i++)
             {
@@ -277,6 +282,20 @@ namespace MagicKeys
 
                 result.Add(info);
             }
+
+            // Теперь выбираем коллекцию: ту, чей идентификатор изделия совпал
+            // с найденной клавиатурой Apple. Не совпало ни с одной — берём первую:
+            // модель может быть незнакомой, а показать заряд всё же лучше, чем нет.
+            // Мыши и трекпада в списке клавиатур нет, так что совпадение с ними
+            // случиться не может.
+            foreach (KeyValuePair<int, string> p in statusPaths)
+            {
+                foreach (KeyboardInfo k in result)
+                    if (k.IsApple && k.ProductId == p.Key) { statusPath = p.Value; break; }
+                if (statusPath != null) break;
+            }
+            if (statusPath == null && statusPaths.Count > 0) statusPath = statusPaths[0].Value;
+
             return result;
         }
 

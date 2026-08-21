@@ -93,8 +93,9 @@ namespace MagicKeys
                 // Общий выключатель спрашиваем и здесь: «Переназначения: Выключены»
                 // значит всё. Перехват это делает, соседний обработчик яркости — тоже,
                 // а ⏏ идёт мимо перехвата и правило обходила: значок в трее приглушён,
-                // а клавиша работает.
+                // а клавиша работает. И паузу тем же порядком, что у яркости.
                 if (s == null || !s.Enabled) return;
+                if (s.PauseWhenAppleAbsent && !Devices.AppleConnected) return;
                 KeyAction a = Actions.Get(s.EjectKey);
                 if (a.Kind == ActionKind.PassThrough) return;
                 Actions.Begin(a, false, Settings.BrightnessStep);
@@ -115,8 +116,9 @@ namespace MagicKeys
                 // равно применяет их только к встроенной панели, которой тут нет. А вот
                 // общий выключатель спрашиваем: «Переназначения: Выключены» значит всё.
                 // И паузу тоже: выбрав «Только с Magic Keyboard», человек попросил
-                // программу не вмешиваться, пока её нет, — а коды яркости приходят
-                // и с чужой клавиатуры.
+                // программу не вмешиваться, пока её нет. Перепись клавиш и так отбирает
+                // события по устройству, так что сюда чужие коды не доходят, — но правило
+                // должно читаться одинаково во всех трёх местах, где его спрашивают.
                 if (s == null || !s.Enabled) return;
                 if (s.PauseWhenAppleAbsent && !Devices.AppleConnected) return;
                 if (e.Code == Native.UsageBrightnessUp) Brightness.Nudge(Settings.BrightnessStep);

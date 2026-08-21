@@ -163,9 +163,13 @@ namespace MagicKeys
                 .Replace("{ACCENT}", Hex(accentUi))
                 .Replace("{ACCENTTEXT}", accentText);
 
+            // Отметку ставим ПОСЛЕ разбора, а не до: сорвись он — мы бы пометили
+            // применённым то, чего не применяли, и следующий Reapply увидел бы совпадение
+            // и не собрал бы эту тему уже никогда.
+            var built = (ResourceDictionary)XamlReader.Parse(xaml);
             _appliedDark = dark;
             _appliedAccent = accent;
-            return (ResourceDictionary)XamlReader.Parse(xaml);
+            return built;
         }
 
         private const string Xaml = @"

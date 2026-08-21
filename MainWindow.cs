@@ -344,6 +344,10 @@ namespace MagicKeys
                 new Choice { Value = true,  Text = "Медиафункции сразу (как в macOS)" },
                 new Choice { Value = false, Text = "F-клавиши сразу (как обычно в Windows)" }
             }, _s.MediaFirst, delegate(object v) { _s.MediaFirst = (bool)v; Save(); BuildPage(); });
+            // Пока верхним рядом занимается драйвер, этот список тоже ни на что
+            // не влияет: перехват отступает раньше, чем спрашивает о режиме.
+            // Карточка выше про это говорит, а список стоял живым и обещал обратное.
+            if (YieldingNow) modeBox.IsEnabled = false;
 
             stack.Children.Add(Card("Что делают F1–F12 без модификатора", null,
                 Row("Основной режим", null, modeBox)));
@@ -410,7 +414,11 @@ namespace MagicKeys
                     // строки, а выключенное пропускает дальше — в навигацию Fn. Выключив
                     // группу «Текст», человек читал, что Fn+←→ у него отобраны, при том
                     // что они как раз работают.
-                    : _s.MacShortcuts && FnSubstituteIsOption && _s.MacEnabled("wordleft")
+                    // Все три, а не одно: таблица перехватывает ⌥←, ⌥→ и ⌥Backspace,
+                    // и выключение одной строки не возвращает остальные.
+                    : _s.MacShortcuts && FnSubstituteIsOption
+                      && (_s.MacEnabled("wordleft") || _s.MacEnabled("wordright")
+                          || _s.MacEnabled("delword"))
                         ? "Fn+↑↓ листают страницу, Fn+Enter — это Insert. Fn+←→ и Fn+Backspace " +
                           "достаются сочетаниям macOS: там ⌥ ходит по словам, а начало и конец " +
                           "строки — на ⌘←→."
@@ -530,7 +538,12 @@ namespace MagicKeys
             // доставалась только клавиатурам с блоком, то есть ровно тем, у которых
             // её нет: ⏏ бывает у алюминиевых компактных, а они без блока. Настройка
             // при этом живая — её применяет перепись клавиш.
-            if (KeyWatch.EjectSeen || (fm != null && fm.Eject) || fm == null)
+            // И всегда, когда назначение уже стоит: настройка живая, её применяет
+            // перепись клавиш, — а спрятав карточку, мы отбирали единственный способ
+            // её увидеть и выключить. Назначил на алюминиевой, перешёл на Magic
+            // Keyboard 2021 — и назначение осталось без хозяина.
+            bool ejectSet = Actions.Get(_s.EjectKey).Kind != ActionKind.PassThrough;
+            if (KeyWatch.EjectSeen || ejectSet || (fm != null && fm.Eject) || fm == null)
             {
                 var ejGrid = new Grid();
                 ejGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -945,7 +958,16 @@ namespace MagicKeys
                         _s.StartMinimized = v;
                         Save();
                         // Запись автозапуска несёт в себе этот ответ — переписываем её.
-                        if (Autostart.Enabled) Autostart.Set(true, v);
+                        // И спрашиваем, легла ли: настройка сохранится в любом случае,
+                        // а при входе в систему окно выскочит — и объяснить это было
+                        // бы нечем.
+                        if (Autostart.Enabled && !Autostart.Set(true, v))
+                        {
+                            _autostartNotice = "Настройка сохранена, но переписать запись " +
+                                               "автозапуска Windows не дала. При следующем " +
+                                               "входе окно откроется по-старому.";
+                            BuildPage();
+                        }
                     }));
             // Отчёт живёт одну пересборку — ту, которую сам и вызвал.
             if (!String.IsNullOrEmpty(_autostartNotice)) rows.Add(Note(_autostartNotice));
@@ -1250,8 +1272,12 @@ namespace MagicKeys
             lines.Children.Add(Row("Переназначения", null, Combo(when, nowWhen, delegate(object v)
             {
                 string pick = (string)v;
+                // Выключение — ответ на свой вопрос, и чужой ответ оно не трогает.
+                // Иначе «Выключены» молча переводило «На любой клавиатуре» в «Только
+                // с Magic Keyboard», а вернуть переназначения можно из значка в трее —
+                // он трогает только общий выключатель, и подмены никто не заметит.
                 _s.Enabled = pick != "off";
-                _s.PauseWhenAppleAbsent = pick != "always";
+                if (pick != "off") _s.PauseWhenAppleAbsent = pick != "always";
                 // Перестраиваем: предупреждение «правила действуют на весь ввод» нужно
                 // ровно тому, кто только что выбрал «на любой клавиатуре».
                 Save(); BuildPage();
@@ -1917,7 +1943,11 @@ namespace MagicKeys
             ManualResetEvent old = _setupCancel;
             if (old != null) try { old.Close(); } catch { }
             _setupCancel = new ManualResetEvent(false);
-            if (_setupStop != null) _setupStop.Visibility = Visibility.Visible;
+            // Кнопку здесь не показываем: видимость выводится из _setupCancellable,
+            // а он поднимается только вокруг закачки. Показанная сразу, она висела над
+            // поиском пакета и добычей 7-Zip — шагами, которые просьбу об отмене
+            // не читают вовсе, — и щелчок по ней взводил отмену впрок: закачка, начавшись,
+            // тут же возвращала «отменено» из-за нажатия, сделанного минуту назад.
 
             _setupThread = new Thread(delegate()
             {
@@ -2447,16 +2477,21 @@ namespace MagicKeys
                     // Признак занятости снимаем ДО выхода: уйдя со страницы во время
                     // проверки, человек возвращался к вечному «Проверяю…» и мёртвой
                     // кнопке — снять флаг было больше нечем.
+                    // Всё, что должно пережить уход со страницы, ставим ДО выхода:
+                    // ради этого поля и заведены, а стояв ниже, они не писались ровно
+                    // в том случае, для которого нужны.
                     _updBusy = false;
-                    _updFound = found;                // до выхода: иначе найденный
-                    if (_updStatus == null) return;   // выпуск терялся вместе с уходом
+                    _updFound = found;
+                    if (found == null && error != null) _updSaid = error;
+
+                    if (_updStatus == null) return;
                     _updAction.IsEnabled = true;
                     if (found != null)
                     {
                         _updStatus.Text = "Есть новый выпуск " + found.Tag;
                         _updAction.Content = "Обновить";
                     }
-                    else if (error != null) { _updSaid = error; _updStatus.Text = error; }
+                    else if (error != null) _updStatus.Text = error;
                     else
                     {
                         _updStatus.Text = "Установлена последняя версия";
@@ -2487,27 +2522,24 @@ namespace MagicKeys
                 {
                     // Раньше выхода: ушёл со страницы во время «Скачиваю…» — и признак
                     // оставался включённым навсегда, а кнопка мёртвой до перезапуска.
+                    // И всё остальное тоже раньше: предупреждение «установщик подписан
+                    // чужим ключом» приходит именно сюда, а стояв ниже выхода, оно
+                    // пропадало бесследно у всякого, кто ушёл со страницы, — и человеку
+                    // снова предлагали обновиться на тот же поддельный пакет.
                     _updBusy = false;
-                    if (_updStatus == null) return;
-                    _updAction.IsEnabled = true;
-                    if (path == null)
-                    {
-                        _updSaid = error;
-                        _updStatus.Text = error;
-                        _updAction.Content = "Повторить";
-                    }
-                    else if (error != null) { _updSaid = error; _updStatus.Text = error; }
+                    if (path == null || error != null) _updSaid = error;
                     else
                     {
-                        // Выпуск забываем и кнопку гасим: установщик уже запущен, и вторая
-                        // загрузка того же пакета стёрла бы файл, который в этот миг читает
-                        // msiexec. А пересборка страницы иначе снова предложила бы обновиться
-                        // на выпуск, который ставится прямо сейчас.
+                        // Выпуск забываем: установщик уже запущен, и вторая загрузка того же
+                        // пакета стёрла бы файл, который в этот миг читает msiexec.
                         _updFound = null;
                         _updSaid = "Установщик запущен";
-                        _updStatus.Text = _updSaid;
-                        _updAction.IsEnabled = false;
                     }
+
+                    if (_updStatus == null) return;
+                    _updStatus.Text = _updSaid;
+                    _updAction.IsEnabled = _updFound != null;
+                    if (_updFound != null) _updAction.Content = "Повторить";
                 });
             });
         }

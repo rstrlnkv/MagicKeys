@@ -25,7 +25,8 @@ namespace MagicKeys
     {
         private Thread _thread;
         private volatile uint _threadId;
-        private IntPtr _hook;
+        // volatile: пишет поток хука, читает поток окна через Running.
+        private volatile IntPtr _hook;
         private Native.HookProc _proc;
         private Timer _watch;
 
@@ -64,7 +65,6 @@ namespace MagicKeys
         /// Caps Lock можно сразу нескольким, и тогда флаг гас на отпускании первой —
         /// а Windows индикатор уже переключила, и раскладка печатала не тем регистром.
         /// </summary>
-        private readonly HashSet<ModKey> _capsSources = new HashSet<ModKey>();
 
         // Чьё нажатие взял на себя слой аккордов и что по нему сработало: сочетания
         // macOS, ⌘+Tab (значение null — у него своя посылка), ⌘+пробел и промах мимо
@@ -117,6 +117,8 @@ namespace MagicKeys
         /// на всё время переключателя окон, и вопрос «держит ли Windows» отвечал бы «нет»
         /// как раз тогда, когда человек ⌘ держит.
         /// </summary>
+        private bool Means(ModKey a) { return MeansAny(a, a); }
+
         private bool MeansAny(ModKey a, ModKey b)
         {
             Settings s = _cfg;
@@ -156,7 +158,7 @@ namespace MagicKeys
 
         private bool CtrlHeld { get { return MeansAny(ModKey.LCtrl, ModKey.RCtrl); } }
         private bool AltHeld { get { return MeansAny(ModKey.LAlt, ModKey.RAlt); } }
-        private bool AltRightHeld { get { return MeansAny(ModKey.RAlt, ModKey.RAlt); } }
+        private bool AltRightHeld { get { return Means(ModKey.RAlt); } }
 
         /// <summary>
         /// Держит ли человек ⇧ — своей клавишей или переназначенной. Раскладке нужен
@@ -206,7 +208,10 @@ namespace MagicKeys
                 // Потока нет — применяем сами, здесь и сейчас.
                 if (_threadAlive)
                     Diag.Log("настройки применены мимо потока перехвата: сообщение не дошло");
-                else ReleaseEverything();
+                // По новым настройкам, как и на пути через поток: иначе перечёт судит
+                // о зажатом по прежним назначениям. Держать заново не просим — сюда
+                // попадают только до Start и после Stop, и держать станет некому.
+                else ReleaseEverything(shot, false);
                 _cfg = shot;
             }
             // У своего снимка, а не у поля: поле меняет поток хука, и здесь оно ещё
@@ -380,7 +385,7 @@ namespace MagicKeys
                     // осталось зажатым. Воскреснуть с залипшим модификатором — та самая
                     // неисправность, из-за которой клавиатура переставала слушаться.
                     Diag.Log("перехват поставлен заново");
-                    ReleaseEverything();
+                    ReleaseEverything(null, true);
                 }
             }
             catch (Exception e) { Diag.Log("проверка перехвата: сбой", e); }
@@ -453,7 +458,7 @@ namespace MagicKeys
                     // хук. Одновременная запись портит их внутренние цепочки, и в худшем
                     // случае обработчик зацикливается: Windows снимает перехват, а всё
                     // зажатое так и остаётся зажатым.
-                    if (msg.hwnd == IntPtr.Zero && msg.message == WmRelease) { ReleaseEverything(); continue; }
+                    if (msg.hwnd == IntPtr.Zero && msg.message == WmRelease) { ReleaseEverything(null, true); continue; }
                     if (msg.hwnd == IntPtr.Zero && msg.message == WmApply)
                     {
                         // Отпустить старое и взять новое — одним шагом и на своём потоке.
@@ -462,7 +467,7 @@ namespace MagicKeys
                         // под зажатой клавишей, иначе восстанавливался по прежнему,
                         // и снять признак было нечем — отпускание уже не про ту клавишу.
                         Settings shot = _pendingCfg;
-                        ReleaseEverything(shot);
+                        ReleaseEverything(shot, true);
                         if (shot != null) _cfg = shot;
                         continue;
                     }
@@ -568,21 +573,14 @@ namespace MagicKeys
                 // индикатор переключается, а нажатия самого Caps Lock не было.
                 // И только первое нажатие: автоповтор Windows переключателем не считает,
                 // а мы перевернули бы флаг столько раз, сколько пришло повторов.
-                bool toCaps = s.TargetOf(phys) == ModKey.CapsLock;
-                if (toCaps)
-                {
-                    // Переворачиваем, только когда Caps Lock не держала ни одна другая
-                    // клавиша. Вторая клавиша жмёт уже нажатый Caps Lock, а повторное
-                    // нажатие Windows переключателем не считает — лампочка остаётся как
-                    // была, и наш счёт расходился с ней: раскладка Apple печатала
-                    // строчными при горящей лампочке.
-                    if (down)
-                    {
-                        bool first = _capsSources.Count == 0;
-                        if (_capsSources.Add(phys) && first) _capsOn = !_capsOn;
-                    }
-                    else _capsSources.Remove(phys);
-                }
+                // Переворачиваем по тому, держит ли Capital сама Windows, а не по своему
+                // множеству источников. Множество на это не отвечает: настоящая Caps Lock
+                // снимает Capital за всех, сколько бы наших источников его ни «держало», —
+                // и следующее её нажатие переворачивало лампочку, а наш счёт нет. Заодно
+                // это само собой закрывает автоповтор: он приходит, когда Capital уже
+                // держат, и переключателем Windows его не считает.
+                if (down && s.TargetOf(phys) == ModKey.CapsLock && !Held(Vk.Capital))
+                    _capsOn = !_capsOn;
                 return HandleModifier(s, phys, down);
             }
 
@@ -1591,7 +1589,7 @@ namespace MagicKeys
             // зажигает лампочку и разводит наш счёт регистра с Windows; Escape доезжает
             // до приложения настоящим нажатием и закрывает диалог.
             foreach (KeyValuePair<ModKey, int> p in held)
-                if (IsModifierKey(p.Value) && !IsMenuKey(p.Value) && _modsDown.Contains(p.Key))
+                if (IsModifierKey(p.Value) && !IsMenuKey(p.Value))
                     Input.Key(p.Value, true);
         }
 
@@ -1617,13 +1615,18 @@ namespace MagicKeys
         /// то, что реально ушло в Windows: у переназначенной клавиши это не её
         /// собственный код, а код замены.
         /// </summary>
-        private void ReleaseEverything() { ReleaseEverything(null); }
+        private void ReleaseEverything() { ReleaseEverything(null, false); }
 
         /// <param name="after">
         /// Настройки, по которым перечитывать зажатое. Пусто — нынешние. Отличаются они
         /// ровно в одном случае: настройки меняют, пока человек держит модификатор.
         /// </param>
-        private void ReleaseEverything(Settings after)
+        /// <param name="keepHolding">
+        /// Продолжать ли держать за человека то, что он держит. Правда — когда перехват
+        /// живёт дальше: смена настроек, пробуждение, перехват поставлен заново. Ложь —
+        /// когда программа уходит: держать станет некому, а снять потом нечем.
+        /// </param>
+        private void ReleaseEverything(Settings after, bool keepHolding)
         {
             try
             {
@@ -1659,8 +1662,7 @@ namespace MagicKeys
                 _hkl = IntPtr.Zero;
                 _deadPrefix = null;
                 _swallowed.Clear();
-                _capsSources.Clear();
-                _modTaken.Clear();
+
 
                 // Отпускаем то, что держим ЗА человека, а не только модификаторы.
                 // Синтетическая Home от Fn+← — такая же зажатая клавиша, и снять её
@@ -1749,24 +1751,34 @@ namespace MagicKeys
                     // на control, она попадала в множество навсегда — снимают запись
                     // по тому же условию, которое для неё ложно, — и счёт регистра
                     // переставал переворачиваться вовсе.
-                    if (own == Vk.Capital && cur != null && cur.TargetOf(phys) == ModKey.CapsLock)
-                        _capsSources.Add(phys);
                 }
 
-                // Переназначенные клавиши остались в множестве нажатого — и правильно:
-                // человек их держит. Но подставленный код мы отпустили, а _modTaken
-                // очистили, и WindowsHolds для них проваливался в последнюю строку —
-                // отвечал собственным кодом клавиши. Тем кодом, которого Windows
-                // не держит и не держала: нажатие мы забрали себе. Три щита — заменителя
-                // Fn, EmitText и RestoreHeld — по этому ответу не только отпускали
-                // несуществующее, но и ЖАЛИ клавишу обратно: загорался Caps Lock,
-                // а после схемы «Как в Windows» зажимался настоящий Alt.
+                // Множество взятого не стирали: оно и есть правда о том, чьи нажатия
+                // мы забрали себе. Стерев его и восстановив по «переназначена ли клавиша»,
+                // мы записывали себе и то, чего не брали: клавишу, чьё нажатие прошло
+                // мимо разбора (пауза, снятый Windows перехват), — и её отпускание потом
+                // глотали, оставляя настоящий Alt зажатым навсегда.
                 //
-                // Возвращаем их в «нажатие взяли, ничего не послали» — это правда:
-                // Windows за ними сейчас не держит ничего.
-                if (cur != null)
-                    foreach (ModKey phys in _modsDown)
-                        if (cur.TargetOf(phys) != phys) _modTaken.Add(phys);
+                // Здесь только выбрасываем отпущенное: чего человек не держит, того
+                // мы и не брали.
+                foreach (ModKey phys in new List<ModKey>(_modTaken))
+                    if (!_modsDown.Contains(phys)) _modTaken.Remove(phys);
+
+                // И возвращаем то, что держали за него. Подставленный код мы отпустили —
+                // а человек клавишу держит, и вернуть её некому: повторного нажатия
+                // не будет. Без этого Caps Lock в роли control молча переставал работать
+                // до перенажатия: Ctrl+C печатал букву.
+                if (keepHolding && cur != null)
+                    foreach (ModKey phys in _modTaken)
+                    {
+                        int tvk = ModNames.VirtualKey(cur.TargetOf(phys));
+                        // Caps Lock и Escape не возвращаем: первый зажёг бы лампочку
+                        // и развёл наш счёт регистра с Windows, второй доехал бы
+                        // до приложения настоящим нажатием и закрыл диалог.
+                        if (tvk == 0 || !IsModifierKey(tvk) || tvk == Vk.Capital) continue;
+                        Input.Key(tvk, true);
+                        _injected[phys] = tvk;
+                    }
 
                 // И заменитель Fn: он такое же состояние, как множество зажатого, и его
                 // забвение видно сразу. Держа правый ⌥, щёлкнуть галочку в окне — и до

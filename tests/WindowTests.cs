@@ -61,6 +61,11 @@ namespace MagicKeys
             RightOptionSymbols();
             MacRowsInGroups();
             UpdateCardStates();
+            UpdateCardBusy();
+            BrokenSettingsCard();
+            AutostartNotice();
+            StopButtonFollowsCancellable();
+            MarkFollowsBuild();
 
             Console.WriteLine();
             Console.WriteLine("прошло " + _pass + ", провалено " + _fail);
@@ -143,6 +148,147 @@ namespace MagicKeys
             foreach (ComboBox b in combos) Turn(b);
 
             Restore(saved);
+        }
+
+        /// <summary>Есть ли где-нибудь на странице такая надпись.</summary>
+        static bool Says(object node, string part)
+        {
+            var t = node as TextBlock;
+            if (t != null) return t.Text != null && t.Text.IndexOf(part, StringComparison.Ordinal) >= 0;
+            var content = node as ContentControl;
+            if (content != null && Says(content.Content, part)) return true;
+            var panel = node as Panel;
+            if (panel != null) foreach (UIElement c in panel.Children) if (Says(c, part)) return true;
+            var border = node as Border;
+            if (border != null && Says(border.Child, part)) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Пятый вид карточки обновления — работа идёт. Он тоже обязан пережить
+        /// самопроизвольную пересборку, а проверен не был.
+        /// </summary>
+        static void UpdateCardBusy()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== карточка обновления: работа идёт ==");
+            BindingFlags f = BindingFlags.NonPublic | BindingFlags.Instance;
+            Type t = typeof(MainWindow);
+            FieldInfo busy = t.GetField("_updBusy", f);
+            FieldInfo busyText = t.GetField("_updBusyText", f);
+            FieldInfo found = t.GetField("_updFound", f);
+            FieldInfo status = t.GetField("_updStatus", f);
+            FieldInfo action = t.GetField("_updAction", f);
+            MethodInfo about = t.GetMethod("PageAbout", f);
+            if (busy == null || busyText == null || found == null || about == null)
+            { Check("занятость карточки обновления доступна", false, "нет поля или метода"); return; }
+
+            var release = new Updater.Release();
+            release.Tag = "v9.9.9"; release.Version = new Version(9, 9, 9);
+            busy.SetValue(_win, true);
+            busyText.SetValue(_win, "Скачиваю…");
+            found.SetValue(_win, release);
+            try { about.Invoke(_win, null); }
+            catch (Exception e) { Check("страница «О программе» собирается во время работы", false, Inner(e)); return; }
+
+            var box = (TextBlock)status.GetValue(_win);
+            var btn = (Button)action.GetValue(_win);
+            Check("«Скачиваю…» переживает пересборку",
+                  box != null && box.Text == "Скачиваю…",
+                  "показано «" + (box == null ? "ничего" : box.Text) + "»");
+            Check("пока идёт работа, кнопка погашена", btn != null && !btn.IsEnabled, "кнопка жива");
+
+            busy.SetValue(_win, false);
+            found.SetValue(_win, null);
+        }
+
+        /// <summary>Карточка о непрочитанном файле настроек.</summary>
+        static void BrokenSettingsCard()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== непрочитанный файл настроек ==");
+            string was = Settings.LoadFailed;
+            Settings.LoadFailed = "C:" + (char)92 + "проверка" + (char)92 + "settings.xml.bad";
+            MethodInfo m = typeof(MainWindow).GetMethod("PageMacKeys",
+                               BindingFlags.NonPublic | BindingFlags.Instance);
+            try
+            {
+                Check("о непрочитанном файле сказано на первой странице",
+                      Says((UIElement)m.Invoke(_win, null), Settings.LoadFailed),
+                      "карточки нет");
+            }
+            catch (Exception e) { Check("страница с испорченным файлом собирается", false, Inner(e)); }
+            Settings.LoadFailed = was;
+        }
+
+        /// <summary>Отказ автозапуска: настройку пишет не файл, а реестр, и он вправе отказать.</summary>
+        static void AutostartNotice()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== отказ автозапуска ==");
+            BindingFlags f = BindingFlags.NonPublic | BindingFlags.Instance;
+            FieldInfo note = typeof(MainWindow).GetField("_autostartNotice", f);
+            MethodInfo card = typeof(MainWindow).GetMethod("StartupCard", f);
+            if (note == null || card == null) { Check("отказ автозапуска доступен", false, "нет поля или метода"); return; }
+            note.SetValue(_win, "Windows не дала записать автозапуск.");
+            try
+            {
+                Check("отказ автозапуска показан в карточке «Запуск»",
+                      Says((UIElement)card.Invoke(_win, null), "не дала записать"), "карточка молчит");
+            }
+            catch (Exception e) { Check("карточка «Запуск» собирается", false, Inner(e)); }
+            note.SetValue(_win, null);
+        }
+
+        /// <summary>Кнопка «Остановить» показывается только над тем, что правда останавливается.</summary>
+        static void StopButtonFollowsCancellable()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== кнопка «Остановить» ==");
+            BindingFlags f = BindingFlags.NonPublic | BindingFlags.Instance;
+            FieldInfo can = typeof(MainWindow).GetField("_setupCancellable", f);
+            FieldInfo stop = typeof(MainWindow).GetField("_setupStop", f);
+            MethodInfo driver = typeof(MainWindow).GetMethod("PageDriver", f);
+            if (can == null || stop == null || driver == null)
+            { Check("кнопка остановки доступна", false, "нет поля или метода"); return; }
+
+            can.SetValue(_win, false);
+            try { driver.Invoke(_win, null); }
+            catch (Exception e) { Check("страница драйвера собирается", false, Inner(e)); return; }
+            var b = (Button)stop.GetValue(_win);
+            Check("без отменяемого шага «Остановить» спрятана",
+                  b != null && b.Visibility == Visibility.Collapsed, "кнопка показана");
+
+            can.SetValue(_win, true);
+            driver.Invoke(_win, null);
+            b = (Button)stop.GetValue(_win);
+            Check("вокруг закачки «Остановить» показана",
+                  b != null && b.Visibility == Visibility.Visible, "кнопки нет");
+            can.SetValue(_win, false);
+        }
+
+        /// <summary>Отметка о показанном ставится по факту сборки, а не по факту вызова.</summary>
+        static void MarkFollowsBuild()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== отметка о показанном ==");
+            BindingFlags f = BindingFlags.NonPublic | BindingFlags.Instance;
+            FieldInfo building = typeof(MainWindow).GetField("_building", f);
+            FieldInfo mark = typeof(MainWindow).GetField("_deviceMark", f);
+            MethodInfo refresh = typeof(MainWindow).GetMethod("RefreshDevices",
+                                     BindingFlags.Public | BindingFlags.Instance);
+            if (building == null || mark == null || refresh == null)
+            { Check("отметка о показанном доступна", false, "нет поля или метода"); return; }
+
+            mark.SetValue(_win, null);
+            building.SetValue(_win, true);          // будто сборка уже идёт
+            try { refresh.Invoke(_win, null); }
+            finally { building.SetValue(_win, false); }
+            Check("отметка не ставится, пока страница не собралась",
+                  mark.GetValue(_win) == null, "отметка уже стоит");
+
+            refresh.Invoke(_win, null);
+            Check("после сборки отметка ставится", mark.GetValue(_win) != null, "отметки нет");
         }
 
         /// <summary>

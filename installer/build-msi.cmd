@@ -93,12 +93,14 @@ rem подписываемый нашим ключом пакет, приход�
 
 rem Подпись пакета не ловит подмену того, что из него распаковано: пакет лежит
 rem нетронутым, а файлы правит кто угодно с правами того же пользователя. Поэтому
-rem у них закреплены суммы — как отпечаток у сертификата обновления.
+rem у них закреплены суммы — как отпечаток у сертификата обновления. Всё дерево,
+rem а не только корень: подпапки doc, sdk и x86 эта сборка не запускает, но обещание
+rem «набор закреплён» должно быть шире того, что мы сегодня используем.
 if not exist "%HERE%wix.sha256" (
   echo Нет файла с закреплёнными суммами WiX — сборка остановлена.
   exit /b 1
 )
-powershell -NoProfile -Command "$l = @(Get-Content '%HERE%wix.sha256' | Where-Object { $_.Trim() }); if ($l.Count -lt 60) { exit 1 }; $seen=@{}; foreach ($x in $l) { $n,$h = $x -split ' '; $f = Join-Path '%WIX%' $n; if (-not (Test-Path $f)) { exit 1 }; if ((Get-FileHash $f -Algorithm SHA256).Hash -ne $h) { exit 1 }; $seen[$n]=1 }; foreach ($f in Get-ChildItem '%WIX%' -File -Force) { if (-not $seen.ContainsKey($f.Name)) { exit 1 } }; exit 0"
+powershell -NoProfile -Command "$root=(Resolve-Path '%WIX%').Path; $l = @(Get-Content '%HERE%wix.sha256' | Where-Object { $_.Trim() }); if ($l.Count -lt 200) { exit 1 }; $seen=@{}; foreach ($x in $l) { $i = $x.LastIndexOf(' '); $n = $x.Substring(0, $i); $h = $x.Substring($i + 1); $f = Join-Path $root $n; if (-not (Test-Path $f)) { exit 1 }; if ((Get-FileHash $f -Algorithm SHA256).Hash -ne $h) { exit 1 }; $seen[$n]=1 }; foreach ($f in Get-ChildItem $root -File -Force -Recurse) { if (-not $seen.ContainsKey($f.FullName.Substring($root.Length + 1))) { exit 1 } }; exit 0"
 if errorlevel 1 (
   echo Файлы WiX не совпали с закреплёнными суммами — сборка остановлена.
   exit /b 1

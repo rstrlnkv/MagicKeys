@@ -145,14 +145,22 @@ namespace MagicKeys
             }
         }
 
+        /// <summary>
+        /// Угадать исполнение по скан-коду. Под тем же замком, что и забвение:
+        /// иначе догадка ложилась уже после того, как поток окна её стёр, — и ISO
+        /// оставалось угаданным на клавиатуре, у которой этой клавиши нет.
+        /// </summary>
         private static void NoteScan(int scan)
         {
-            if (scan == ScanIsoExtra && _detectedPhys == (int)PhysLayout.Ansi)
-                _detectedPhys = (int)PhysLayout.Iso;
-            else
+            lock (Sync)
             {
-                for (int i = 0; i < JisScans.Length; i++)
-                    if (scan == JisScans[i]) { _detectedPhys = (int)PhysLayout.Jis; break; }
+                if (scan == ScanIsoExtra && _detectedPhys == (int)PhysLayout.Ansi)
+                    _detectedPhys = (int)PhysLayout.Iso;
+                else
+                {
+                    for (int i = 0; i < JisScans.Length; i++)
+                        if (scan == JisScans[i]) { _detectedPhys = (int)PhysLayout.Jis; break; }
+                }
             }
         }
 
@@ -371,7 +379,11 @@ namespace MagicKeys
                 Report(new KeyEvent { Media = true, Code = usage, Fresh = isNew[i] });
 
                 if (usage != Native.UsageEject) continue;
-                if (!_ejectSeen) { _ejectSeen = true; Diag.Log("замечена клавиша ⏏"); }
+                // Под тем же замком, что и забвение: иначе признак ложился уже после
+                // того, как его стёрли, и карточка ⏏ оставалась от прежней клавиатуры.
+                bool first;
+                lock (Sync) { first = !_ejectSeen; _ejectSeen = true; }
+                if (first) Diag.Log("замечена клавиша ⏏");
                 // Как и у Report: упавший подписчик не должен уносить с собой остальные
                 // коды из того же отчёта.
                 try

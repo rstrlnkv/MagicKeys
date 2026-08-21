@@ -228,8 +228,12 @@ namespace MagicKeys
                 // с мака идут в комплекте с клавиатурой чаще, чем поодиночке. Первая
                 // попавшаяся — это заряд неизвестно чего, а называем мы его «заряд
                 // клавиатуры». Запоминаем все и выберем ту, что от нашей клавиатуры.
-                statusPaths.Add(new KeyValuePair<int, string>(
-                    (int)hi.hid.dwProductId, DeviceName(list[i].hDevice)));
+                // Пустой путь не кладём: он не годится ни для совпадения по изделию,
+                // ни запасным ответом — а попав в список, увёл бы выбор на первую
+                // попавшуюся коллекцию, то есть на мышь.
+                string collection = DeviceName(list[i].hDevice);
+                if (!String.IsNullOrEmpty(collection))
+                    statusPaths.Add(new KeyValuePair<int, string>((int)hi.hid.dwProductId, collection));
             }
             for (int i = 0; i < count; i++)
             {

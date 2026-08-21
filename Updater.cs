@@ -103,6 +103,12 @@ namespace MagicKeys
                     Release r = Read(item);
                     if (r == null) continue;
                     if (Truthy(item, "draft")) continue;
+                    // Выпуск без приложенного установщика ставить нечем. Прежде такой
+                    // побеждал по версии, окно предлагало обновиться, а «Обновить»
+                    // отвечало «к этому выпуску не приложен установщик» — и кнопка
+                    // «Повторить» давала бы тот же ответ вечно, хотя предыдущий выпуск
+                    // с установщиком существует и достижим.
+                    if (String.IsNullOrEmpty(r.FileUrl)) continue;
                     // На канале Stable ранние сборки не предлагаем.
                     if (r.Early && channel != Settings.ChannelDev) continue;
                     if (best == null || r.Version > best.Version) best = r;
@@ -113,7 +119,15 @@ namespace MagicKeys
                 // и тут же звала Save(): два потока писали один и тот же временный файл,
                 // и настройки, тронутые в этот миг, молча пропадали.
                 Checked = true;
-                if (best == null) { error = "выпусков пока нет"; return null; }
+                if (best == null)
+                {
+                    // На Stable ранние сборки отброшены выше — сказать «выпусков нет вовсе»
+                    // значило бы соврать человеку, у которого на Dev они есть.
+                    error = channel == Settings.ChannelDev
+                        ? "выпусков пока нет"
+                        : "на канале Stable выпусков ещё нет";
+                    return null;
+                }
                 return best.Version > Current ? best : null;
             }
             catch (WebException ex)

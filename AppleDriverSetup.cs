@@ -9,7 +9,6 @@ using System.IO;
 using System.Net;
 using System.Text;
 using System.Runtime.InteropServices;
-using System.Security.Cryptography.X509Certificates;
 using System.Text.RegularExpressions;
 using System.Threading;
 using Microsoft.Win32;
@@ -107,20 +106,29 @@ namespace MagicKeys
                 // чужой установщик может любая программа этого же пользователя.
                 string msi = Path.Combine(CacheFolder, "7zip.msi");
                 report(0, "скачиваю 7-Zip…");
-                // Не держимся сайта: у установщика 7-Zip своя подпись, свой подписант
-                // и корень из машинного хранилища — три проверки, каждой из которых
-                // хватило бы и без этой.
+                // Не держимся сайта: у пакета закреплена сумма, и она строже любого
+                // требования к адресу.
                 if (!Download(SevenZipMsi, msi, report, null, false, out error)) return null;
 
-                // Перед msiexec проверяем подпись: административная установка исполняет
+                // Перед msiexec сверяем сумму: административная установка исполняет
                 // последовательность действий из самого пакета, то есть чужой MSI здесь
                 // не данные, а программа.
-                // Мало убедиться, что подпись действительна: доверенным считается и корень,
-                // добавленный в хранилище текущего пользователя, а туда пишут без прав
-                // администратора. То есть тот самый противник, ради которого проверка и
-                // делается, подписал бы подделку сам. Поэтому сверяем и подписанта.
+                //
+                // Суммой, а не подписью. ЗАМЕРЕНО: официальный 7z2501-x64.msi подписи
+                // Authenticode не имеет вовсе — ни потока DigitalSignature, ни цепочки;
+                // автор 7-Zip не подписывает свои сборки принципиально. Требование
+                // подписи здесь означало отказ ВСЕГДА: добыча 7-Zip не могла сработать
+                // ни разу, а человек читал «установщик 7-Zip не подписан — запускать
+                // его нельзя» и оставался без драйвера. Контрольный опыт при замере
+                // тоже сделан: тот же вызов на собственном пакете MagicKeys подпись
+                // читает, так что дело не в средстве.
+                //
+                // Закреплённая сумма при этом не слабее: она называет ровно один файл,
+                // а не «кого-то, кому доверяет эта машина». Меняется вместе со ссылкой
+                // на установщик — и только вместе с ней.
+                //
                 // Держим файл открытым от проверки до самого msiexec: иначе между
-                // «подпись верна» и «пакет запущен» лежит окно, в которое подставляется
+                // «сумма сошлась» и «пакет запущен» лежит окно, в которое подставляется
                 // другой файл. Папка своя, но писать в неё может любой процесс этого же
                 // пользователя — а проверка, которую можно обойти подменой, не проверка.
                 using (FileStream keep = Open(msi))
@@ -131,22 +139,17 @@ namespace MagicKeys
                         return null;
                     }
 
-                string signer;
-                if (!SignatureValid(msi, out signer) || !SignedBy7Zip(signer) || !RootedInMachineStore(msi))
+                string now = HashOf(keep);
+                if (!String.Equals(now, SevenZipMsiSha256, StringComparison.OrdinalIgnoreCase))
                 {
-                    // Причин три, и называть надо ту, что случилась: раньше при несошедшейся
-                    // цепочке человек читал «подписан не тем, кем должен (Igor Pavlov)» —
-                    // прямую неправду, отправлявшую искать несуществующую подмену.
-                    error = signer == null
-                        ? "установщик 7-Zip не подписан — запускать его нельзя"
-                        : !SignedBy7Zip(signer)
-                            ? "установщик 7-Zip подписан не тем, кем должен (" + signer + ") — запускать его нельзя"
-                            : "подпись установщика 7-Zip не проверилась до конца — запускать его нельзя";
+                    Diag.Log("установщик 7-Zip не тот, что закреплён: " + now);
+                    error = "скачанный установщик 7-Zip не совпал с закреплённой суммой — " +
+                            "запускать его нельзя";
                     try { File.Delete(msi); } catch { }
                     try { File.Delete(StatePath(msi)); } catch { }
                     return null;
                 }
-                report(0.85, "подпись установщика в порядке: " + signer);
+                report(0.85, "сумма установщика сошлась");
 
                 string target = Path.Combine(ToolsFolder, "7zip");
                 report(0.9, "разворачиваю 7-Zip…");
@@ -199,140 +202,6 @@ namespace MagicKeys
         {
             try { return new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read); }
             catch { return null; }
-        }
-
-        /// <summary>
-        /// Подписан ли файл действительной подписью Authenticode. Проверяется именно то,
-        /// что нужно: не «лежит ли внутри сертификат», а сходится ли подпись с содержимым
-        /// файла и доверяет ли Windows цепочке.
-        ///
-        /// Это единственная настоящая проверка того, что скачанное — то самое. Сумма
-        /// SHA-256 рядом с файлом ловит порчу и чужие остатки, но не злой умысел: кто
-        /// может подменить файл, тот перепишет и запись о нём.
-        ///
-        /// Оговорка: проверяется подпись внутри файла. У многих файлов самой Windows её
-        /// нет — они подписаны каталогом, — и для них ответ будет «нет». Нам это подходит:
-        /// мы проверяем скачанное, а такие файлы подписывают именно внутри.
-        /// </summary>
-        public static bool SignatureValid(string path, out string signer)
-        {
-            signer = null;
-            IntPtr pFile = IntPtr.Zero, pData = IntPtr.Zero;
-            try
-            {
-                var fi = new Native.WINTRUST_FILE_INFO();
-                fi.cbStruct = (uint)Marshal.SizeOf(typeof(Native.WINTRUST_FILE_INFO));
-                fi.pcwszFilePath = path;
-                pFile = Marshal.AllocHGlobal((int)fi.cbStruct);
-                Marshal.StructureToPtr(fi, pFile, false);
-
-                var wd = new Native.WINTRUST_DATA();
-                wd.cbStruct = (uint)Marshal.SizeOf(typeof(Native.WINTRUST_DATA));
-                wd.dwUIChoice = Native.WTD_UI_NONE;
-                wd.fdwRevocationChecks = Native.WTD_REVOKE_NONE;
-                wd.dwUnionChoice = Native.WTD_CHOICE_FILE;
-                wd.pFile = pFile;
-                wd.dwStateAction = Native.WTD_STATEACTION_VERIFY;
-                wd.dwProvFlags = Native.WTD_SAFER_FLAG;
-                pData = Marshal.AllocHGlobal((int)wd.cbStruct);
-                Marshal.StructureToPtr(wd, pData, false);
-
-                Guid action = Native.WINTRUST_ACTION_GENERIC_VERIFY_V2;
-                int rc = Native.WinVerifyTrust(IntPtr.Zero, ref action, pData);
-                if (rc != 0) return false;
-
-                try
-                {
-                    var cert = new System.Security.Cryptography.X509Certificates.X509Certificate2(
-                        System.Security.Cryptography.X509Certificates.X509Certificate.CreateFromSignedFile(path));
-                    signer = cert.GetNameInfo(
-                        System.Security.Cryptography.X509Certificates.X509NameType.SimpleName, false);
-                }
-                catch { }
-                return true;
-            }
-            catch (Exception e) { Diag.Log("проверка подписи: сбой", e); return false; }
-            finally
-            {
-                // Состояние wintrust закрываем здесь, а не в общем ходу: исключение между
-                // проверкой и закрытием оставило бы его висеть до конца работы программы.
-                if (pData != IntPtr.Zero)
-                {
-                    try
-                    {
-                        var close = (Native.WINTRUST_DATA)Marshal.PtrToStructure(pData, typeof(Native.WINTRUST_DATA));
-                        if (close.dwStateAction == Native.WTD_STATEACTION_VERIFY)
-                        {
-                            close.dwStateAction = Native.WTD_STATEACTION_CLOSE;
-                            Marshal.StructureToPtr(close, pData, false);
-                            Guid a = Native.WINTRUST_ACTION_GENERIC_VERIFY_V2;
-                            Native.WinVerifyTrust(IntPtr.Zero, ref a, pData);
-                        }
-                    }
-                    catch { }
-                    Marshal.FreeHGlobal(pData);
-                }
-                if (pFile != IntPtr.Zero)
-                {
-                    // FreeHGlobal освобождает блок структуры, но не буфер, который
-                    // маршалинг выделил под строку пути. Без DestroyStructure он течёт.
-                    try { Marshal.DestroyStructure(pFile, typeof(Native.WINTRUST_FILE_INFO)); } catch { }
-                    Marshal.FreeHGlobal(pFile);
-                }
-            }
-        }
-
-        // Кем подписан официальный установщик 7-Zip. Проверка не строгая по регистру
-        // и по написанию организации: у Igor Pavlov сертификат менялся, менялась и
-        // форма записи, а вот имя оставалось.
-        private const string SevenZipSigner = "Igor Pavlov";
-
-        private static bool SignedBy7Zip(string signer)
-        {
-            return !String.IsNullOrEmpty(signer)
-                && signer.IndexOf(SevenZipSigner, StringComparison.OrdinalIgnoreCase) >= 0;
-        }
-
-        /// <summary>
-        /// Ведёт ли подпись к корню из МАШИННОГО хранилища.
-        ///
-        /// Без этой проверки предыдущая ничего не стоит. Доверенным Windows считает
-        /// и корень, добавленный в хранилище текущего пользователя, а туда пишут без прав
-        /// администратора — то есть тот самый противник, ради которого проверка и делается,
-        /// выпускает себе сертификат с любым именем, хоть «Igor Pavlov», и обе проверки
-        /// проходит. В машинное хранилище без прав администратора не записать, а если
-        /// они у него уже есть, защищать нечего.
-        /// </summary>
-        private static bool RootedInMachineStore(string path)
-        {
-            try
-            {
-                using (var leaf = new X509Certificate2(X509Certificate.CreateFromSignedFile(path)))
-                {
-                    var chain = new X509Chain();
-                    try
-                    {
-                        chain.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
-                        if (!chain.Build(leaf)) return false;
-                        if (chain.ChainElements.Count == 0) return false;
-                        string rootThumb = chain.ChainElements[chain.ChainElements.Count - 1].Certificate.Thumbprint;
-
-                        var store = new X509Store(StoreName.Root, StoreLocation.LocalMachine);
-                        try
-                        {
-                            store.Open(OpenFlags.ReadOnly);
-                            return store.Certificates.Find(X509FindType.FindByThumbprint, rootThumb, false).Count > 0;
-                        }
-                        finally { store.Close(); }
-                    }
-                    finally { chain.Reset(); }
-                }
-            }
-            catch (Exception e)
-            {
-                Diag.Log("не удалось выяснить корень подписи", e);
-                return false;
-            }
         }
 
         /// <summary>Сколько места занято скачанным и распакованным.</summary>
@@ -610,11 +479,7 @@ namespace MagicKeys
         }
 
         // ------------------------------------------------------------------
-        //  Скачивание с продолжением
-        // ------------------------------------------------------------------
-
-        // ------------------------------------------------------------------
-        //  Чему верить в уже скачанном
+        //  Скачивание с продолжением: чему верить в уже скачанном
         // ------------------------------------------------------------------
         //
         // Совпадения длины мало. Файл лежит там, куда пишет любая программа, запущенная
@@ -876,9 +741,10 @@ namespace MagicKeys
         {
             error = null;
 
-            // Проверяем перед КАЖДЫМ запуском — но суммой, а не подписью. Замерено:
-            // сам 7z.exe подписи Authenticode не имеет вовсе, её носит только установщик.
-            // Требовать её значило бы отказывать всегда и убить добычу драйвера целиком.
+            // Проверяем перед КАЖДЫМ запуском — суммой. Замерено: подписи Authenticode
+            // нет ни у 7z.exe, ни у самого установщика: автор 7-Zip не подписывает свои
+            // сборки принципиально. Требовать её значило бы отказывать всегда и убить
+            // добычу драйвера целиком.
             //
             // Своя копия лежит в папке пользователя, писать в неё может любой его процесс,
             // и подложенный туда файл обходил проверку скачанного: FetchSevenZip до неё
@@ -909,6 +775,18 @@ namespace MagicKeys
                 return Run7zHeld(sevenZip, args, out error);
             }
         }
+
+        /// <summary>
+        /// Сумма самого 7z2501-x64.msi — того, что скачивает FetchSevenZip.
+        ///
+        /// Замерено на файле, скачанном этой же программой; из него развернулись
+        /// ровно те 7z.exe и 7z.dll, чьи суммы закреплены ниже, — то есть цепочка
+        /// «пакет → двоичные файлы» сходится сама с собой.
+        ///
+        /// Меняется вместе со ссылкой на установщик — и только вместе с ней.
+        /// </summary>
+        private const string SevenZipMsiSha256 =
+            "e7eb0b7ed5efa4e087b7b17f191797f7af5b7f442d1290c66f3a21777005ef57";
 
         /// <summary>
         /// Сумма 7z.exe из официального 7z2501-x64.msi — того самого, что скачивает

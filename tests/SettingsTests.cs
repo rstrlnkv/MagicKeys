@@ -18,7 +18,7 @@ namespace MagicKeys
         const int VkNoop = 0xE8;
 
         static Engine _eng;
-        static MethodInfo _handle, _release;
+        static MethodInfo _handle, _release, _releaseKeep;
         static readonly List<string> _log = new List<string>();
         static int _pass, _fail;
         static readonly List<string> _fails = new List<string>();
@@ -36,7 +36,14 @@ namespace MagicKeys
             _release = typeof(Engine).GetMethod("ReleaseEverything",
                            BindingFlags.NonPublic | BindingFlags.Instance,
                            null, Type.EmptyTypes, null);
-            if (_handle == null || _release == null) { Console.WriteLine("нет Handle/ReleaseEverything"); return 2; }
+            // Вторая перегрузка — та, что умеет держать дальше. Без неё весь этот код
+            // стенд не выполнял ни разу: и Use, и Apply на стенде идут запасным путём,
+            // а он держать не просит.
+            _releaseKeep = typeof(Engine).GetMethod("ReleaseEverything",
+                               BindingFlags.NonPublic | BindingFlags.Instance,
+                               null, new Type[] { typeof(Settings), typeof(bool) }, null);
+            if (_handle == null || _release == null || _releaseKeep == null)
+            { Console.WriteLine("нет Handle/ReleaseEverything"); return 2; }
 
             Enabled();
             PauseWhenAppleAbsent();
@@ -1014,6 +1021,71 @@ namespace MagicKeys
                   !ModsDown().Contains(ModKey.LCtrl),
                   "control остался зажатым навсегда: раскладка Apple молчит, ⌘C не узнаётся");
             Up(Vk.Capital); Clear();
+
+            // Сброс со сменой настроек возвращает подставленный control под зажатую
+            // клавишу — иначе Caps Lock в роли control молча перестаёт работать
+            // до перенажатия.
+            s = Fresh();
+            s.MapCapsLock = ModKey.LCtrl;
+            Use(s);
+            Down(Vk.Capital);
+            Clear();
+            _releaseKeep.Invoke(_eng, new object[] { s, true });
+            Check("сброс со сменой настроек возвращает подставленный control",
+                  Sent().IndexOf(N(Vk.LControl) + "v") >= 0, Sent());
+            Clear();
+            Up(Vk.Capital); Clear();
+
+            // А Win и Alt не возвращает: между нашим нажатием и настоящим отпусканием
+            // человеком не происходит ничего, и Windows принимает это за одиночную
+            // клавишу — «Пуск» поверх работы.
+            s = Fresh();
+            s.MapCapsLock = ModKey.LWin;
+            Use(s);
+            Down(Vk.Capital);
+            Clear();
+            _releaseKeep.Invoke(_eng, new object[] { s, true });
+            Check("сброс не возвращает Win: одиночная Win открыла бы «Пуск»",
+                  Sent().IndexOf(N(Vk.LWin) + "v") < 0, Sent());
+            Clear();
+            Up(Vk.Capital); Clear();
+
+            // И не возвращает вовсе, если новые настройки эту клавишу уже не разбирают:
+            // отпускание отсечётся раньше всего, и код останется зажатым навсегда.
+            s = Fresh();
+            s.MapCapsLock = ModKey.LCtrl;
+            Use(s);
+            Down(Vk.Capital);
+            Clear();
+            Settings off = Fresh();
+            off.MapCapsLock = ModKey.LCtrl;
+            off.Enabled = false;
+            _releaseKeep.Invoke(_eng, new object[] { off, true });
+            Check("выключенные переназначения не оставляют control нажатым",
+                  Sent().IndexOf(N(Vk.LControl) + "v") < 0, Sent());
+            Clear();
+            _eng.Apply(Fresh());
+            Up(Vk.Capital); Clear();
+
+            // Аккорд поверх начатой навигации не возвращает снятый заменителем control:
+            // следующая стрелка ушла бы Ctrl+Page Up, то есть на соседнюю вкладку.
+            s = Fresh();
+            s.FnSubstitute = ModKey.CapsLock;
+            s.MapCapsLock = ModKey.LCtrl;
+            s.FnNavigation = true;
+            // «сначала F-клавиши»: с зажатым заменителем ветка переворачивается в медиа,
+            // и назначенное действие правда срабатывает.
+            s.MediaFirst = false;
+            s.FKeys[2] = "sys.taskview";   // готовый аккорд: он и ходит через ClearHeld
+            Use(s);
+            Down(Vk.Capital);
+            Down(Vk.Up);                 // навигация началась, control снят с дороги
+            Clear();
+            Down(Vk.F1 + 2); Up(Vk.F1 + 2);
+            Check("аккорд не возвращает control поверх начатой навигации",
+                  Sent().IndexOf(N(Vk.LControl) + "v") < 0, Sent());
+            Clear();
+            Up(Vk.Up); Up(Vk.Capital); Clear();
 
             // Признак призрачного Ctrl снимается только его же отпусканием, а оно приходит
             // мимо разбора, когда переназначения выключены. Оставшись стоять, он заставлял

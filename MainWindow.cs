@@ -404,29 +404,16 @@ namespace MagicKeys
                     : _s.FnSubstitute == ModKey.None
                         ? "Пока заменителя нет, нажать эти сочетания нечем: настоящая Fn " +
                           "до Windows не доходит."
-                    // По назначению, а не по надписи. Таблица macOS узнаёт ⌥ так же —
-                    // перебором зажатых клавиш с вопросом «во что она превращается», —
-                    // и ошибались мы в обе стороны: отключив обычное значение правого ⌥
-                    // (о чём сама же сноска ниже и просит), человек получал работающие
-                    // Fn+←→ и утверждение, что они отобраны; а выбрав заменителем клавишу,
-                    // которая после схемы «Как в Windows» стала левым Alt, — наоборот.
-                    // И поимённое выключение: перехват спрашивает MacEnabled у каждой
-                    // строки, а выключенное пропускает дальше — в навигацию Fn. Выключив
-                    // группу «Текст», человек читал, что Fn+←→ у него отобраны, при том
-                    // что они как раз работают.
-                    // Все три, а не одно: таблица перехватывает ⌥←, ⌥→ и ⌥Backspace,
-                    // и выключение одной строки не возвращает остальные.
-                    : _s.MacShortcuts && FnSubstituteIsOption
-                      && (_s.MacEnabled("wordleft") || _s.MacEnabled("wordright")
-                          || _s.MacEnabled("delword"))
-                        ? "Fn+↑↓ листают страницу, Fn+Enter — это Insert. Fn+←→ и Fn+Backspace " +
-                          "достаются сочетаниям macOS: там ⌥ ходит по словам, а начало и конец " +
-                          "строки — на ⌘←→."
-                        : "Fn+↑↓ листают страницу, Fn+←→ уводят в начало и конец строки, " +
-                          "Fn+Backspace удаляет вперёд, Fn+Enter — это Insert."),
+                    : FnNavigationNote()),
                 Note(YieldingNow
                     ? "Сейчас верхним рядом занимается драйвер Apple: с ним работает настоящая Fn, " +
-                      "и заменитель не нужен."
+                      "и для верхнего ряда заменитель не нужен." +
+                      // Навигация Fn про уступку ряда не спрашивает вовсе и держится
+                      // на заменителе: сказать «не нужен» вообще значило бы отобрать
+                      // сочетания, которые сноска выше только что пообещала.
+                      (_s.FnNavigation
+                        ? " Для Fn со стрелками он по-прежнему нужен, пока навигация включена."
+                        : "")
                     : _s.FnSubstitute == ModKey.None
                     ? "Magic Keyboard не отправляет Fn в Windows — её обрабатывает сама " +
                       "клавиатура. Поэтому и нужна замена: выберите клавишу выше."
@@ -480,6 +467,10 @@ namespace MagicKeys
                 int index = i;
                 var box = ActionCombo(_s.FKey(i), delegate(string id) { _s.FKeys[index] = id; Save(); });
                 box.Margin = new Thickness(0, 4, 0, 4);
+                // Пока драйвер занимается верхним рядом, эти строки ни на что не влияют —
+                // карточка сверху так и говорит, а списки при этом щёлкали и сохранялись.
+                // Ровно первые двенадцать: F13 и дальше драйвер не трогает.
+                if (YieldingNow && i < 12) box.IsEnabled = false;
                 Grid.SetRow(box, i); Grid.SetColumn(box, 2);
 
                 table.Children.Add(cap);
@@ -678,7 +669,15 @@ namespace MagicKeys
             };
 
             bool asFn = _s.FnSubstitute == ModKey.RAlt;
-            bool asSym = _s.OptLevel != OptLevel.Off;
+            // По назначению, а не по одному полю. OptLevel живёт по правилу «третий
+            // уровень даёт любая клавиша, приходящая как ⌥», и состояние «третий уровень
+            // включён, а правый ⌥ приходит клавишей Windows» законно — из файла
+            // от прежней версии оно и приходит. Карточка при этом объявляла роль
+            // «символы» и прятала единственную строку, по которой это видно.
+            bool rightIsOption = _s.TargetOf(ModKey.RAlt) == ModKey.RAlt
+                              || (_s.OptLevel == OptLevel.AnyOption
+                                  && _s.TargetOf(ModKey.RAlt) == ModKey.LAlt);
+            bool asSym = _s.OptLevel != OptLevel.Off && rightIsOption;
             string now = asFn ? "fn" : (asSym ? "symbols" : "plain");
             string comes = ModNames.Of(_s.MapRAlt);
 
@@ -963,9 +962,12 @@ namespace MagicKeys
                         // бы нечем.
                         if (Autostart.Enabled && !Autostart.Set(true, v))
                         {
-                            _autostartNotice = "Настройка сохранена, но переписать запись " +
-                                               "автозапуска Windows не дала. При следующем " +
-                                               "входе окно откроется по-старому.";
+                            // Не «окно откроется по-старому»: прячется оно от самой
+                            // настройки, а «--tray» в записи автозапуска — только ремень
+                            // на случай, если файл настроек не прочитается.
+                            _autostartNotice = "Настройка сохранена. Переписать запись " +
+                                               "автозапуска Windows не дала — на поведение " +
+                                               "это не влияет, пока цел файл настроек.";
                             BuildPage();
                         }
                     }));
@@ -1080,6 +1082,40 @@ namespace MagicKeys
         private TextBlock _selfTestLog;
         private StackPanel _selfTestChecks;
         private readonly List<string> _selfTestLines = new List<string>();
+
+        /// <summary>
+        /// Что из навигации Fn работает прямо сейчас — перечислением, а не одной фразой
+        /// на три состояния.
+        ///
+        /// Таблица macOS отбирает у навигации три сочетания, и отбирает по одному:
+        /// перехват спрашивает MacEnabled у каждой строки, а выключенную пропускает
+        /// дальше. Прежде сноска отвечала на все три состояния одинаково и потому врала
+        /// в двух из них — то обещая отобранное, то отбирая работающее.
+        ///
+        /// И узнаёт ⌥ она по назначению клавиши, а не по её надписи: так же, как таблица.
+        /// </summary>
+        private string FnNavigationNote()
+        {
+            bool table = _s.MacShortcuts && FnSubstituteIsOption;
+            bool arrows = table && (_s.MacEnabled("wordleft") || _s.MacEnabled("wordright"));
+            bool back = table && _s.MacEnabled("delword");
+
+            var mine = new List<string>();
+            mine.Add("Fn+↑↓ листают страницу");
+            if (!arrows) mine.Add("Fn+←→ уводят в начало и конец строки");
+            if (!back) mine.Add("Fn+Backspace удаляет вперёд");
+            mine.Add("Fn+Enter — это Insert");
+
+            string said = String.Join(", ", mine.ToArray()) + ".";
+            if (!arrows && !back) return said;
+
+            var taken = new List<string>();
+            if (arrows) taken.Add("Fn+←→");
+            if (back) taken.Add("Fn+Backspace");
+            return said + " " + String.Join(" и ", taken.ToArray()) +
+                   (taken.Count > 1 ? " достаются" : " достаётся") +
+                   " сочетаниям macOS: там ⌥ ходит по словам, а начало и конец строки — на ⌘←→.";
+        }
 
         /// <summary>Приходит ли клавиша-заменитель Fn в Windows как ⌥ — левый или правый.</summary>
         private bool FnSubstituteIsOption
@@ -1905,6 +1941,31 @@ namespace MagicKeys
         /// </summary>
         private volatile string _driverText;
 
+        /// <summary>
+        /// Работа с драйвером кончилась: кнопки обязаны ожить сами.
+        ///
+        /// Поток обнуляем здесь, а не полагаемся на «жив ли он»: мы внутри него, и до
+        /// самого выхода он жив. Из-за этого последняя пересборка страницы всегда
+        /// приходилась на «идёт работа», и кнопки оставались серыми до тех пор, пока
+        /// страницу не пересоберёт что-то постороннее — уход на другую страницу
+        /// и возврат. Нажать «Остановить» и остаться без единой живой кнопки было
+        /// обычным делом.
+        /// </summary>
+        private void SetupFinished()
+        {
+            _setupThread = null;
+            _setupCancellable = false;
+            ToWindow(delegate
+            {
+                if (_setupStop != null)
+                {
+                    _setupStop.Visibility = Visibility.Collapsed;
+                    _setupStop.IsEnabled = true;
+                }
+                if (CurrentPage == "driver") BuildPage();
+            });
+        }
+
         private bool SetupBusy
         {
             get { return _driverBusy || (_setupThread != null && _setupThread.IsAlive); }
@@ -2059,17 +2120,7 @@ namespace MagicKeys
                              "Можно скачать пакет Boot Camp самостоятельно и указать " +
                              "распакованную папку кнопкой выше.");
                 }
-                finally
-                {
-                    // Кончили — убираем кнопку остановки. Отдельный сторож на пуле
-                    // потоков для этого не нужен: поток сам знает, когда он кончил.
-                    ToWindow(delegate
-                    {
-                        if (_setupStop == null) return;
-                        _setupStop.Visibility = Visibility.Collapsed;
-                        _setupStop.IsEnabled = true;
-                    });
-                }
+                finally { SetupFinished(); }
             });
             _setupThread.IsBackground = true;
             _setupThread.Start();

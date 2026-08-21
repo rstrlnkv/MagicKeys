@@ -45,6 +45,9 @@ namespace MagicKeys
             "keymagic2.inf", "keymagic64.inf", "keymagic.inf", "keymanager.inf"
         };
 
+        /// <summary>Имена .inf драйвера Apple — их же ищет ключ устройства в реестре.</summary>
+        public static string[] WantedInfNames { get { return (string[])WantedInf.Clone(); } }
+
         public static string CacheFolder
         {
             get

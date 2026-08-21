@@ -74,6 +74,9 @@ namespace MagicKeys
             FnNoteChecksBothArrows();
             PhysNoteFollowsChoice();
             OffMeansOff();
+            ChannelButtons();
+            FnNoteAboveTwelve();
+            PhysNoteAnsiIsNotDetected();
 
             Console.WriteLine();
             Console.WriteLine("прошло " + _pass + ", провалено " + _fail);
@@ -156,6 +159,147 @@ namespace MagicKeys
             foreach (ComboBox b in combos) Turn(b);
 
             Restore(saved);
+        }
+
+        /// <summary>
+        /// Кнопки канала обновлений живут по общему признаку занятости, а не по тому,
+        /// в каком состоянии их застала последняя сборка страницы.
+        /// </summary>
+        static void ChannelButtons()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== кнопки канала обновлений ==");
+            BindingFlags f = BindingFlags.NonPublic | BindingFlags.Instance;
+            Type t = typeof(MainWindow);
+            FieldInfo busy = t.GetField("_updBusy", f);
+            FieldInfo dev = t.GetField("_updDev", f);
+            FieldInfo stable = t.GetField("_updStable", f);
+            MethodInfo about = t.GetMethod("PageAbout", f);
+            MethodInfo show = t.GetMethod("ShowBusy", f);
+            if (busy == null || dev == null || stable == null || about == null || show == null)
+            { Check("кнопки канала доступны", false, "нет поля или метода"); return; }
+
+            Settings saved = _s.Snapshot();
+            try
+            {
+                _s.UpdateChannel = Settings.ChannelStable;
+                busy.SetValue(_win, false);
+                about.Invoke(_win, null);
+
+                Button d = (Button)dev.GetValue(_win);
+                d.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Check("«Dev» правда переводит канал",
+                      _s.UpdateChannel == Settings.ChannelDev, "канал " + _s.UpdateChannel);
+
+                Button st = (Button)stable.GetValue(_win);
+                st.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Check("«Stable» правда возвращает канал",
+                      _s.UpdateChannel == Settings.ChannelStable, "канал " + _s.UpdateChannel);
+
+                // Проверка началась после того, как страницу собрали: гасить кнопки
+                // некому, кроме общего признака занятости.
+                busy.SetValue(_win, true);
+                show.Invoke(_win, null);
+                Check("начатая проверка гасит кнопки канала",
+                      !((Button)dev.GetValue(_win)).IsEnabled &&
+                      !((Button)stable.GetValue(_win)).IsEnabled,
+                      "остались живыми, а щелчок по ним молча ничего не делает");
+
+                // И кончилась — тоже без пересборки: на спокойной машине её можно
+                // ждать очень долго, а канал всё это время не переключить.
+                busy.SetValue(_win, false);
+                show.Invoke(_win, null);
+                Check("кончившаяся проверка возвращает кнопки канала",
+                      ((Button)dev.GetValue(_win)).IsEnabled &&
+                      ((Button)stable.GetValue(_win)).IsEnabled,
+                      "остались серыми — переключить канал нечем");
+            }
+            catch (Exception e) { Check("страница «О программе» собирается", false, Inner(e)); }
+            finally { busy.SetValue(_win, false); Restore(saved); }
+        }
+
+        /// <summary>
+        /// Две сноски о заменителе Fn стоят одна под другой и обязаны сойтись:
+        /// одна советует выбрать заменитель ради F13 и дальше, вторая говорила,
+        /// что для верхнего ряда он не нужен.
+        /// </summary>
+        static void FnNoteAboveTwelve()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== заменитель Fn при уступленном ряде ==");
+            BindingFlags f = BindingFlags.NonPublic | BindingFlags.Static;
+            FieldInfo takes = typeof(AppleDriver).GetField("_takesRow", f);
+            FieldInfo media = typeof(KeyWatch).GetField("_mediaSeen", f);
+            FieldInfo maxF = typeof(KeyWatch).GetField("_maxFunctionKey", f);
+            if (takes == null || media == null || maxF == null)
+            { Check("состояние драйвера доступно", false, "нет поля"); return; }
+
+            object wasT = takes.GetValue(null), wasM = media.GetValue(null), wasX = maxF.GetValue(null);
+            Settings saved = _s.Snapshot();
+            MethodInfo m = typeof(MainWindow).GetMethod("PageKeys",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            try
+            {
+                takes.SetValue(null, true); media.SetValue(null, true);
+                _s.MediaFirst = false; _s.FnSubstitute = ModKey.None; _s.FnNavigation = false;
+
+                maxF.SetValue(null, 19);
+                _eng.Apply(_s);
+                UIElement big = (UIElement)m.Invoke(_win, null);
+                Check("с клавишами выше двенадцатой сказано, что заменитель нужен",
+                      Says(big, "Для F13 и дальше он нужен"), "не сказано");
+                Check("и «не нужен» сказано про F1–F12, а не про весь ряд",
+                      !Says(big, "для верхнего ряда заменитель не нужен"),
+                      "отменяет карточку выше, которая советует его выбрать");
+
+                // Контрольный опыт: ровно двенадцать клавиш — и говорить о F13 нечего.
+                maxF.SetValue(null, 12);
+                _eng.Apply(_s);
+                Check("контроль: без клавиш выше двенадцатой про F13 не говорят",
+                      !Says((UIElement)m.Invoke(_win, null), "Для F13 и дальше он нужен"),
+                      "говорят");
+            }
+            catch (Exception e) { Check("страница «Клавиши» собирается", false, Inner(e)); }
+            finally
+            {
+                takes.SetValue(null, wasT); media.SetValue(null, wasM); maxF.SetValue(null, wasX);
+                Restore(saved);
+            }
+        }
+
+        /// <summary>
+        /// ANSI — это и есть «по нажатиям ничего не встретилось»: признак заведён им же
+        /// и меняется только на ISO и JIS. Выдавать его за распознанное значит уверять
+        /// человека с европейской клавиатурой, что две клавиши у него стоят правильно.
+        /// </summary>
+        static void PhysNoteAnsiIsNotDetected()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== «распознано ANSI» там, где не распознано ничего ==");
+            BindingFlags f = BindingFlags.NonPublic | BindingFlags.Static;
+            FieldInfo det = typeof(KeyWatch).GetField("_detectedPhys", f);
+            if (det == null) { Check("признак распознанного исполнения доступен", false, "нет поля"); return; }
+            object was = det.GetValue(null);
+            Settings saved = _s.Snapshot();
+            MethodInfo m = typeof(MainWindow).GetMethod("PageLayout",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            try
+            {
+                _s.Physical = PhysLayout.Auto; _eng.Apply(_s);
+
+                det.SetValue(null, (int)PhysLayout.Ansi);
+                Check("ANSI не выдают за распознанное",
+                      !Says((UIElement)m.Invoke(_win, null), "Пока распознано"),
+                      "уверяет, что распознало ANSI, — а не встретилось ничего");
+
+                // Контрольный опыт: ISO по нажатиям и правда распознаётся, и об этом
+                // говорят. Без него проверка выше прошла бы на пустой сноске.
+                det.SetValue(null, (int)PhysLayout.Iso);
+                Check("контроль: распознанное ISO называют распознанным",
+                      Says((UIElement)m.Invoke(_win, null), "Пока распознано"), "не называют");
+            }
+            catch (Exception e) { Check("страница «Раскладка» собирается", false, Inner(e)); }
+            finally { det.SetValue(null, was); Restore(saved); }
         }
 
         /// <summary>
@@ -308,6 +452,17 @@ namespace MagicKeys
                 _s.Enabled = false; _eng.Apply(_s);
                 Check("при выключенных переназначениях не обещают, что назначение работает",
                       !Says((UIElement)m.Invoke(_win, null), "назначение работает"), "обещают");
+
+                // Пауза без клавиатуры Apple — вторая причина, по которой обработчик
+                // уходит молча, и причина другая: выключатель при этом ВКЛЮЧЁН.
+                // Отправлять человека выключать включённое — врать во второй раз.
+                _s.Enabled = true; _s.PauseWhenAppleAbsent = true; _eng.Apply(_s);
+                UIElement paused = (UIElement)m.Invoke(_win, null);
+                Check("на паузе не обещают, что назначение работает",
+                      !Says(paused, "назначение работает"), "обещают");
+                Check("на паузе не сваливают вину на выключатель",
+                      !Says(paused, "переназначения выключены на первой странице"),
+                      "называет причиной выключатель, который включён");
             }
             catch (Exception e) { Check("страница «Клавиши» собирается", false, Inner(e)); }
             finally { seen.SetValue(null, was); Restore(saved); }
@@ -430,6 +585,11 @@ namespace MagicKeys
                       !Says(p, "Fn+↑↓ листают страницу"), "обещает листание страницы");
                 Check("с ⌘-заменителем сноска не обещает Fn+Backspace",
                       !Says(p, "Fn+Backspace удаляет вперёд"), "обещает удаление вперёд");
+                // У ⌘ таблица забирает всё, кроме Fn+Enter, — его сноска обязана
+                // назвать. Без этого три проверки выше прошли бы и на пустой сноске.
+                Check("контроль: с ⌘-заменителем сноска обещает хотя бы Fn+Enter",
+                      Says(p, "Fn+Enter — это Insert"),
+                      "не обещает — значит проверки выше ничего не доказывают");
             }
             catch (Exception e) { Check("страница «Клавиши» собирается", false, Inner(e)); }
             Restore(saved);

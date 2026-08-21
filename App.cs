@@ -98,8 +98,11 @@ namespace MagicKeys
                 if (s.PauseWhenAppleAbsent && !Devices.AppleConnected) return;
                 KeyAction a = Actions.Get(s.EjectKey);
                 if (a.Kind == ActionKind.PassThrough) return;
-                Actions.Begin(a, false, Settings.BrightnessStep);
-                Actions.End(a);
+                // Через перехват, а не мимо него: аккорд и печать знака обязаны убрать
+                // с дороги зажатое — иначе Win+E в конце отпускает Win, которую человек
+                // держит своей ⌘. Разбирается это на потоке перехвата, где живёт
+                // состояние о зажатом.
+                _engine.PostAction(s.EjectKey);
             };
             // Коды яркости с медиастраницы. Когда функциональным рядом занимается драйвер,
             // F1 и F2 до перехвата не доходят: они переводятся сразу в коды 0x70 и 0x6F.

@@ -28,9 +28,19 @@ namespace MagicKeys
             @"SYSTEM\CurrentControlSet\Services\KeyMagic"
         };
 
-        // Значение OSXFnBehavior драйвер пишет в ключ устройства под классом клавиатур.
+        // Где лежит OSXFnBehavior — замерено, а не предположено. На этой машине оно
+        // лежит в ключе службы: HKLM\SYSTEM\CurrentControlSet\Services\KeyMagic2,
+        // значение 0. Под классом клавиатур его нет ни у одного из шести устройств;
+        // прежний комментарий здесь уверял в обратном, и поиск шёл не туда.
+        //
+        // Само устройство драйвера тоже не под классом клавиатур: «Apple Keyboard»
+        // с InfPath = oem100.inf (опубликованное имя keymagic2.inf) стоит под классом
+        // HID. Поэтому смотрим в трёх местах и заводим значение там, где стоит
+        // устройство, — а не наугад.
         private const string KeyboardClass =
             @"SYSTEM\CurrentControlSet\Control\Class\{4d36e96b-e325-11ce-bfc1-08002be10318}";
+        private const string HidClass =
+            @"SYSTEM\CurrentControlSet\Control\Class\{745a17a0-74d3-11d0-b6fe-00a0c90f57da}";
 
         private static readonly object Sync = new object();
         private static bool _installed;
@@ -81,12 +91,26 @@ namespace MagicKeys
             lock (Sync) path = _fnBehaviorPath;
             if (String.IsNullOrEmpty(path))
             {
-                // Значения ещё нет — заводим его в ключе службы.
+                // Значения ещё нет — заводим его в ключе службы: замер на этой машине
+                // показал OSXFnBehavior именно там (Services\KeyMagic2, значение 0),
+                // и под классом клавиатур его нет ни у одного устройства.
+                //
+                // Место всё же гадательное: прочитал ли его драйвер, программе не узнать
+                // ничем. Поэтому «Записано» здесь и значит только «записано». Забирает
+                // ли драйвер ряд на деле, видно по приходящим медиакодам — это отдельный
+                // и честный признак, и страница «Драйвер Apple» показывает его рядом.
                 foreach (string p in ServiceKeys)
                     using (RegistryKey k = Registry.LocalMachine.OpenSubKey(p, false))
                         if (k != null) { path = @"HKLM\" + p; break; }
+                // Ключ устройства — вторым: там значения не нашлось, но если драйвер
+                // держит настройки у устройства, писать в пустую службу бессмысленно.
+                if (String.IsNullOrEmpty(path))
+                {
+                    string dev = DeviceKeyOfDriver();
+                    if (dev != null) path = @"HKLM\" + dev;
+                }
             }
-            if (String.IsNullOrEmpty(path)) { error = "драйвер Apple не найден"; return false; }
+            if (String.IsNullOrEmpty(path)) { error = "Драйвер Apple не найден."; return false; }
 
             try
             {
@@ -105,10 +129,12 @@ namespace MagicKeys
                 System.Diagnostics.Process started = System.Diagnostics.Process.Start(psi);
                 if (started == null)
                 {
-                    // ShellExecute вернул пусто: нового процесса не было, то есть запрос
-                    // прав отклонили. Раньше это давало исключение, и человек читал
-                    // английский текст .NET вместо объяснения.
-                    error = "Запрос прав администратора отклонён.";
+                    // Пусто ShellExecute отдаёт, когда новый процесс не понадобился, —
+                    // документ открыла уже запущенная программа. Для reg.exe такого
+                    // не бывает, и отказ от повышения прав приходит не сюда, а
+                    // исключением 1223 ниже. Ветка на всякий случай: молча вернуть
+                    // «получилось», не запустив ничего, хуже.
+                    error = "Не удалось запустить запись значения.";
                     return false;
                 }
                 using (System.Diagnostics.Process p = started)
@@ -152,6 +178,12 @@ namespace MagicKeys
 
             try
             {
+                // Обе службы, а не первая найденная. Установщик Boot Camp кладёт обе:
+                // KeyMagic2 для Magic Keyboard и KeyMagic для прежних моделей. Обрывая
+                // перебор на первой, программа судила о работающем драйвере по чужой
+                // службе: KeyMagic2, оставшийся от прошлой клавиатуры и отключённый,
+                // давал «Состояние: отключена» при исправно работающем KeyMagic —
+                // и ряд забирался себе у драйвера, который его тоже забирает.
                 foreach (string path in ServiceKeys)
                 {
                     using (RegistryKey k = Registry.LocalMachine.OpenSubKey(path, false))
@@ -159,13 +191,32 @@ namespace MagicKeys
                         if (k == null) continue;
                         installed = true;
                         object start = k.GetValue("Start");
-                        // 4 — служба отключена; всё остальное считаем рабочим
-                        enabled = !(start is int) || ((int)start) != 4;
+                        // 4 — служба отключена; всё остальное считаем рабочим.
+                        // Рабочей считаем, если рабочая хоть одна.
+                        if (!(start is int) || ((int)start) != 4) enabled = true;
+                    }
+                }
+
+                // Ищем в трёх местах, в порядке достоверности. Первое — ключ службы:
+                // именно там значение и лежит на этой машине, замерено. Второе — ключ
+                // устройства драйвера. Третье — перебор класса клавиатур, оставшийся
+                // от прежней догадки: пусть будет, стоит он дёшево.
+                foreach (string path in ServiceKeys)
+                    using (RegistryKey k = Registry.LocalMachine.OpenSubKey(path, false))
+                    {
+                        if (k == null) continue;
                         TryBehavior(k, path, ref behavior, ref where);
                         using (RegistryKey p = k.OpenSubKey("Parameters", false))
                             if (p != null) TryBehavior(p, path + @"\Parameters", ref behavior, ref where);
-                        break;
+                        if (behavior >= 0) break;
                     }
+
+                if (behavior < 0)
+                {
+                    string dev = DeviceKeyOfDriver();
+                    if (dev != null)
+                        using (RegistryKey k = OpenLocal(dev))
+                            if (k != null) TryBehavior(k, dev, ref behavior, ref where);
                 }
 
                 if (behavior < 0) FindBehaviorInClass(ref behavior, ref where);
@@ -182,6 +233,54 @@ namespace MagicKeys
             _takesRow = installed && enabled && behavior != 0;
         }
 
+
+        /// <summary>
+        /// Ключ устройства под классом клавиатур, которым занимается драйвер Apple, —
+        /// или null. Узнаётся по InfPath: там записано имя, под которым .inf драйвера
+        /// опубликован в хранилище Windows, а его добывает AppleDriverSetup.
+        /// </summary>
+        private static string DeviceKeyOfDriver()
+        {
+            try
+            {
+                var published = new List<string>();
+                foreach (string inf in AppleDriverSetup.WantedInfNames)
+                {
+                    string oem = AppleDriverSetup.PublishedInf(inf);
+                    if (!String.IsNullOrEmpty(oem)) published.Add(oem);
+                }
+                if (published.Count == 0) return null;
+
+                // Оба класса: замер показал устройство драйвера под HID, а не под
+                // классом клавиатур. Перебирать оба дешевле, чем гадать.
+                foreach (string cls in new[] { HidClass, KeyboardClass })
+                    using (RegistryKey root = Registry.LocalMachine.OpenSubKey(cls, false))
+                    {
+                        if (root == null) continue;
+                        foreach (string sub in root.GetSubKeyNames())
+                            using (RegistryKey k = root.OpenSubKey(sub, false))
+                            {
+                                if (k == null) continue;
+                                string inf = Convert.ToString(k.GetValue("InfPath"));
+                                if (String.IsNullOrEmpty(inf)) continue;
+                                foreach (string oem in published)
+                                    if (String.Equals(inf, oem, StringComparison.OrdinalIgnoreCase))
+                                        return cls + @"\" + sub;
+                            }
+                    }
+            }
+            catch (Exception e) { Diag.Log("драйвер Apple: не найти ключ устройства", e); }
+            return null;
+        }
+
+        /// <summary>Открыть ключ HKLM по пути с приставкой «HKLM\» или без неё.</summary>
+        private static RegistryKey OpenLocal(string path)
+        {
+            if (String.IsNullOrEmpty(path)) return null;
+            if (path.StartsWith(@"HKLM\", StringComparison.OrdinalIgnoreCase)) path = path.Substring(5);
+            try { return Registry.LocalMachine.OpenSubKey(path, false); }
+            catch { return null; }
+        }
 
         /// <summary>Обходит ключи класса клавиатур: значение живёт у устройства, а не у службы.</summary>
         private static void FindBehaviorInClass(ref int behavior, ref string where)

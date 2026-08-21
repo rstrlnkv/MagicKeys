@@ -257,8 +257,14 @@ namespace MagicKeys
                 // И пауза, а не только выключатель. Выбрав «Только с Magic Keyboard»
                 // и отключив её, человек просил не вмешиваться вовсе — а любая правка
                 // настроек включала Num Lock на чужой полноразмерной клавиатуре.
+                //
+                // Но «клавиатуры нет» спрашиваем только после первого опроса. Оба вызова
+                // при запуске стоят раньше него — опрос уходит в свой поток, — и без
+                // этого условие было истинно всегда: цифровой блок оставался
+                // навигационным до первой правки настроек в окне, то есть ровно то,
+                // ради чего эта проверка и написана, не срабатывало ни разу.
                 if (s == null || !s.Enabled) return;
-                if (s.PauseWhenAppleAbsent && !Devices.AppleConnected) return;
+                if (s.PauseWhenAppleAbsent && Devices.Scanned && !Devices.AppleConnected) return;
                 string id = s.NumpadClear;
                 if (String.IsNullOrEmpty(id) || id == "none" || id == "key.numlock") return;
                 if ((Native.GetKeyState(Vk.NumLock) & 1) != 0) return;
@@ -272,12 +278,18 @@ namespace MagicKeys
         /// Набор клавиатур стал другим — кто бы его ни опросил. Подписка, а не ответ
         /// своего вызова: опрос зовут трое, и любой из них съедал признак у остальных.
         /// </summary>
+        /// <summary>
+        /// Набор клавиатур стал другим. Вместе с прочим это второй случай спросить про
+        /// цифровой блок: при запуске опрос ещё не проходил, и «клавиатуры Apple нет»
+        /// значило «ещё не знаем».
+        /// </summary>
         private void OnDevicesChanged()
         {
             try
             {
                 KeyWatch.ForgetPhysical();
                 PostRelease();
+                EnsureNumLock(_cfg);
                 Action h = DevicesChanged;
                 if (h != null) h();
             }
@@ -357,6 +369,7 @@ namespace MagicKeys
         // WM_APP + 1 и + 2: свои сообщения потоку хука, чужим кодом не заняты.
         private const uint WmRelease = 0x8000 + 1;
         private const uint WmApply = 0x8000 + 3;
+        private const uint WmAction = 0x8000 + 4;
 
         /// <summary>Снимок, который поток хука должен забрать себе вместе со сбросом.</summary>
         private volatile Settings _pendingCfg;
@@ -436,6 +449,47 @@ namespace MagicKeys
         /// </summary>
         public void ReleaseHeld() { PostRelease(); }
 
+        /// <summary>
+        /// Выполнить действие руками потока перехвата — с любого потока.
+        ///
+        /// Заведено ради клавиши ⏏: она приходит переписью клавиш, а не перехватом,
+        /// и обработчик звал Actions напрямую. Мимо RunAction, то есть мимо щита:
+        /// назначенный на ⏏ аккорд «Проводник (Win+E)» в конце отпускал Win — ту самую,
+        /// которую человек держит своей ⌘, — и она молча переставала работать до
+        /// перенажатия; печать знака под зажатым ⌥ уходила как WM_SYSCHAR, пропадала
+        /// сама и открывала строку меню.
+        ///
+        /// Правило «убрать зажатое с дороги» живёт в одном месте, и вторая дверь
+        /// обязана вести туда же. А состояние перехвата принадлежит его потоку —
+        /// поэтому просьба идёт сообщением, как WmRelease и WmApply, а не вызовом.
+        /// </summary>
+        public void PostAction(string actionId)
+        {
+            if (String.IsNullOrEmpty(actionId)) return;
+            lock (_asked) _asked.Enqueue(actionId);
+            uint id = _threadId;
+            if (id == 0 || !Native.PostThreadMessageW(id, WmAction, IntPtr.Zero, IntPtr.Zero))
+            {
+                // Потока нет — до Start или после Stop. Тогда и держать нечего:
+                // щит убирал бы то, о чём мы всё равно ничего не знаем.
+                string one = TakeAsked();
+                while (one != null)
+                {
+                    KeyAction a = Actions.Get(one);
+                    try { Actions.Begin(a, false, Settings.BrightnessStep); Actions.End(a); }
+                    catch (Exception e) { Diag.Log("действие мимо потока перехвата: сбой", e); }
+                    one = TakeAsked();
+                }
+            }
+        }
+
+        private readonly Queue<string> _asked = new Queue<string>();
+
+        private string TakeAsked()
+        {
+            lock (_asked) return _asked.Count > 0 ? _asked.Dequeue() : null;
+        }
+
         /// <summary>Попросить поток хука отпустить всё зажатое — с любого потока.</summary>
         private void PostRelease()
         {
@@ -505,6 +559,19 @@ namespace MagicKeys
                         Settings shot = _pendingCfg;
                         ReleaseEverything(shot, true);
                         if (shot != null) _cfg = shot;
+                        continue;
+                    }
+                    if (msg.hwnd == IntPtr.Zero && msg.message == WmAction)
+                    {
+                        // Через тот же RunAction, что и всё остальное: щит, отпускание
+                        // зажатого и возврат безобидного — одним местом на всю программу.
+                        string one = TakeAsked();
+                        while (one != null)
+                        {
+                            try { RunAction(Actions.Get(one), false); }
+                            catch (Exception e) { Diag.Log("действие клавиши ⏏: сбой", e); }
+                            one = TakeAsked();
+                        }
                         continue;
                     }
                     if (msg.hwnd == IntPtr.Zero && msg.message == WmCheck) { CheckHookAlive(); continue; }
@@ -656,7 +723,7 @@ namespace MagicKeys
             // ⌘+Tab ведёт себя как Alt+Tab.
             if (s.CmdTabSwitchesWindows && vk == Vk.Tab && CmdHeld && !Busy(vk, k.scanCode))
             {
-                if (!down) { _letThrough.Remove(vk); return false; }   // нажатия не брали
+                if (!down) return false;   // нажатия не брали — и отпускание не наше
                 _chordTaken[vk] = CmdTab;
                 {
                     if (!_cmdTabAlt)
@@ -722,9 +789,11 @@ namespace MagicKeys
                         // задержал ⌘Q на полсекунды — и Alt+F4 уходит три десятка раз,
                         // закрывая окно за окном. Движения по тексту, наоборот, повторять
                         // надо, и они это про себя объявляют сами.
-                        // Отпускание сюда не доходит: если нажатие взяли, его разобрали
-                        // выше; а если не взяли — оно и не наше.
-                        if (!down) { _letThrough.Remove(vk); return false; }
+                        // Отпускание сюда доходит: после паузы, после снятого Windows
+                        // перехвата, после общего сброса — везде, где нажатие прошло
+                        // мимо нас. Оно не наше, и брать его нельзя: взяв, мы съели бы
+                        // отпускание клавиши, нажатие которой ушло в приложение.
+                        if (!down) return false;
                         // Сюда доходит только первое нажатие: повторы разбирает продолжение
                         // выше, и по нему же решается, повторять ли посылку.
                         MacSend(sc);
@@ -822,7 +891,7 @@ namespace MagicKeys
             // замерено стендом, ⌘1 открывал меню и забирал фокус.
             if (cmdMiss)
             {
-                if (!down) { _letThrough.Remove(vk); return false; }
+                if (!down) return false;   // нажатия не брали — и отпускание не наше
                 if (WindowsHoldsMenuKey()) Input.Tap(VkNoop);
                 _chordTaken[vk] = null;
                 return true;
@@ -1214,8 +1283,7 @@ namespace MagicKeys
             // следующее нажатие придёт заново. Сброс стоит до проверки managed нарочно:
             // снимаем мы коды и у клавиш, идущих насквозь, а такие уходят из метода
             // строкой ниже.
-            int liftedVk;
-            bool lifted = !down && _modLifted.TryGetValue(phys, out liftedVk);
+            bool lifted = !down && _modLifted.ContainsKey(phys);
             if (lifted) _modLifted.Remove(phys);
 
             if (!managed) return false;
@@ -1242,8 +1310,14 @@ namespace MagicKeys
                     // Тот же код может держать и вторая клавиша: назначить две клавиши
                     // на одно и то же окно позволяет. Отпустив его, пока вторую держат,
                     // мы снимали ⇧ посреди набора, и вернуть его было нечем.
+                    //
+                    // Спрашиваем WindowsHolds, а не запись: _injected значит «мы посылали
+                    // нажатие», а держит ли Windows этот код сейчас, знает только он.
+                    // У второй клавиши код мог быть снят аккордом — и она считалась
+                    // держащей снятое, а первая залипала.
                     bool other = false;
-                    foreach (KeyValuePair<ModKey, int> p in _injected) if (p.Value == had) other = true;
+                    foreach (KeyValuePair<ModKey, int> p in _injected)
+                        if (WindowsHolds(p.Key) == had) other = true;
                     if (!other) Input.Key(had, false);
                 }
                 return true;
@@ -1264,6 +1338,14 @@ namespace MagicKeys
 
             Input.Key(tvk, true);
             _injected[phys] = tvk;
+            // И код больше не снят: мы только что нажали его заново. Без этой строки
+            // WindowsHolds отвечал «не держит ничего» про клавишу, которую мы держим,
+            // и её отпускание уходило по ветке «уже снято» — то есть не уходило вовсе.
+            // Достаточно было заводского ⌘C и полсекунды удержания ⌘: автоповтор жал
+            // Win заново, а отпускание её не снимало. Дальше каждая буква — Win+буква:
+            // Win+L запирает экран, Win+E открывает проводник.
+            _modLifted.Remove(phys);
+            if (_subLifted == phys) _subLifted = ModKey.None;
             return true;
         }
 
@@ -1592,6 +1674,11 @@ namespace MagicKeys
                     // и правду про «держит ли Windows» говорит только WindowsHolds.
                     if (!_modLifted.ContainsKey(pair.Key)) Input.Key(pair.Value, false);
                     _injected.Remove(pair.Key);
+                    // И забываем снятие тоже. Win мы сняли здесь без возврата — а по этой
+                    // записи её возвращал SubstituteRestore, нажимая Win при открытом
+                    // переключателе окон: следующий Tab уходил как Win+Alt+Tab.
+                    _modLifted.Remove(pair.Key);
+                    if (_subLifted == pair.Key) _subLifted = ModKey.None;
                 }
         }
 

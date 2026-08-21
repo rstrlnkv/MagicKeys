@@ -64,6 +64,8 @@ namespace MagicKeys
             SubstituteOnPlainKey();
             RepeatStaysWhereItWent();
             LiftedOnlyOnce();
+            RepressAfterChord();
+            TwoKeysOneCode();
             LayoutLevels();
             SnapshotIndependence();
             LayoutGuess();
@@ -1260,12 +1262,34 @@ namespace MagicKeys
             Down(Vk.LWin);
             Down(Vk.Tab); Up(Vk.Tab);
             Down(Vk.F1); Up(Vk.F1);
-            Clear();
             Up(Vk.LWin);
-            int downs = Sent().Split(new string[] { N(Vk.LWin) + "v" }, StringSplitOptions.None).Length - 1;
-            int ups = Sent().Split(new string[] { N(Vk.LWin) + "^" }, StringSplitOptions.None).Length - 1;
-            Check("⌘ в роли Fn не остаётся зажатой после ⌘Tab", downs <= ups, Sent());
+            // Считаем по всей записи, а не по хвосту: Clear перед отпусканием выбрасывал
+            // ровно те события, в которых улика, и обе стороны выходили нулями — проверка
+            // не могла провалиться ни при каком поведении.
+            int downs = Count(Sent(), N(Vk.LWin) + "v");
+            int ups = Count(Sent(), N(Vk.LWin) + "^");
+            Check("⌘ в роли Fn не остаётся зажатой после ⌘Tab", downs <= ups,
+                  "нажали " + downs + ", отпустили " + ups + ": " + Sent());
             Clear();
+
+            // Обратный порядок: сперва F-клавиша сняла заменитель, потом ⌘+Tab снял
+            // подставленную Win насовсем. Возвращать её по концу удержания нельзя —
+            // при открытом переключателе окон следующий Tab уйдёт как Win+Alt+Tab.
+            s = Fresh();
+            s.FnSubstitute = ModKey.LWin;
+            s.MediaFirst = true;
+            s.CmdTabSwitchesWindows = true;
+            Use(s);
+            Down(Vk.LWin);
+            Down(Vk.F1);            // заменитель снят: Win^ ушла
+            Down(Vk.Tab);           // переключатель открыт, Win снята и забыта
+            Clear();
+            Up(Vk.F1);
+            Check("при открытом переключателе окон Win не нажимают заново",
+                  Count(Sent(), N(Vk.LWin) + "v") == 0,
+                  "следующий Tab уйдёт как Win+Alt+Tab: " + Sent());
+            Clear();
+            Up(Vk.Tab); Up(Vk.LWin); Clear();
 
             // Сброс зажатого не должен открывать «Пуск»: Windows считает командой
             // клавишу Win, нажатую и отпущенную без ничего между ними.
@@ -1555,6 +1579,80 @@ namespace MagicKeys
             Check("⌘+Tab не снимает уже снятую Win второй раз",
                   Count(Sent(), N(Vk.LWin) + "^") == 0, Sent());
             Clear(); Up(Vk.Tab); Up(Vk.LWin); Clear();
+        }
+
+        /// <summary>
+        /// Автоповтор модификатора после аккорда. Аккорд снимает код у Windows без
+        /// возврата и запоминает снятие; автоповтор нажимает его заново — и запись
+        /// обязана уйти, иначе отпускание клавиши уходит по ветке «уже снято»,
+        /// то есть не уходит вовсе.
+        ///
+        /// С заводскими настройками это ⌘C плюс полсекунды удержания ⌘: дальше каждая
+        /// буква становится Win+буквой — Win+L запирает экран, Win+E открывает
+        /// проводник. Общий сброс не чинит: отпускать ему уже нечего.
+        /// </summary>
+        static void RepressAfterChord()
+        {
+            Head("Автоповтор модификатора после аккорда");
+            Settings s = Fresh();                 // всё заводское
+            Use(s);
+            Down(Vk.LWin);
+            Down(Vk.C); Up(Vk.C);                 // ⌘C: ClearHeld снял Win без возврата
+            Down(Vk.LWin);                        // автоповтор ⌘ — Win нажали заново
+            Clear();
+            Up(Vk.LWin);
+            Check("после автоповтора ⌘ клавиша Windows отпускается",
+                  Count(Sent(), N(Vk.LWin) + "^") == 1,
+                  "Win осталась зажатой, и снять её нечем: " + Sent());
+            Clear();
+
+            // Контрольный опыт: без автоповтора отпускать нечего — Win уже снята
+            // аккордом, и второе снятие было бы отпусканием без пары.
+            Use(s);
+            Down(Vk.LWin);
+            Down(Vk.C); Up(Vk.C);
+            Clear();
+            Up(Vk.LWin);
+            Check("контроль: без автоповтора Win второй раз не снимают",
+                  Count(Sent(), N(Vk.LWin) + "^") == 0, Sent());
+            Clear();
+        }
+
+        /// <summary>
+        /// Один код на двух клавишах, и у одной он снят аккордом. Отпуская вторую,
+        /// снимать надо: «его держит ещё кто-то» — про то, что Windows держит сейчас,
+        /// а не про то, что мы когда-то посылали.
+        /// </summary>
+        static void TwoKeysOneCode()
+        {
+            Head("Один код на двух клавишах");
+            Settings s = Fresh();
+            s.MapRAlt = ModKey.RWin;              // ⌘ живёт и на правом ⌥ тоже
+            Use(s);
+            DownE(Vk.RWin);                       // правая ⌘ жмёт Win
+            Down(Vk.C); Up(Vk.C);                 // ⌘C: ClearHeld снял её код
+            Clear();
+            DownE(Vk.RMenu);                      // вторая клавиша жмёт тот же код
+            string afterDown = Sent(); Clear();
+            UpE(Vk.RMenu);
+            Check("отпуская вторую клавишу, снимаем её код: у первой он снят",
+                  Count(afterDown, N(Vk.RWin) + "v") == 1
+                      && Count(Sent(), N(Vk.RWin) + "^") == 1,
+                  "нажатие «" + afterDown + "», отпускание «" + Sent() + "»");
+            Clear();
+            UpE(Vk.RWin); Clear();
+
+            // Контрольный опыт: пока обе держат неснятый код, отпускание первой
+            // его не снимает — вторая правда держит.
+            Use(s);
+            DownE(Vk.RWin);
+            DownE(Vk.RMenu);
+            Clear();
+            UpE(Vk.RWin);
+            Check("контроль: пока вторая клавиша держит код, первая его не снимает",
+                  Count(Sent(), N(Vk.RWin) + "^") == 0, Sent());
+            Clear();
+            UpE(Vk.RMenu); Clear();
         }
 
         /// <summary>Что перехват считает снятым у Windows на время.</summary>

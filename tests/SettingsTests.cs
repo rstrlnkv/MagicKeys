@@ -67,6 +67,8 @@ namespace MagicKeys
             TwoKeysOneCode();
             SwitcherAltGetsOutOfTheWay();
             OneOwnerForNumpadClear();
+            ModifierThroughStaysThrough();
+            MediaActionDropsSubstitute();
             ResetKeepsTheOwner();
             SingleKeyLatches();
             LayoutLevels();
@@ -1948,6 +1950,112 @@ namespace MagicKeys
             Check("контроль: без ⌘ оба нажатия ⌧ одинаковы",
                   a1 == b1 && a2 == b2, "" + a1 + a2 + " против " + b1 + b2);
             Clear();
+        }
+
+        /// <summary>
+        /// Модификатор, чьё нажатие ушло в приложение, остаётся его до отпускания.
+        ///
+        /// Слой модификаторов решал «наше ли это» заново на каждом событии, и автоповтор
+        /// доставался ему: нажатие ушло в приложение, отпускание съели мы — Alt оставался
+        /// зажатым в Windows навсегда. Достаточно было держать ⌥ на клавиатуре ноутбука,
+        /// пока просыпается Magic Keyboard: заводская пауза «Только с Magic Keyboard»
+        /// кончается ровно между нажатием и его автоповтором.
+        /// </summary>
+        static void ModifierThroughStaysThrough()
+        {
+            Head("Модификатор, ушедший в приложение");
+
+            // Пауза кончилась между нажатием и автоповтором.
+            Settings s = Fresh();
+            s.PauseWhenAppleAbsent = true;
+            s.MapLAlt = ModKey.LCtrl;
+            Apple(false);
+            Use(s);
+            bool went = Down(Vk.LMenu);      // на паузе — мимо нас, в приложение
+            Apple(true);                     // клавиатура проснулась
+            Clear();
+            bool repeat = Down(Vk.LMenu);    // автоповтор уже не на паузе
+            bool up = Up(Vk.LMenu);
+            Check("проснувшаяся клавиатура не отбирает ⌥, нажатие которого уже ушло",
+                  !went && !repeat && !up,
+                  "нажатие=" + went + ", повтор=" + repeat + ", отпускание=" + up +
+                  ", пришло «" + Sent() + "»: левый ⌥ остался зажатым в Windows");
+            Clear();
+            Apple(false);
+
+            // Контрольный опыт: без паузы клавишу берут с первого нажатия — значит
+            // проверка выше меряет «нажатие ушло», а не мёртвый разбор.
+            Settings live = Fresh();
+            live.MapLAlt = ModKey.LCtrl;
+            Apple(true);
+            Use(live);
+            bool took = Down(Vk.LMenu);
+            bool tookUp = Up(Vk.LMenu);
+            Check("контроль: без паузы ⌥ берут с первого нажатия",
+                  took && tookUp, "нажатие=" + took + ", отпускание=" + tookUp);
+            Clear();
+
+            // И смена назначения под зажатой клавишей — та же беда с другой стороны.
+            Settings plain = Fresh();
+            Use(plain);
+            bool wentPlain = Down(Vk.LMenu);     // ⌥ никуда не переназначен: ушёл насквозь
+            Settings mapped = Fresh();
+            mapped.MapLAlt = ModKey.LCtrl;
+            bool rep2, up2;
+            // Windows держит ⌥: смена настроек идёт через общий сброс, а тот сверяет
+            // записи о владении именно с ней.
+            Engine.HeldProbe = delegate(int probe) { return probe == Vk.LMenu; };
+            try
+            {
+                _eng.Apply(mapped); Clear();
+                rep2 = Down(Vk.LMenu);
+                up2 = Up(Vk.LMenu);
+            }
+            finally { Engine.HeldProbe = null; }
+            Check("смена назначения под зажатым ⌥ не съедает его отпускание",
+                  !wentPlain && !rep2 && !up2,
+                  "нажатие=" + wentPlain + ", повтор=" + rep2 + ", отпускание=" + up2 +
+                  ", пришло «" + Sent() + "»");
+            Clear();
+        }
+
+        /// <summary>
+        /// Медиадействие верхнего ряда убирает с дороги заменитель Fn — как и ветка
+        /// настоящей F-клавиши. При режиме «F-клавиши сразу» сюда попадают ровно тогда,
+        /// когда заменитель держат: назначенная на F5 клавиша Home уходила под зажатым ⌥,
+        /// то есть как Alt+Home — уходом браузера на домашнюю страницу.
+        /// </summary>
+        static void MediaActionDropsSubstitute()
+        {
+            Head("Медиадействие и заменитель Fn");
+
+            Settings s = Fresh();
+            s.MediaFirst = false;
+            s.FnSubstitute = ModKey.RAlt;
+            s.MapRAlt = ModKey.RAlt;
+            s.FKeys[4] = "key.home";
+            Use(s);
+            DownE(Vk.RMenu); Clear();
+            bool sw = Down(Vk.F1 + 4);
+            Check("медиадействие не уходит под модификатором заменителя Fn",
+                  sw && Count(Sent(), N(Vk.RMenu) + "^") == 1,
+                  "это Alt+Home, уход браузера на домашнюю страницу: " + Sent());
+            Clear();
+            Up(Vk.F1 + 4); UpE(Vk.RMenu); Clear();
+
+            // Контрольный опыт: ветка настоящей F-клавиши заменитель снимает — и снимала
+            // всегда. Значит проверка выше меряет медиаветку, а не общий щит.
+            Settings m = Fresh();
+            m.MediaFirst = true;
+            m.FnSubstitute = ModKey.RAlt;
+            m.MapRAlt = ModKey.RAlt;
+            Use(m);
+            DownE(Vk.RMenu); Clear();
+            sw = Down(Vk.F1 + 4);
+            Check("контроль: ветка настоящей F-клавиши заменитель снимает",
+                  sw && Count(Sent(), N(Vk.RMenu) + "^") == 1, Sent());
+            Clear();
+            Up(Vk.F1 + 4); UpE(Vk.RMenu); Clear();
         }
 
         /// <summary>Что перехват считает снятым у Windows на время.</summary>

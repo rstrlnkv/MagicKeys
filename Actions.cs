@@ -123,20 +123,24 @@ namespace MagicKeys
             Add("ime.nonconvert", "Ввод иероглифов", "Не преобразовывать / 無変換", ActionKind.Key, Vk.NonConvert, null, false, null);
         }
 
-        /// <summary>Нажатие. <paramref name="repeat"/> — это автоповтор от удержания.</summary>
+        /// <summary>
+        /// Нажатие. <paramref name="repeat"/> — это автоповтор от удержания.
+        ///
+        /// Готовый аккорд и готовый символ сюда не доходят: их перехватывает раньше
+        /// Engine.RunAction — ему надо убрать с дороги зажатое, а тут этого сделать
+        /// нечем. Ветки для них здесь и стояли, и были ловушкой: аккорд отпускал бы
+        /// Win, которую человек держит своей ⌘, а символ под зажатым Alt уходил бы
+        /// как WM_SYSCHAR — пропадал сам и открывал строку меню.
+        /// </summary>
         public static void Begin(KeyAction a, bool repeat, int brightnessStep)
         {
             if (a == null) return;
-            // Повтор спрашиваем один раз и для всех: раньше флаг читался только у клавиш,
-            // а Text печатал на удержании независимо от того, что о себе объявил.
+            // Повтор спрашиваем один раз и для всех: у клавиши он свой, у яркости свой.
             if (repeat && !a.Repeats) return;
             switch (a.Kind)
             {
                 case ActionKind.Key:
                     Input.Key(a.Vk, true);
-                    break;
-                case ActionKind.Chord:
-                    Input.Chord(a.Mods == null ? new int[0] : a.Mods, a.Vk);
                     break;
                 case ActionKind.BrightnessDown:
                     Brightness.Nudge(-brightnessStep);
@@ -146,9 +150,6 @@ namespace MagicKeys
                     break;
                 case ActionKind.Launch:
                     Spawn(a.Target);
-                    break;
-                case ActionKind.Text:
-                    Input.Text(a.Target);
                     break;
                 case ActionKind.EjectTray:
                     EjectTray();

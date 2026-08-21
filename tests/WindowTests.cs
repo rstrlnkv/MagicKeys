@@ -60,6 +60,7 @@ namespace MagicKeys
 
             RightOptionSymbols();
             MacRowsInGroups();
+            UpdateCardStates();
 
             Console.WriteLine();
             Console.WriteLine("прошло " + _pass + ", провалено " + _fail);
@@ -145,6 +146,74 @@ namespace MagicKeys
         }
 
         /// <summary>
+        /// Три вида карточки обновления. Стенд собирал только четвёртый — покой, — а из
+        /// трёх остальных два переживают самопроизвольную пересборку и один нет.
+        /// Особенно важен отказ: через него приходит «установщик подписан чужим ключом»,
+        /// и он не должен смениться приглашением обновиться от первой же нажатой клавиши.
+        /// </summary>
+        static void UpdateCardStates()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== карточка обновления ==");
+            BindingFlags f = BindingFlags.NonPublic | BindingFlags.Instance;
+            Type t = typeof(MainWindow);
+            FieldInfo found = t.GetField("_updFound", f);
+            FieldInfo said = t.GetField("_updSaid", f);
+            FieldInfo status = t.GetField("_updStatus", f);
+            FieldInfo action = t.GetField("_updAction", f);
+            MethodInfo about = t.GetMethod("PageAbout", f);
+            if (found == null || said == null || status == null || action == null || about == null)
+            { Check("карточка обновления доступна", false, "нет поля или метода"); return; }
+
+            var release = new Updater.Release();
+            release.Tag = "v9.9.9";
+            release.Version = new Version(9, 9, 9);
+
+            // Отказ загрузки: выпуск найден, но поставить не вышло.
+            found.SetValue(_win, release);
+            said.SetValue(_win, "установщик подписан чужим ключом");
+            try { about.Invoke(_win, null); }
+            catch (Exception e) { Check("страница «О программе» собирается", false, Inner(e)); return; }
+
+            var box = (TextBlock)status.GetValue(_win);
+            Check("отказ загрузки виден после пересборки",
+                  box != null && box.Text == "установщик подписан чужим ключом",
+                  "показано «" + (box == null ? "ничего" : box.Text) + "»");
+            var btn = (Button)action.GetValue(_win);
+            Check("после отказа кнопка предлагает повтор",
+                  btn != null && "" + btn.Content == "Повторить",
+                  "" + (btn == null ? "нет кнопки" : "" + btn.Content));
+
+            // Установщик запущен: предлагать больше нечего.
+            said.SetValue(_win, "Установщик запущен");
+            found.SetValue(_win, null);
+            about.Invoke(_win, null);
+            box = (TextBlock)status.GetValue(_win);
+            btn = (Button)action.GetValue(_win);
+            Check("«установщик запущен» переживает пересборку",
+                  box != null && box.Text == "Установщик запущен",
+                  "показано «" + (box == null ? "ничего" : box.Text) + "»");
+            Check("после запуска установщика кнопка погашена",
+                  btn != null && !btn.IsEnabled, "кнопка жива");
+
+            // Найденный выпуск без отказа: приглашение обновиться.
+            said.SetValue(_win, null);
+            found.SetValue(_win, release);
+            about.Invoke(_win, null);
+            box = (TextBlock)status.GetValue(_win);
+            btn = (Button)action.GetValue(_win);
+            Check("найденный выпуск переживает пересборку",
+                  box != null && box.Text == "Есть новый выпуск v9.9.9",
+                  "показано «" + (box == null ? "ничего" : box.Text) + "»");
+            Check("над найденным выпуском кнопка предлагает обновить",
+                  btn != null && "" + btn.Content == "Обновить" && btn.IsEnabled,
+                  "" + (btn == null ? "нет кнопки" : "" + btn.Content));
+
+            found.SetValue(_win, null);
+            said.SetValue(_win, null);
+        }
+
+        /// <summary>
         /// Строки отдельных сочетаний. Без раскрытой группы они не строятся вовсе —
         /// стенда не касались. А над ними стоит переключатель всей группы, который
         /// считает себя по ним: строка, не пересобравшая страницу, оставляет его лгать.
@@ -159,8 +228,18 @@ namespace MagicKeys
                                  BindingFlags.NonPublic | BindingFlags.Instance);
             if (open == null || m == null) { Check("страница сочетаний доступна", false, "нет поля или метода"); return; }
 
-            string[] groups = { MacKeys.GroupEdit, MacKeys.GroupText, MacKeys.GroupSystem };
+            // Сколько переключателей на странице, когда все группы свёрнуты, — с этим
+            // и сравниваем. Голое «больше одного» истинно всегда: над группами стоят
+            // ещё пять переключателей, и проверка не могла провалиться.
             Settings saved = _s.Snapshot();
+            open.SetValue(_win, null);
+            var shutBoxes = new List<CheckBox>();
+            var shutCombos = new List<ComboBox>();
+            try { Walk((UIElement)m.Invoke(_win, null), shutBoxes, shutCombos); }
+            catch (Exception e) { Check("страница сочетаний собирается свёрнутой", false, Inner(e)); return; }
+            int shut = shutBoxes.Count;
+
+            string[] groups = { MacKeys.GroupEdit, MacKeys.GroupText, MacKeys.GroupSystem };
             foreach (string g in groups)
             {
                 open.SetValue(_win, g);
@@ -168,7 +247,8 @@ namespace MagicKeys
                 var combos = new List<ComboBox>();
                 try { Walk((UIElement)m.Invoke(_win, null), boxes, combos); }
                 catch (Exception e) { Check("группа «" + g + "» раскрывается", false, Inner(e)); continue; }
-                Check("группа «" + g + "»: строки показаны", boxes.Count > 1, "строк нет");
+                Check("группа «" + g + "»: строки показаны", boxes.Count > shut,
+                      "переключателей столько же, сколько в свёрнутом виде — " + boxes.Count);
                 foreach (CheckBox cb in boxes) Flip(cb);
                 Restore(saved);
             }

@@ -206,10 +206,10 @@ namespace MagicKeys
                        + KeyWatch.MediaSeen + "|" + KeyWatch.EjectSeen + "|"
                        + KeyWatch.AllUsages().Length + "|" + AppleDriver.TakesFunctionRow;
             if (now == _deviceMark) return;
-            // Отметку ставим ПОСЛЕ сборки: BuildPage умеет промолчать, если сборка уже
-            // идёт, — и тогда изменение терялось бы навсегда, потому что отметка уже новая.
-            BuildPage();
-            _deviceMark = now;
+            // Отметку ставим по факту сборки, а не по факту вызова: BuildPage умеет
+            // промолчать, если сборка уже идёт, — и тогда изменение потерялось бы
+            // навсегда, потому что отметка уже новая, а страница ещё старая.
+            if (BuildPage()) _deviceMark = now;
         }
 
         // ------------------------------------------------------------------
@@ -268,9 +268,10 @@ namespace MagicKeys
             }
         }
 
-        private void BuildPage()
+        /// <returns>Собрали ли страницу. Ложь — сборка уже шла, и наша просьба пропала.</returns>
+        private bool BuildPage()
         {
-            if (_building) return;
+            if (_building) return false;
             _building = true;
 
             // Уходим со страницы проверки — снимаем подписку, иначе они копятся,
@@ -307,7 +308,9 @@ namespace MagicKeys
                 // никогда, и отказ по правам выглядел точно как успех.
                 _fnNotice = null;
                 _tuneNotice = null;
+                _autostartNotice = null;
             }
+            return true;
         }
 
         private void Head(string title, string hint)
@@ -403,7 +406,11 @@ namespace MagicKeys
                     // (о чём сама же сноска ниже и просит), человек получал работающие
                     // Fn+←→ и утверждение, что они отобраны; а выбрав заменителем клавишу,
                     // которая после схемы «Как в Windows» стала левым Alt, — наоборот.
-                    : _s.MacShortcuts && FnSubstituteIsOption
+                    // И поимённое выключение: перехват спрашивает MacEnabled у каждой
+                    // строки, а выключенное пропускает дальше — в навигацию Fn. Выключив
+                    // группу «Текст», человек читал, что Fn+←→ у него отобраны, при том
+                    // что они как раз работают.
+                    : _s.MacShortcuts && FnSubstituteIsOption && _s.MacEnabled("wordleft")
                         ? "Fn+↑↓ листают страницу, Fn+Enter — это Insert. Fn+←→ и Fn+Backspace " +
                           "достаются сочетаниям macOS: там ⌥ ходит по словам, а начало и конец " +
                           "строки — на ⌘←→."
@@ -918,9 +925,20 @@ namespace MagicKeys
         /// <summary>Запуск программы — одной карточкой на странице «О программе».</summary>
         private UIElement StartupCard()
         {
-            return Card("Запуск", null,
+            var rows = new List<UIElement>();
+            rows.Add(
+                // Пересобираем: запись в реестр может не лечь — политикой, правами, —
+                // а переключатель показывал бы щелчок, а не то, что в реестре, до самого
+                // ухода со страницы.
                 Toggle("Запускать вместе с Windows", Autostart.Enabled,
-                    delegate(bool v) { Autostart.Set(v, _s.StartMinimized); }),
+                    delegate(bool v)
+                    {
+                        if (!Autostart.Set(v, _s.StartMinimized))
+                            _autostartNotice = "Windows не дала записать автозапуск. " +
+                                               "Чаще всего это политика или права на раздел реестра.";
+                        BuildPage();
+                    }));
+            rows.Add(
                 Toggle("Запускаться свёрнутой в значок", _s.StartMinimized,
                     delegate(bool v)
                     {
@@ -929,7 +947,13 @@ namespace MagicKeys
                         // Запись автозапуска несёт в себе этот ответ — переписываем её.
                         if (Autostart.Enabled) Autostart.Set(true, v);
                     }));
+            // Отчёт живёт одну пересборку — ту, которую сам и вызвал.
+            if (!String.IsNullOrEmpty(_autostartNotice)) rows.Add(Note(_autostartNotice));
+            return Card("Запуск", null, rows.ToArray());
         }
+
+        /// <summary>Почему автозапуск не записался — на одну пересборку, как и прочие отчёты.</summary>
+        private string _autostartNotice;
 
         /// <summary>
         /// Диагностика: что программа видит и что до неё доходит. Прежде это были две
@@ -1083,6 +1107,12 @@ namespace MagicKeys
             var stack = new StackPanel();
 
             stack.Children.Add(StateCard());
+
+            if (!String.IsNullOrEmpty(Settings.LoadFailed))
+                stack.Children.Add(Card("Прежние настройки не прочитались", null,
+                    Note("Файл настроек оказался испорчен — оборванной записью, чужой правкой, " +
+                         "сбоем диска. Программа взяла заводские, а прежний файл отложила " +
+                         "рядом, чтобы было куда посмотреть:\n\n" + Settings.LoadFailed)));
 
             // Слой сочетаний узнаёт ⌘ по назначению, а не по надписи на клавише. После
             // готовой схемы «Как в Windows» ⌘ переезжает на клавишу ⌥, и молчать об этом
@@ -1662,11 +1692,10 @@ namespace MagicKeys
             {
                 Content = "Остановить",
                 Margin = new Thickness(0, 0, 8, 8),
-                // По добыче, а не по SetupBusy: остановить можно только закачку,
-                // у которой есть просьба об отмене. Работу с драйвером не остановить
-                // ничем — а кнопка появлялась и над ней, гасла от щелчка и молчала.
-                Visibility = _setupThread != null && _setupThread.IsAlive
-                    ? Visibility.Visible : Visibility.Collapsed
+                // По отменяемому шагу, а не по «жив ли поток». Просьбу об отмене читает
+                // только закачка: распаковка, добыча 7-Zip и pnputil её не спрашивают,
+                // а кнопка висела и над ними — гасла от щелчка и не делала ничего.
+                Visibility = _setupCancellable ? Visibility.Visible : Visibility.Collapsed
             };
             _setupStop.SetResourceReference(StyleProperty, "Btn");
             _setupStop.Click += delegate
@@ -1830,6 +1859,14 @@ namespace MagicKeys
         /// </summary>
         private string _updSaid;
 
+        /// <summary>
+        /// Идёт шаг, который правда можно остановить. Просьбу об отмене читает одна
+        /// закачка; распаковка, добыча 7-Zip и pnputil доводят дело до конца, что бы
+        /// им ни говорили, — и кнопка над ними была бы обещанием, которого никто
+        /// не исполнит.
+        /// </summary>
+        private volatile bool _setupCancellable;
+
         /// <summary>Идёт долгая работа с драйвером: удаление или запись его настройки.</summary>
         private bool _driverBusy;
 
@@ -1873,6 +1910,7 @@ namespace MagicKeys
             // SetupBusy, а не только свой поток: удаление драйвера и распаковка ходят
             // в один каталог, а запрос прав администратора уже висит наверху.
             if (SetupBusy) { SetupSay("Уже идёт работа, дождитесь конца."); return; }
+            _setupCancellable = false;
 
             // Прежний освобождаем: дескриптор ожидания — вещь неуправляемая,
             // и копить их по одному на каждое нажатие кнопки незачем.
@@ -1924,10 +1962,24 @@ namespace MagicKeys
                         string package = System.IO.Path.Combine(AppleDriverSetup.CacheFolder, "BootCampESD.pkg");
                         // Семьсот мегабайт человеку надо уметь остановить. Просьба об отмене
                         // и так проверяется на каждом куске — не хватало только способа
-                        // её подать; кнопка «Отменить» появляется рядом с ходом загрузки.
-                        if (!AppleDriverSetup.DownloadFromApple(url, package,
+                        // её подать; кнопка «Остановить» появляется рядом с ходом загрузки.
+                        // Признак поднимаем ровно вокруг закачки: она одна эту просьбу
+                        // и читает, а над распаковкой кнопка была бы обещанием впустую.
+                        _setupCancellable = true;
+                        ToWindow(delegate { if (CurrentPage == "driver") BuildPage(); });
+                        bool got;
+                        try
+                        {
+                            got = AppleDriverSetup.DownloadFromApple(url, package,
                                 delegate(double part, string what) { SetupSay(head + "\n\n" + what); },
-                                _setupCancel, out error))
+                                _setupCancel, out error);
+                        }
+                        finally
+                        {
+                            _setupCancellable = false;
+                            ToWindow(delegate { if (CurrentPage == "driver") BuildPage(); });
+                        }
+                        if (!got)
                         {
                             SetupSay(head + (error == "отменено"
                                 ? "\n\nОстановлено."
@@ -2296,6 +2348,19 @@ namespace MagicKeys
                 _updAction.Content = _updFound != null ? "Обновить" : "Проверить";
                 _updAction.IsEnabled = false;
             }
+            else if (!String.IsNullOrEmpty(_updSaid))
+            {
+                // Сказанное в прошлый раз — отказ или «установщик запущен» — важнее
+                // найденного выпуска и потому спрашивается раньше. Иначе первая же
+                // самопроизвольная пересборка меняла «установщик подписан чужим ключом»
+                // на приглашение обновиться: предупреждение о подделке жило до первого
+                // нажатия незнакомой клавиши.
+                _updStatus.Text = _updSaid;
+                _updStatus.SetResourceReference(TextBlock.ForegroundProperty, "TextSec");
+                bool launched = _updSaid == "Установщик запущен";
+                _updAction.Content = _updFound != null && !launched ? "Повторить" : "Проверить";
+                _updAction.IsEnabled = !launched;
+            }
             else if (_updFound != null)
             {
                 // Найденный выпуск переживает перестройку: она случается сама по себе —
@@ -2305,17 +2370,6 @@ namespace MagicKeys
                 _updStatus.SetResourceReference(TextBlock.ForegroundProperty, "TextSec");
                 _updAction.Content = "Обновить";
                 _updAction.IsEnabled = true;
-            }
-            else if (!String.IsNullOrEmpty(_updSaid))
-            {
-                // Сказанное в прошлый раз — отказ или «установщик запущен». Без этого
-                // первая же самопроизвольная пересборка стирала его и подставляла
-                // «Проверено N дней назад» — прямо после проверки, которая не удалась
-                // и отметки о себе не оставила.
-                _updStatus.Text = _updSaid;
-                _updStatus.SetResourceReference(TextBlock.ForegroundProperty, "TextSec");
-                _updAction.Content = "Проверить";
-                _updAction.IsEnabled = _updSaid != "Установщик запущен";
             }
             else ShowIdle();
 

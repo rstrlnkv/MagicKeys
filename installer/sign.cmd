@@ -1,4 +1,5 @@
 @echo off
+chcp 65001>nul
 rem Подписать переданные файлы. Отпечаток сертификата берётся из sign.thumbprint
 rem рядом с этим скриптом или из переменной MAGICKEYS_SIGN_THUMBPRINT.
 rem

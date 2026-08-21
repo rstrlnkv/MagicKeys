@@ -159,7 +159,7 @@ if errorlevel 1 (
   rem открытый, а сертификат один: у всех, кроме владельца ключа, пакет выйдет
   rem неподписанным, и это не поломка сборки. Поломка — когда ключ есть, а подпись
   rem не легла: вот тогда отказ.
-  powershell -NoProfile -Command "$want=(Get-Content '%HERE%sign.thumbprint').Trim(); exit [int](-not (Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -ErrorAction SilentlyContinue ^| Where-Object { $_.Thumbprint -eq $want }))"
+  powershell -NoProfile -Command "$want=(Get-Content '%HERE%sign.thumbprint').Trim(); exit [int](-not (Get-ChildItem Cert:\CurrentUser\My, Cert:\LocalMachine\My -ErrorAction SilentlyContinue | Where-Object { $_.Thumbprint -eq $want }))"
   if errorlevel 1 (
     echo Готово, без подписи: %ROOT%\MagicKeys-%VERSION%-x64.msi
     echo Сертификата выпуска на этой машине нет — так и должно быть у всех, кроме

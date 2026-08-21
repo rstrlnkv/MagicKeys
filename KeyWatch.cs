@@ -122,21 +122,21 @@ namespace MagicKeys
         /// </summary>
         public static void ForgetPhysical()
         {
-            _detectedPhys = (int)PhysLayout.Ansi;
-            // Заодно и счёт F-клавиш: он тоже умеет только расти, и одна чужая
-            // полноразмерная клавиатура иначе оставляла бы строки F13–F19 в окне
-            // до перезапуска. Ровно за это из настроек убрали ObservedFunctionKeys.
+            // Счёт F-клавиш умеет только расти, и одна чужая полноразмерная клавиатура
+            // иначе оставляла бы строки F13–F19 в окне до перезапуска. Ровно за это
+            // из настроек убрали ObservedFunctionKeys.
             //
             // Вместе с ним обязательно забыть и виденные клавиши: счёт поднимается
             // только на свежих, а Bluetooth переподключается на каждом пробуждении.
             // Обнулив одно и оставив другое, мы теряли счёт навсегда — после первого
-            // же выхода из сна строки F13-F19 пропадали до перезапуска программы.
-            // Всё под одним замком. Обнулив счёт снаружи, мы оставляли щель: поток
-            // переписи успевал добавить свежую F13 и поднять счёт до 19, а следующая
-            // строка возвращала ноль — клавиша при этом уже в наборе и свежей больше
-            // не станет никогда, и строки F13–F19 пропадали из окна до смены набора.
+            // же выхода из сна строки F13–F19 пропадали до перезапуска программы.
+            //
+            // Всё под одним замком, и поднимается счёт под ним же: обнулив его снаружи,
+            // мы оставляли щель в обе стороны — то теряли поднятый счёт, то держали
+            // чужой при клавиатуре, у которой таких клавиш нет.
             lock (Sync)
             {
+                _detectedPhys = (int)PhysLayout.Ansi;
                 SeenKeys.Clear();
                 SeenUsages.Clear();
                 _maxFunctionKey = 0;
@@ -154,12 +154,6 @@ namespace MagicKeys
                 for (int i = 0; i < JisScans.Length; i++)
                     if (scan == JisScans[i]) { _detectedPhys = (int)PhysLayout.Jis; break; }
             }
-        }
-
-        /// <summary>Приходил ли когда-нибудь такой код медиастраницы.</summary>
-        public static bool SeenUsage(int usage)
-        {
-            lock (Sync) return SeenUsages.Contains(usage);
         }
 
         public static int[] AllUsages()
@@ -475,17 +469,22 @@ namespace MagicKeys
         {
             if (vk == 0 || vk == 0xFF) return;
             NoteScan(scanCode);
+            // Набор и счёт — под одним замком, как и их забвение. Иначе счёт успевал
+            // подняться уже после того, как поток окна его обнулил, и строки F13–F19
+            // оставались в окне при клавиатуре, у которой их нет.
             bool fresh;
-            lock (Sync) fresh = SeenKeys.Add(vk);
+            lock (Sync)
+            {
+                fresh = SeenKeys.Add(vk);
+                if (fresh && vk >= Vk.F1 && vk <= Vk.F24)
+                {
+                    int n = vk - Vk.F1 + 1;
+                    if (n > _maxFunctionKey) _maxFunctionKey = n;
+                }
+            }
 
             Report(new KeyEvent { Media = false, Code = vk, ScanCode = scanCode, Fresh = fresh });
             if (!fresh) return;
-
-            if (vk >= Vk.F1 && vk <= Vk.F24)
-            {
-                int n = vk - Vk.F1 + 1;
-                if (n > _maxFunctionKey) _maxFunctionKey = n;
-            }
 
             // Как и у Report: упавший подписчик не должен уносить разбор события.
             try

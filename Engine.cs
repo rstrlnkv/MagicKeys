@@ -457,8 +457,12 @@ namespace MagicKeys
                     if (msg.hwnd == IntPtr.Zero && msg.message == WmApply)
                     {
                         // Отпустить старое и взять новое — одним шагом и на своём потоке.
-                        ReleaseEverything();
+                        // Отпускаем по старым настройкам (иначе снимем не тот код),
+                        // а перечитываем зажатое — уже по новым: заменитель Fn, сменённый
+                        // под зажатой клавишей, иначе восстанавливался по прежнему,
+                        // и снять признак было нечем — отпускание уже не про ту клавишу.
                         Settings shot = _pendingCfg;
+                        ReleaseEverything(shot);
                         if (shot != null) _cfg = shot;
                         continue;
                     }
@@ -1537,7 +1541,15 @@ namespace MagicKeys
             foreach (KeyValuePair<ModKey, int> p in held) if (IsMenuKey(p.Value)) menu = true;
             if (menu) Input.Tap(VkNoop);
 
-            foreach (KeyValuePair<ModKey, int> p in held) Input.Key(p.Value, false);
+            foreach (KeyValuePair<ModKey, int> p in held)
+            {
+                Input.Key(p.Value, false);
+                // Забыть обязательно — то же правило, что у ReleaseWindowsKey. Win и Alt
+                // мы не возвращаем, и запись о них продолжала бы уверять, что клавиша
+                // зажата: раскладка Apple отступала, щит ставился вхолостую, а настоящее
+                // отпускание уходило вторым разом.
+                if (IsMenuKey(p.Value)) _injected.Remove(p.Key);
+            }
             if (_cmdTabAlt) { Input.Key(Vk.LMenu, false); _cmdTabAlt = false; }
         }
 
@@ -1605,7 +1617,13 @@ namespace MagicKeys
         /// то, что реально ушло в Windows: у переназначенной клавиши это не её
         /// собственный код, а код замены.
         /// </summary>
-        private void ReleaseEverything()
+        private void ReleaseEverything() { ReleaseEverything(null); }
+
+        /// <param name="after">
+        /// Настройки, по которым перечитывать зажатое. Пусто — нынешние. Отличаются они
+        /// ровно в одном случае: настройки меняют, пока человек держит модификатор.
+        /// </param>
+        private void ReleaseEverything(Settings after)
         {
             try
             {
@@ -1619,8 +1637,17 @@ namespace MagicKeys
                     if (IsMenuKey(pair.Value)) menu = true;
                 if (menu) Input.Tap(VkNoop);
 
+                // Запоминаем, что отпустили. Перечёт ниже спрашивает Windows про
+                // собственный код клавиши сразу после этого, а она успевает разобрать
+                // посланное не всегда: подставленный нами control записывался бы
+                // в множество нажатого как чужая настоящая клавиша — и оставался там
+                // навсегда, потому что физически его никто не нажимал.
+                var letGo = new List<int>();
                 foreach (KeyValuePair<ModKey, int> pair in new List<KeyValuePair<ModKey, int>>(_injected))
+                {
                     Input.Key(pair.Value, false);
+                    letGo.Add(pair.Value);
+                }
                 _injected.Clear();
                 if (_cmdTabAlt) { Input.Key(Vk.LMenu, false); _cmdTabAlt = false; }
                 _fnHeld = false;
@@ -1693,7 +1720,7 @@ namespace MagicKeys
                 // прозевали (отпускания проходили мимо, пока перехват стоял на паузе),
                 // и убрать то, чего она не держит, — но лишь у клавиш, идущих насквозь:
                 // про остальных она ничего сказать не может.
-                Settings cur = _cfg;
+                Settings cur = after != null ? after : _cfg;
                 foreach (ModKey phys in new[]
                 {
                     ModKey.LCtrl, ModKey.RCtrl, ModKey.LWin, ModKey.RWin,
@@ -1702,6 +1729,8 @@ namespace MagicKeys
                 {
                     int own = ModNames.VirtualKey(phys);
                     if (own == 0) continue;
+                    // Про то, что сами только что отпустили, Windows не спрашиваем.
+                    if (letGo.Contains(own)) continue;
                     if (!Held(own))
                     {
                         if (cur == null || cur.TargetOf(phys) == phys) _modsDown.Remove(phys);
@@ -1723,6 +1752,21 @@ namespace MagicKeys
                     if (own == Vk.Capital && cur != null && cur.TargetOf(phys) == ModKey.CapsLock)
                         _capsSources.Add(phys);
                 }
+
+                // Переназначенные клавиши остались в множестве нажатого — и правильно:
+                // человек их держит. Но подставленный код мы отпустили, а _modTaken
+                // очистили, и WindowsHolds для них проваливался в последнюю строку —
+                // отвечал собственным кодом клавиши. Тем кодом, которого Windows
+                // не держит и не держала: нажатие мы забрали себе. Три щита — заменителя
+                // Fn, EmitText и RestoreHeld — по этому ответу не только отпускали
+                // несуществующее, но и ЖАЛИ клавишу обратно: загорался Caps Lock,
+                // а после схемы «Как в Windows» зажимался настоящий Alt.
+                //
+                // Возвращаем их в «нажатие взяли, ничего не послали» — это правда:
+                // Windows за ними сейчас не держит ничего.
+                if (cur != null)
+                    foreach (ModKey phys in _modsDown)
+                        if (cur.TargetOf(phys) != phys) _modTaken.Add(phys);
 
                 // И заменитель Fn: он такое же состояние, как множество зажатого, и его
                 // забвение видно сразу. Держа правый ⌥, щёлкнуть галочку в окне — и до

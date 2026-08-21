@@ -32,7 +32,10 @@ namespace MagicKeys
             Input.Sink = Record;
             _eng = new Engine();
             _handle = typeof(Engine).GetMethod("Handle", BindingFlags.NonPublic | BindingFlags.Instance);
-            _release = typeof(Engine).GetMethod("ReleaseEverything", BindingFlags.NonPublic | BindingFlags.Instance);
+            // Без доводов: их два, и без указания типов отражение не выбирает.
+            _release = typeof(Engine).GetMethod("ReleaseEverything",
+                           BindingFlags.NonPublic | BindingFlags.Instance,
+                           null, Type.EmptyTypes, null);
             if (_handle == null || _release == null) { Console.WriteLine("нет Handle/ReleaseEverything"); return 2; }
 
             Enabled();
@@ -963,6 +966,53 @@ namespace MagicKeys
                   Sent().IndexOf(N(Vk.MediaPlay)) < 0,
                   "после сброса F2 снова дала медиа — заменитель забыт: «" + Sent() + "»");
             Clear();
+            Up(Vk.Capital); Clear();
+
+            // После сброса щит заменителя Fn не должен «возвращать» клавишу, которой
+            // Windows не держала. Подставленный код мы отпустили, а клавиша осталась
+            // в множестве нажатого — и WindowsHolds отвечал её собственным кодом.
+            s = Fresh();
+            s.FnSubstitute = ModKey.CapsLock;
+            s.MapCapsLock = ModKey.LCtrl;
+            s.MediaFirst = true;
+            s.FKeys[1] = "media.play";
+            Use(s);
+            Down(Vk.Capital);
+            _release.Invoke(_eng, null);
+            Clear();
+            Down(Vk.F1 + 1); Up(Vk.F1 + 1);
+            Check("после сброса заменитель Fn не жмёт Caps Lock",
+                  Sent().IndexOf(N(Vk.Capital) + "v") < 0,
+                  "щит вернул клавишу, которой Windows не держала: " + Sent());
+            Clear();
+            Up(Vk.Capital); Clear();
+
+            // То же другим щитом: «Как в Windows» — ⌥ приходит клавишей Win.
+            s = Fresh();
+            s.MapLAlt = ModKey.LWin;
+            Use(s);
+            Down(Vk.LMenu);
+            _release.Invoke(_eng, null);
+            Clear();
+            Send(Vk.Clear, 0x59, true, false);     // «=» цифрового блока идёт через EmitText
+            Send(Vk.Clear, 0x59, false, false);
+            Check("после сброса щит не жмёт Alt, которого никто не держал",
+                  Sent().IndexOf(N(Vk.LMenu) + "v") < 0, Sent());
+            Clear();
+            Up(Vk.LMenu); Clear();
+
+            // Подставленный код, о котором Windows ещё не успела узнать, не должен
+            // записаться в множество нажатого как чужая настоящая клавиша.
+            s = Fresh();
+            s.MapCapsLock = ModKey.LCtrl;
+            Use(s);
+            Down(Vk.Capital);
+            Engine.HeldProbe = delegate(int probe) { return probe == Vk.LControl; };
+            try { _release.Invoke(_eng, null); }
+            finally { Engine.HeldProbe = null; }
+            Check("подставленный control не записывается в множество как своя клавиша",
+                  !ModsDown().Contains(ModKey.LCtrl),
+                  "control остался зажатым навсегда: раскладка Apple молчит, ⌘C не узнаётся");
             Up(Vk.Capital); Clear();
 
             // Признак призрачного Ctrl снимается только его же отпусканием, а оно приходит

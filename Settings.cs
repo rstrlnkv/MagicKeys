@@ -431,12 +431,19 @@ namespace MagicKeys
                 {
                     string bad = FilePath + ".bad";
                     if (File.Exists(bad)) File.Delete(bad);
-                    if (File.Exists(FilePath)) File.Move(FilePath, bad);
+                    if (File.Exists(FilePath)) { File.Move(FilePath, bad); LoadFailed = bad; }
                 }
                 catch { }
             }
             return new Settings();
         }
+
+        /// <summary>
+        /// Куда отложен непрочитанный файл настроек, или пусто. Молчать об этом нельзя:
+        /// человек получает заводские настройки и видит, что программа «сбросилась сама»,
+        /// — а единственный след до сих пор уходил в журнал, выключенный по умолчанию.
+        /// </summary>
+        public static string LoadFailed;
 
         public void Save()
         {
@@ -658,13 +665,14 @@ namespace MagicKeys
             catch (Exception e) { Diag.Log("не удалось проверить автозапуск", e); }
         }
 
-        public static void Set(bool on, bool hidden)
+        /// <returns>Легло ли в реестр. Ложь — значит переключателю верить нельзя.</returns>
+        public static bool Set(bool on, bool hidden)
         {
             try
             {
                 using (RegistryKey k = Registry.CurrentUser.CreateSubKey(Key))
                 {
-                    if (k == null) return;
+                    if (k == null) return false;
                     if (on)
                     {
                         string exe = System.Reflection.Assembly.GetEntryAssembly().Location;
@@ -679,8 +687,13 @@ namespace MagicKeys
                         k.DeleteValue(Name, false);
                     }
                 }
+                return Enabled == on;
             }
-            catch { }
+            catch (Exception e)
+            {
+                Diag.Log("автозапуск: запись не удалась", e);
+                return false;
+            }
         }
     }
 

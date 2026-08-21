@@ -677,7 +677,6 @@ namespace MagicKeys
             }
         }
 
-        /// <summary>Качает пакет, докачивая начатое. report(доля 0..1, поясняющая строка).</summary>
         /// <summary>
         /// Скачать пакет Apple: не сходя с https и не сходя с сайта Apple. После этого
         /// файла проверять нечем — он уйдёт в pnputil с правами администратора, и
@@ -698,6 +697,7 @@ namespace MagicKeys
         /// Держаться ли того же сайта на перенаправлениях. Для пакета Apple — да:
         /// после него проверять нечем. Для установщика 7-Zip — нет: у него своя подпись.
         /// </param>
+        /// <summary>Качает пакет, докачивая начатое. report(доля 0..1, поясняющая строка).</summary>
         private static bool Download(string url, string target, Action<double, string> report,
                                     ManualResetEvent cancel, bool sameSite, out string error)
         {
@@ -714,6 +714,13 @@ namespace MagicKeys
                 {
                     Diag.Log("в кэше вместо файла точка повторного разбора — убираю");
                     try { File.Delete(target); } catch { }
+                    // Не вышло — отказываемся. Открыть по тому же пути FileMode.Create
+                    // значит обрезать цель ссылки, то есть чужой файл в чужом каталоге.
+                    if (File.Exists(target) && IsLink(target))
+                    {
+                        error = "в кэше вместо файла ссылка, и убрать её не вышло";
+                        return false;
+                    }
                 }
                 long have = File.Exists(target) && !IsLink(target) ? new FileInfo(target).Length : 0;
                 // Тем же правилом, что и сама закачка: иначе для 7-Zip длина не узнавалась

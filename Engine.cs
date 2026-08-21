@@ -468,6 +468,17 @@ namespace MagicKeys
             uint id = _threadId;
             if (id == 0 || !Native.PostThreadMessageW(id, WmAction, IntPtr.Zero, IntPtr.Zero))
             {
+                // Тот же вопрос, что и у PostRelease, и по той же причине: идентификатор
+                // снимается раньше, чем поток отпустит своё, и лезть в его состояние
+                // со стороны нельзя. RunAsked идёт в RunAction, а тот перебирает
+                // множество нажатого и пишет в записи о снятом — одновременная запись
+                // в Dictionary портит его внутренние цепочки.
+                if (_threadAlive)
+                {
+                    Diag.Log("просьба о действии брошена: поток перехвата ещё доживает выход");
+                    TakeAsked();
+                    return;
+                }
                 // Потока нет — до Start или после Stop. Исполняем здесь же и ровно тем
                 // же способом: две двери обязаны вести в одно место, иначе проверять
                 // одну значит не проверять другую.
@@ -839,7 +850,9 @@ namespace MagicKeys
             // «=» печатает «=». Второго осмысленного ответа нет: Windows не понимает
             // того, что эта клавиша шлёт на самом деле, и настройка существовала только
             // потому, что механизм внутри общий с ⌧.
-            else if (k.scanCode == 0x59 && vk == Vk.Clear) { if (HandleSingle(s, vk, "text.equals", down)) return true; }
+            // Без «если не взяли»: «=» — готовый символ, а не выбор человека, и мимо
+            // разбора одиночных клавиш он не уходит никогда.
+            else if (k.scanCode == 0x59 && vk == Vk.Clear) return HandleSingle(s, vk, "text.equals", down);
 
             if (s.AppleLayoutEnabled)
             {
@@ -1528,11 +1541,19 @@ namespace MagicKeys
                 if (!_singleAction.TryGetValue(sourceVk, out id))
                 {
                     id = actionId;
-                    if (Actions.Get(id).Kind == ActionKind.PassThrough) return false;
+                    // Решение защёлкиваем, чем бы нажатие ни кончилось, — то же правило,
+                    // что у верхнего ряда. Прежде «Оставить как есть» уходило насквозь
+                    // без следа, и автоповтор той же клавиши разбирался заново: сменив
+                    // назначение ⌧ под её удержанием, человек получал настоящий Num Lock,
+                    // уже выключивший блок, и съеденное нами отпускание — для Windows
+                    // клавиша оставалась зажатой.
                     _singleAction[sourceVk] = id;
+                    if (Actions.Get(id).Kind == ActionKind.PassThrough) return false;
                     RunAction(Actions.Get(id), false);
                     return true;
                 }
+                // Ушедшее насквозь так и уходит: и повтор, и отпускание.
+                if (Actions.Get(id).Kind == ActionKind.PassThrough) return false;
                 // Автоповтор: то же действие, но повтором — аккорды и запуск программ
                 // на нём не срабатывают, иначе удержание плодило бы окна калькулятора.
                 RunAction(Actions.Get(id), true);
@@ -1541,7 +1562,10 @@ namespace MagicKeys
 
             if (!_singleAction.TryGetValue(sourceVk, out id)) return false;
             _singleAction.Remove(sourceVk);
-            Actions.End(Actions.Get(id));
+            KeyAction was = Actions.Get(id);
+            // Нажатие ушло в приложение — и отпускание обязано уйти туда же.
+            if (was.Kind == ActionKind.PassThrough) return false;
+            Actions.End(was);
             return true;
         }
 
@@ -1594,7 +1618,9 @@ namespace MagicKeys
 
                 // Настоящую F-клавишу мы берём себе, только если её вызвали заменителем
                 // Fn: иначе снимать с него нечего, а сама клавиша и так дойдёт куда надо.
-                _fkeyTake[index] = _fkeyMedia[index] || (_fnHeld && FnHoldsVk != 0);
+                // Спрашивают об этом ровно в одном месте — в ветке настоящей F-клавиши,
+                // то есть при ложном _fkeyMedia. Слагаемое про медиа туда не доходило.
+                _fkeyTake[index] = _fnHeld && FnHoldsVk != 0;
             }
             else if (!down)
             {
@@ -1806,6 +1832,13 @@ namespace MagicKeys
             if (a == null) return;
             if (repeat && !a.Repeats) return;
 
+            // Alt переключателя окон — с дороги, каким бы ни было действие. Прежде это
+            // делали только готовый символ и аккорд, а «клавиша» шла напрямую: назначенная
+            // на F-клавишу или на ⌧ Home уходила при открытом переключателе как Alt+Home
+            // (браузер на домашнюю страницу), Escape — как Alt+Esc, то есть перелистыванием
+            // окон, а PrintScreen снимал активное окно вместо экрана.
+            DropSwitcherAlt();
+
             if (a.Kind == ActionKind.Text) { EmitText(a.Target); return; }
             if (a.Kind == ActionKind.Chord)
             {
@@ -1918,7 +1951,16 @@ namespace MagicKeys
                 _hkl = IntPtr.Zero;
                 _deadPrefix = null;
                 _swallowed.Clear();
-                _letThrough.Clear();
+
+                // Записи о том, кто хозяин клавиши, не стираем, а сверяем с Windows —
+                // то же правило, что у множества нажатого. Стерев их, мы отдавали
+                // клавишу, которую человек ещё держит, первому же слою: автоповтор
+                // доставался ему, а отпускание он же и съедал — настоящая клавиша
+                // оставалась зажатой в приложении навсегда, и снять её было нечем.
+                // А сброс случается сам: переподключение по Bluetooth, блокировка
+                // экрана, пробуждение, движение галочки в окне.
+                foreach (int one in new List<int>(_letThrough))
+                    if (!Held(one)) _letThrough.Remove(one);
 
 
                 // Отпускаем то, что держим ЗА человека, а не только модификаторы.
@@ -1932,12 +1974,27 @@ namespace MagicKeys
                 _navActive.Clear();
 
                 // Одиночные клавиши и перестановка ISO — то же самое: отпустить некому.
+                //
+                // Кроме тех, что ушли в приложение: у них отпускать нечего, а запись —
+                // это «хозяин клавиши», и стереть её значит отдать клавишу первому же
+                // слою. Их оставляем, пока Windows их держит, — тем же правилом, что
+                // и всё прочее о владении.
                 foreach (KeyValuePair<int, string> pair in new List<KeyValuePair<int, string>>(_singleAction))
                 {
-                    try { Actions.End(Actions.Get(pair.Value)); }
+                    try
+                    {
+                        KeyAction one = Actions.Get(pair.Value);
+                        if (one.Kind == ActionKind.PassThrough)
+                        {
+                            if (Held(pair.Key)) continue;
+                            _singleAction.Remove(pair.Key);
+                            continue;
+                        }
+                        Actions.End(one);
+                        _singleAction.Remove(pair.Key);
+                    }
                     catch (Exception e) { Diag.Log("не удалось отпустить одиночную клавишу", e); }
                 }
-                _singleAction.Clear();
 
                 foreach (uint scan in new List<uint>(_isoSwapped))
                     Input.Scan((ushort)(scan == 0x29 ? 0x56 : 0x29), false, false);
@@ -1953,7 +2010,13 @@ namespace MagicKeys
                         try { Actions.End(Actions.Get(_fkeyAction[i])); }
                         catch (Exception e) { Diag.Log("не удалось отпустить действие", e); }
                     }
-                    _fkeyLatched[i] = false;
+                    // Защёлку снимаем только у той клавиши, которой Windows не держит.
+                    // Настоящая F-клавиша, взятая нами, нажата в Windows нашим же
+                    // Input.Key — и пока человек её держит, отдавать её слою аккордов
+                    // нельзя: он съест отпускание, и в приложении она останется зажатой.
+                    // Прочее состояние ряда обнуляем: отпускание найдёт защёлку и уйдёт
+                    // в приложение настоящим, а это и есть верный исход.
+                    if (!Held(Vk.F1 + i)) _fkeyLatched[i] = false;
                     _fkeyTake[i] = false;
                     _fkeyDown[i] = false;
                     _fkeyMedia[i] = false;
@@ -2002,12 +2065,11 @@ namespace MagicKeys
                     // целиком, и ни одно сочетание ⌘ больше не узнавалось.
                     if (_phantomCtrl && phys == ModKey.LCtrl) continue;
                     _modsDown.Add(phys);
-                    // Caps Lock тоже: без этого следующий его автоповтор переворачивал
-                    // наш счёт регистра второй раз, а Windows не переворачивала ничего.
-                    // Но только когда клавиша правда держит Caps Lock. Уведённая
-                    // на control, она попадала в множество навсегда — снимают запись
-                    // по тому же условию, которое для неё ложно, — и счёт регистра
-                    // переставал переворачиваться вовсе.
+                    // Caps Lock сюда попадает наравне со всеми, и это нарочно: иначе
+                    // её следующий автоповтор переворачивал наш счёт регистра второй
+                    // раз, а Windows не переворачивала ничего. Почему уведённая
+                    // на control клавиша остаётся в множестве — объяснено выше,
+                    // у самого перечёта.
                 }
 
                 // Множество взятого не стирали: оно и есть правда о том, чьи нажатия

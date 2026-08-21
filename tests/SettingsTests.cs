@@ -66,6 +66,8 @@ namespace MagicKeys
             RepressAfterChord();
             TwoKeysOneCode();
             SwitcherAltGetsOutOfTheWay();
+            ResetKeepsTheOwner();
+            SingleKeyLatches();
             LayoutLevels();
             SnapshotIndependence();
             LayoutGuess();
@@ -475,6 +477,20 @@ namespace MagicKeys
                   Count(Sent(), N(Vk.E) + "v") == 1 && Count(Sent(), N(Vk.E) + "^") == 1,
                   Sent());
             Clear();
+
+            // И ради чего всё это заведено: щит. Аккорд в конце отпускает те же
+            // модификаторы, что нажал, — в том числе ⌘, которую держит человек.
+            // Убрать её с дороги надо ДО посылки, иначе она молча перестанет
+            // работать до перенажатия. Без зажатого модификатора спрашивать нечего:
+            // прежняя проверка прошла бы и при вызове Actions напрямую.
+            _eng.Apply(ex);
+            Down(Vk.LWin); Clear();
+            _eng.PostAction(_eng.Current.EjectKey);
+            int winOff = Sent().IndexOf(N(Vk.LWin) + "^");
+            int eDown = Sent().IndexOf(N(Vk.E) + "v");
+            Check("⏏ с аккордом убирает с дороги зажатую человеком ⌘",
+                  winOff >= 0 && eDown > winOff, Sent());
+            Clear(); Up(Vk.LWin); Clear();
             _eng.Apply(s); Clear();
 
             // Заводское значение спрашиваем у нового объекта: строкой ниже мы его
@@ -1757,6 +1773,120 @@ namespace MagicKeys
                   + "а любая буква как Win+буква: " + Sent());
             Clear();
             Up(Vk.LWin); Clear();
+        }
+
+        /// <summary>
+        /// Общий сброс не отдаёт слою клавишу, которую человек ещё держит.
+        ///
+        /// Сброс случается сам: переподключение по Bluetooth, блокировка экрана,
+        /// пробуждение, движение галочки в окне. Стерев записи о том, кто хозяин
+        /// клавиши, программа отдавала её первому же слою: автоповтор доставался ему,
+        /// а отпускание он же и съедал — настоящая клавиша оставалась зажатой
+        /// в приложении навсегда, и снять её было нечем.
+        /// </summary>
+        static void ResetKeepsTheOwner()
+        {
+            Head("Сброс не отбирает клавишу у приложения");
+
+            // Стрелка ушла насквозь, случился сброс, человек дожал ⌘.
+            Settings s = Fresh();
+            Use(s);
+            bool first = Down(Vk.Left);
+            // Windows держит ←: это и есть то, что сброс обязан у неё спросить.
+            Engine.HeldProbe = delegate(int probe) { return probe == Vk.Left; };
+            try
+            {
+                _release.Invoke(_eng, null);
+                Down(Vk.LWin); Clear();
+                bool repeat = Down(Vk.Left);
+                bool up = Up(Vk.Left);
+                Check("после сброса аккорд не отбирает клавишу, ушедшую насквозь",
+                      !first && !repeat && !up,
+                      "нажатие=" + first + ", повтор=" + repeat + ", отпускание=" + up +
+                      ", пришло «" + Sent() + "»");
+            }
+            finally { Engine.HeldProbe = null; }
+            Clear(); Up(Vk.LWin); Clear();
+
+            // Контрольный опыт: Windows стрелку не держит — значит человек её отпустил,
+            // и запись обязана уйти, иначе слои не возьмут её уже никогда.
+            Use(s);
+            Down(Vk.Left);
+            Engine.HeldProbe = delegate(int probe) { return false; };
+            try
+            {
+                _release.Invoke(_eng, null);
+                Down(Vk.LWin); Clear();
+                bool again = Down(Vk.Left);
+                Check("контроль: отпущенную клавишу сброс забывает", again,
+                      "запись осталась, и слои её больше не возьмут: " + Sent());
+            }
+            finally { Engine.HeldProbe = null; }
+            Clear(); Up(Vk.Left); Up(Vk.LWin); Clear();
+
+            // Настоящая F-клавиша: её мы нажали в Windows сами, и до отпускания
+            // человеком отдавать её нельзя.
+            Settings f = Fresh();
+            f.MediaFirst = true;
+            f.FnSubstitute = ModKey.RAlt;
+            Use(f);
+            DownE(Vk.RMenu);
+            Down((Vk.F1 + 6));                        // настоящая F7 ушла в приложение нашим нажатием
+            Engine.HeldProbe = delegate(int probe) { return probe == (Vk.F1 + 6); };
+            try
+            {
+                _release.Invoke(_eng, null);
+                DownE(Vk.RMenu); Clear();
+                bool repeat = Down((Vk.F1 + 6));
+                bool up = Up((Vk.F1 + 6));
+                Check("после сброса верхний ряд не отбирает настоящую F-клавишу",
+                      !repeat && !up,
+                      "повтор=" + repeat + ", отпускание=" + up + ", пришло «" + Sent() + "»");
+            }
+            finally { Engine.HeldProbe = null; }
+            Clear(); UpE(Vk.RMenu); Clear();
+        }
+
+        /// <summary>
+        /// Одиночная клавиша защёлкивает решение на первом нажатии — как верхний ряд.
+        ///
+        /// Иначе нажатие с «Оставить как есть» уходило насквозь без следа, а автоповтор
+        /// разбирался заново: сменив назначение ⌧ под её удержанием, человек получал
+        /// настоящий Num Lock, уже выключивший блок, и съеденное нами отпускание.
+        /// </summary>
+        static void SingleKeyLatches()
+        {
+            Head("Одиночная клавиша защёлкивает решение");
+
+            Settings pass = Fresh(); pass.NumpadClear = "none";
+            Use(pass);
+            bool first = Down(Vk.NumLock);
+            Settings del = Fresh(); del.NumpadClear = "key.delete";
+            // Windows держит ⌧: смена настроек идёт через общий сброс, а тот сверяет
+            // записи о владении именно с ней.
+            Engine.HeldProbe = delegate(int probe) { return probe == Vk.NumLock; };
+            bool repeat, up;
+            try
+            {
+                _eng.Apply(del); Clear();
+                repeat = Down(Vk.NumLock);
+                up = Up(Vk.NumLock);
+            }
+            finally { Engine.HeldProbe = null; }
+            Check("смена назначения под зажатой ⌧ не съедает её отпускание",
+                  !first && !repeat && !up,
+                  "нажатие=" + first + ", повтор=" + repeat + ", отпускание=" + up +
+                  ", пришло «" + Sent() + "»");
+            Clear();
+
+            // Контрольный опыт: нажатая при живом назначении ⌧ и берётся, и отпускается
+            // нами — значит проверка выше меряет защёлку, а не мёртвый разбор.
+            Use(del);
+            bool took = Down(Vk.NumLock);
+            bool tookUp = Up(Vk.NumLock);
+            Check("контроль: с живым назначением ⌧ берут и отпускают",
+                  took && tookUp, "нажатие=" + took + ", отпускание=" + tookUp);
+            Clear();
         }
 
         /// <summary>Что перехват считает снятым у Windows на время.</summary>

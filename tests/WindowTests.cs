@@ -74,6 +74,11 @@ namespace MagicKeys
             FnNoteChecksBothArrows();
             PhysNoteFollowsChoice();
             OffMeansOff();
+            SpaceNoteOnlyWhenRoleMoved();
+            CmdNoteThreeStates();
+            FnNotesDoNotContradict();
+            RightOptionCardStates();
+            BatteryCardStates();
             ChannelButtons();
             FnNoteAboveTwelve();
             PhysNoteAnsiIsNotDetected();
@@ -165,6 +170,252 @@ namespace MagicKeys
         }
 
         /// <summary>
+        /// Отодвинуть срок перечёта драйвера, чтобы подменённое состояние не стёрлось.
+        ///
+        /// AppleDriver.Refresh(false) перечитывает реестр раз в тридцать секунд. Подмена
+        /// полей держалась ровно на этом кэше: затянись прогон — и половина проверок
+        /// молча начнёт мерить настоящее состояние машины вместо подменённого.
+        /// </summary>
+        static void Freeze()
+        {
+            FieldInfo stamp = typeof(AppleDriver).GetField("_stamp",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            if (stamp != null) stamp.SetValue(null, DateTime.UtcNow);
+        }
+
+        /// <summary>
+        /// Оговорка о поиске обязана появляться только тогда, когда роль увели с той
+        /// клавиши, что названа в списке выше. Caps Lock, превращённый в control, —
+        /// самое частое переназначение с мака, и роли ⌘ оно не касается вовсе.
+        /// </summary>
+        static void SpaceNoteOnlyWhenRoleMoved()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== оговорка о поиске на ровном месте ==");
+            Settings saved = _s.Snapshot();
+            MethodInfo m = typeof(MainWindow).GetMethod("PageMacKeys",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            try
+            {
+                _s.MacShortcuts = true;
+                _s.MapLWin = ModKey.LWin; _s.MapRWin = ModKey.RWin; _s.MapLCtrl = ModKey.LCtrl;
+
+                _s.SpaceSearch = Settings.SpaceCmd;
+                _s.MapCapsLock = ModKey.LCtrl;          // Caps Lock как control
+                _eng.Apply(_s);
+                Check("Caps Lock как control не отменяет поиск по ⌘",
+                      !Says((UIElement)m.Invoke(_win, null), "поиск открывает"),
+                      "уверяет, что поиск открывает не та клавиша, что подписана выше");
+
+                _s.MapCapsLock = ModKey.LWin;           // ⌘ добавилась на Caps Lock
+                _s.SpaceSearch = Settings.SpaceCtrl;    // а спрашиваем про control
+                _eng.Apply(_s);
+                Check("уехавшая ⌘ не отменяет поиск по control",
+                      !Says((UIElement)m.Invoke(_win, null), "поиск открывает"),
+                      "оговорка про роль, о которой список выше не спрашивает");
+
+                // Контроль: настоящий обмен — оговорка обязана быть.
+                _s.MapCapsLock = ModKey.CapsLock;
+                _s.MapLCtrl = ModKey.LWin; _s.MapLWin = ModKey.LCtrl; _s.MapRWin = ModKey.RCtrl;
+                _s.SpaceSearch = Settings.SpaceCmd;
+                _eng.Apply(_s);
+                Check("контроль: при настоящем обмене оговорка есть",
+                      Says((UIElement)m.Invoke(_win, null), "поиск открывает"), "её нет");
+            }
+            catch (Exception e) { Check("страница «Как на маке» собирается", false, Inner(e)); }
+            Restore(saved);
+        }
+
+        /// <summary>Три состояния сноски о том, где живёт ⌘.</summary>
+        static void CmdNoteThreeStates()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== где живёт ⌘ ==");
+            Settings saved = _s.Snapshot();
+            MethodInfo m = typeof(MainWindow).GetMethod("PageMacKeys",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            try
+            {
+                _s.MacShortcuts = true;
+                _s.MapLWin = ModKey.LWin; _s.MapRWin = ModKey.RWin;
+                _s.MapCapsLock = ModKey.CapsLock; _s.MapLCtrl = ModKey.LCtrl;
+                _s.MapLAlt = ModKey.LAlt; _s.MapRAlt = ModKey.RAlt;
+                _eng.Apply(_s);
+                UIElement own = (UIElement)m.Invoke(_win, null);
+                Check("⌘ на своей клавише — о переезде не говорят",
+                      !Says(own, "её роль играет") && !Says(own, "нажать сочетания ниже нечем"),
+                      "говорит о переезде на ровном месте");
+
+                _s.MapLWin = ModKey.LAlt; _s.MapRWin = ModKey.RAlt;
+                _s.MapCapsLock = ModKey.LWin;      // ⌘ переехала на Caps Lock
+                _eng.Apply(_s);
+                Check("переехавшую ⌘ называют по имени клавиши",
+                      Says((UIElement)m.Invoke(_win, null), "Caps Lock"),
+                      "молчит о переезде");
+
+                _s.MapCapsLock = ModKey.CapsLock;  // ⌘ не даёт никто
+                _eng.Apply(_s);
+                Check("когда ⌘ нет вовсе — об этом сказано",
+                      Says((UIElement)m.Invoke(_win, null), "нечем"), "не сказано");
+            }
+            catch (Exception e) { Check("страница «Как на маке» собирается", false, Inner(e)); }
+            Restore(saved);
+        }
+
+        /// <summary>Две сноски карточки «Заменитель Fn» стоят вплотную и не спорят.</summary>
+        static void FnNotesDoNotContradict()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== две сноски о настоящей Fn ==");
+            BindingFlags f = BindingFlags.NonPublic | BindingFlags.Static;
+            FieldInfo takes = typeof(AppleDriver).GetField("_takesRow", f);
+            FieldInfo media = typeof(KeyWatch).GetField("_mediaSeen", f);
+            if (takes == null || media == null)
+            { Check("состояние драйвера доступно", false, "нет поля"); return; }
+
+            object wasT = takes.GetValue(null), wasM = media.GetValue(null);
+            Settings saved = _s.Snapshot();
+            MethodInfo m = typeof(MainWindow).GetMethod("PageKeys",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            try
+            {
+                takes.SetValue(null, true); media.SetValue(null, true); Freeze();
+                _s.FnSubstitute = ModKey.None; _s.FnNavigation = true; _s.MediaFirst = true;
+                _eng.Apply(_s);
+
+                UIElement page = (UIElement)m.Invoke(_win, null);
+                Check("при работающем драйвере не говорят, что настоящая Fn не доходит",
+                      !(Says(page, "настоящая Fn до Windows не доходит")
+                        && Says(page, "с ним работает настоящая Fn")),
+                      "две сноски одной карточки отменяют друг друга");
+
+                // Контроль: без драйвера первая сноска обязана быть.
+                takes.SetValue(null, false); media.SetValue(null, false); Freeze();
+                _eng.Apply(_s);
+                Check("контроль: без драйвера про недоходящую Fn говорят",
+                      Says((UIElement)m.Invoke(_win, null), "настоящая Fn до Windows не доходит"),
+                      "не говорят");
+            }
+            catch (Exception e) { Check("страница «Клавиши» собирается", false, Inner(e)); }
+            finally
+            {
+                takes.SetValue(null, wasT); media.SetValue(null, wasM); Freeze();
+                Restore(saved);
+            }
+        }
+
+        /// <summary>Шесть состояний карточки «Правый ⌥» — ни одно не было покрыто.</summary>
+        static void RightOptionCardStates()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== карточка «Правый ⌥», все роли ==");
+            BindingFlags fs = BindingFlags.NonPublic | BindingFlags.Static;
+            BindingFlags fi = BindingFlags.NonPublic | BindingFlags.Instance;
+            FieldInfo takes = typeof(AppleDriver).GetField("_takesRow", fs);
+            FieldInfo media = typeof(KeyWatch).GetField("_mediaSeen", fs);
+            FieldInfo maxF = typeof(KeyWatch).GetField("_maxFunctionKey", fs);
+            MethodInfo card = typeof(MainWindow).GetMethod("RightOptionCard", fi);
+            if (takes == null || media == null || maxF == null || card == null)
+            { Check("карточка «Правый ⌥» доступна", false, "нет поля или метода"); return; }
+
+            object wasT = takes.GetValue(null), wasM = media.GetValue(null), wasX = maxF.GetValue(null);
+            Settings saved = _s.Snapshot();
+            try
+            {
+                takes.SetValue(null, true); media.SetValue(null, true);
+                maxF.SetValue(null, 19); Freeze();
+                _s.FnSubstitute = ModKey.RAlt; _s.MapRAlt = ModKey.RAlt;
+                _s.OptLevel = OptLevel.Off; _s.FnNavigation = false;
+                _eng.Apply(_s);
+                Check("с клавишами выше двенадцатой не говорят «переключать нечего»",
+                      !Says((UIElement)card.Invoke(_win, null), "переключать нечего"),
+                      "отменяет соседнюю карточку, которая просит заменитель ради F13");
+
+                maxF.SetValue(null, 12); Freeze(); _eng.Apply(_s);
+                Check("контроль: без клавиш выше двенадцатой «переключать нечего» сказано",
+                      Says((UIElement)card.Invoke(_win, null), "переключать нечего"), "не сказано");
+
+                takes.SetValue(null, false); media.SetValue(null, false); Freeze();
+                _eng.Apply(_s);
+                Check("без драйвера роль Fn обещает переключение ряда",
+                      Says((UIElement)card.Invoke(_win, null), "Переключает верхний ряд"),
+                      "не обещает");
+
+                _s.FnSubstitute = ModKey.None; _s.OptLevel = OptLevel.RightOption;
+                _s.MapRAlt = ModKey.RAlt; _s.AppleLayoutEnabled = false;
+                _eng.Apply(_s);
+                Check("роль «символы» при выключенных раскладках честна",
+                      Says((UIElement)card.Invoke(_win, null), "Сейчас они выключены"),
+                      "молчит об этом");
+
+                _s.AppleLayoutEnabled = true; _eng.Apply(_s);
+                Check("контроль: при включённых раскладках оговорки нет",
+                      !Says((UIElement)card.Invoke(_win, null), "Сейчас они выключены"),
+                      "оговорка лишняя");
+
+                _s.OptLevel = OptLevel.Off; _s.MapRAlt = ModKey.None; _eng.Apply(_s);
+                Check("выключенная клавиша названа выключенной",
+                      Says((UIElement)card.Invoke(_win, null), "клавиша выключена"), "не названа");
+
+                _s.MapRAlt = ModKey.RAlt; _eng.Apply(_s);
+                Check("своя клавиша названа обычным Alt",
+                      Says((UIElement)card.Invoke(_win, null), "AltGr"), "об AltGr не сказано");
+            }
+            catch (Exception e) { Check("карточка «Правый ⌥» собирается", false, Inner(e)); }
+            finally
+            {
+                takes.SetValue(null, wasT); media.SetValue(null, wasM);
+                maxF.SetValue(null, wasX); Freeze();
+                Restore(saved);
+            }
+        }
+
+        /// <summary>Четыре состояния карточки заряда — ни одно не было покрыто.</summary>
+        static void BatteryCardStates()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== карточка заряда ==");
+            BindingFlags fs = BindingFlags.NonPublic | BindingFlags.Static;
+            FieldInfo pct = typeof(KeyboardBattery).GetField("_percent", fs);
+            FieldInfo stamp = typeof(KeyboardBattery).GetField("_stamp", fs);
+            MethodInfo diag = typeof(MainWindow).GetMethod("PageDiag",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            if (pct == null || stamp == null || diag == null)
+            { Check("состояние заряда доступно", false, "нет поля или метода"); return; }
+
+            object wasP = pct.GetValue(null), wasS = stamp.GetValue(null);
+            try
+            {
+                // Срок обязателен: без него геттер заводит настоящий опрос, и подменённое
+                // число уезжает.
+                pct.SetValue(null, KeyboardBattery.Unknown); stamp.SetValue(null, DateTime.UtcNow);
+                Check("«ещё не спрашивали» не выдают за отказ",
+                      Says((UIElement)diag.Invoke(_win, null), "Спрашиваю у клавиатуры"),
+                      "утверждает непроверенное");
+
+                pct.SetValue(null, -1); stamp.SetValue(null, DateTime.UtcNow);
+                Check("«не ответила» названа не ответившей",
+                      Says((UIElement)diag.Invoke(_win, null), "клавиатура не ответила"),
+                      "названа иначе");
+
+                pct.SetValue(null, KeyboardBattery.NoSource); stamp.SetValue(null, DateTime.UtcNow);
+                UIElement none = (UIElement)diag.Invoke(_win, null);
+                Check("«спрашивать некого» отделено от «не ответила»",
+                      Says(none, "спрашивать заряд не у кого") || Says(none, "заряд не сообщает"),
+                      "слито с отказом");
+                Check("про отсутствующую клавиатуру не говорят «эта клавиатура»",
+                      Devices.AppleConnected || !Says(none, "Эта клавиатура заряд не сообщает"),
+                      "уверяет про клавиатуру, которой нет");
+
+                pct.SetValue(null, 55); stamp.SetValue(null, DateTime.UtcNow);
+                Check("известное число показано числом",
+                      Says((UIElement)diag.Invoke(_win, null), "55 %"), "число не показано");
+            }
+            catch (Exception e) { Check("страница «Диагностика» собирается", false, Inner(e)); }
+            finally { pct.SetValue(null, wasP); stamp.SetValue(null, wasS); }
+        }
+
+        /// <summary>
         /// Ручной выбор исполнения не отменяет правила «ANSI — это не распознанное».
         /// </summary>
         static void ManualChoiceDoesNotInventDetection()
@@ -184,13 +435,13 @@ namespace MagicKeys
 
                 det.SetValue(null, (int)PhysLayout.Ansi);
                 Check("при ручном выборе ANSI не выдают за распознанное",
-                      !Says((UIElement)m.Invoke(_win, null), "Распознанное по нажатиям (ANSI"),
+                      !Says((UIElement)m.Invoke(_win, null), "По нажатиям распознано: ANSI"),
                       "уверяет, что по нажатиям распознано ANSI, — а не встретилось ничего");
 
                 // Контроль: настоящее распознанное при ручном выборе называть надо.
                 det.SetValue(null, (int)PhysLayout.Jis);
                 Check("контроль: распознанное JIS при ручном выборе называют",
-                      Says((UIElement)m.Invoke(_win, null), "Распознанное по нажатиям (JIS"),
+                      Says((UIElement)m.Invoke(_win, null), "По нажатиям распознано: JIS"),
                       "не называют — значит проверка выше ничего не доказывает");
             }
             catch (Exception e) { Check("страница «Раскладка» собирается", false, Inner(e)); }
@@ -366,6 +617,7 @@ namespace MagicKeys
             try
             {
                 takes.SetValue(null, true); media.SetValue(null, true);
+                Freeze();
                 _s.MediaFirst = false; _s.FnSubstitute = ModKey.None; _s.FnNavigation = false;
 
                 maxF.SetValue(null, 19);
@@ -380,6 +632,7 @@ namespace MagicKeys
 
                 // Контрольный опыт: ровно двенадцать клавиш — и говорить о F13 нечего.
                 maxF.SetValue(null, 12);
+                Freeze();
                 _eng.Apply(_s);
                 Check("контроль: без клавиш выше двенадцатой про F13 не говорят",
                       !Says((UIElement)m.Invoke(_win, null), "Для F13 и дальше он нужен"),
@@ -454,6 +707,7 @@ namespace MagicKeys
             try
             {
                 takes.SetValue(null, true); media.SetValue(null, true); maxF.SetValue(null, 19);
+                Freeze();
                 _s.MediaFirst = false; _s.FnSubstitute = ModKey.None;
                 _eng.Apply(_s);
 
@@ -471,6 +725,7 @@ namespace MagicKeys
                 // Контрольный опыт: у клавиатуры ровно двенадцать F-клавиш — тогда
                 // при уступленном ряде гаснет и режим, а говорить не о чем.
                 maxF.SetValue(null, 12);
+                Freeze();
                 _eng.Apply(_s);
                 boxes = new List<CheckBox>(); combos = new List<ComboBox>();
                 page = (UIElement)m.Invoke(_win, null);

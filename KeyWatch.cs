@@ -89,8 +89,11 @@ namespace MagicKeys
         /// </summary>
         public static uint LastKeyTick { get { return _lastKeyTick; } }
 
-        // Скан-коды, по которым узнаётся исполнение клавиатуры: лишняя клавиша ISO
-        // стоит слева от «Z», японские — вокруг пробела.
+        // Скан-коды, по которым узнаётся исполнение клавиатуры. Про место на клавиатуре
+        // здесь не говорим нарочно: на ISO-клавиатуре Apple две клавиши переставлены
+        // аппаратно, и 0x56 приходит слева от «1», а не слева от «Z». Ровно ради этого
+        // в разборе заведена перестановка ISO — см. LogicalScan в Engine.cs. Японские
+        // скан-коды — вокруг пробела.
         private const int ScanIsoExtra = 0x56;
         private static readonly int[] JisScans = { 0x70, 0x79, 0x7B, 0x73, 0x7D };
 
@@ -181,26 +184,28 @@ namespace MagicKeys
         }
 
         /// <summary>
-        /// Почему перепись клавиш не работает, или null. Молчать здесь нельзя: без сырого
-        /// ввода программа не знает, с какой клавиатуры пришло нажатие, — а заодно
-        /// перестаёт сторожить сам перехват, потому что сравнивать его показания не с чем.
-        /// Раньше отказ уходил в журнал, который по умолчанию выключен, и наружу
-        /// не показывался ничем.
+        /// Почему перепись клавиш не работает — теми же словами, какими это покажут
+        /// человеку, — или null. Молчать здесь нельзя: без сырого ввода программа
+        /// не знает, с какой клавиатуры пришло нажатие, — а заодно перестаёт сторожить
+        /// сам перехват, потому что сравнивать его показания не с чем.
+        ///
+        /// Причин четыре, и они разные. Прежде наружу выходил один неизменный текст
+        /// «Windows отказала программе в подписке на ввод» — для двух причин из четырёх
+        /// это была не та причина: окна ещё не было, подписки и не спрашивали; или
+        /// подписка работала и оборвалась сама. Номер ошибки Windows остаётся в журнале:
+        /// человеку он не нужен, а тому, кто читает журнал, — нужен.
         /// </summary>
         public static string Failure { get { return _failure; } }
         private static volatile string _failure;
 
-        private static void Fail(string why)
+        private static void Fail(string forHuman, string forLog)
         {
-            _failure = why;
-            Diag.Log("перепись клавиш: " + why);
+            _failure = forHuman;
+            Diag.Log("перепись клавиш: " + forLog);
         }
 
         public static void Start()
         {
-            // Прошлый отказ забываем: иначе страница «Диагностика» показывала бы
-            // «перепись клавиш прекратилась сама» при работающей переписи.
-            _failure = null;
             if (_thread != null) return;
             _thread = new Thread(Run);
             _thread.IsBackground = true;
@@ -228,8 +233,8 @@ namespace MagicKeys
                     Native.WS_POPUP, 0, 0, 0, 0, IntPtr.Zero, IntPtr.Zero, wc.hInstance, IntPtr.Zero);
                 if (_window == IntPtr.Zero)
                 {
-                    Fail("окно сырого ввода не создано, ошибка " + Marshal.GetLastWin32Error());
-                    _thread = null;   // иначе повторный запуск молча ничего не сделает
+                    Fail("Windows не дала программе создать окно для приёма ввода.",
+                         "окно сырого ввода не создано, ошибка " + Marshal.GetLastWin32Error());
                     return;
                 }
 
@@ -244,8 +249,8 @@ namespace MagicKeys
                 rid[1].hwndTarget = _window;
                 if (!Native.RegisterRawInputDevices(rid, (uint)rid.Length, (uint)Marshal.SizeOf(typeof(Native.RAWINPUTDEVICE))))
                 {
-                    Fail("подписка на сырой ввод отклонена, ошибка " + Marshal.GetLastWin32Error());
-                    _thread = null;
+                    Fail("Windows отказала программе в подписке на ввод.",
+                         "подписка на сырой ввод отклонена, ошибка " + Marshal.GetLastWin32Error());
                     return;
                 }
 
@@ -256,7 +261,11 @@ namespace MagicKeys
                     Native.DispatchMessageW(ref msg);
                 }
             }
-            catch (Exception e) { Fail("сбой: " + e.GetType().Name + ": " + e.Message); }
+            catch (Exception e)
+            {
+                Fail("Приём ввода прервался сбоем в самой программе.",
+                     "сбой: " + e.GetType().Name + ": " + e.Message);
+            }
             finally
             {
                 if (_window != IntPtr.Zero) { Native.DestroyWindow(_window); _window = IntPtr.Zero; }
@@ -265,9 +274,14 @@ namespace MagicKeys
                 // либо исключение, и в обоих случаях перепись кончилась молча: страница
                 // «Диагностика» читает пустой Failure и уверяет, что всё работает,
                 // а сторож перехвата сверяется с замершим LastKeyTick и уже никогда
-                // не заметит снятого перехвата. Обнулить _thread обязательно, иначе
-                // Start() второй раз ничего не сделает.
-                if (String.IsNullOrEmpty(_failure)) Fail("перепись клавиш прекратилась сама");
+                // не заметит снятого перехвата.
+                //
+                // Отсюда же уходят и оба ранних отступления выше: возврат из try проходит
+                // через finally, и обнулять _thread там было незачем. Start зовут ровно
+                // один раз за жизнь программы — из App при запуске; обнуление здесь стоит
+                // затем, чтобы поле не уверяло, будто поток жив.
+                if (String.IsNullOrEmpty(_failure))
+                    Fail("Приём ввода прекратился сам.", "перепись клавиш прекратилась сама");
                 _thread = null;
             }
         }
@@ -557,8 +571,9 @@ namespace MagicKeys
         {
             lock (Sync)
             {
-                SeenKeys.Clear();
-                SeenUsages.Clear();
+                // Виденные клавиши и применения чистит ForgetPhysical строкой ниже —
+                // под тем же замком и вместе со счётом F-клавиш, который без них
+                // теряется навсегда.
                 IsApple.Clear();
                 foreach (IntPtr p in Preparsedes.Values) if (p != IntPtr.Zero) Marshal.FreeHGlobal(p);
                 Preparsedes.Clear();

@@ -70,6 +70,10 @@ namespace MagicKeys
             YieldedRowIsDead();
             FnNoteMatchesTable();
             SelfTestForgets();
+            YieldedRowAboveTwelve();
+            FnNoteChecksBothArrows();
+            PhysNoteFollowsChoice();
+            OffMeansOff();
 
             Console.WriteLine();
             Console.WriteLine("прошло " + _pass + ", провалено " + _fail);
@@ -155,6 +159,161 @@ namespace MagicKeys
         }
 
         /// <summary>
+        /// Драйвер забирает ровно первые двенадцать клавиш. На клавиатуре с цифровым
+        /// блоком режим верхнего ряда после этого решает всё для F13–F19 — и гасить его
+        /// нельзя: погашенный, он не давал вернуть назначения этих клавиш ничем.
+        ///
+        /// Состояние драйвера подменяем: на машине без него эта ветка не исполнялась бы
+        /// ни разу, и записанное в ней ожидание оставалось бы непроверенным.
+        /// </summary>
+        static void YieldedRowAboveTwelve()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== ряд отдан драйверу, а клавиш больше двенадцати ==");
+            BindingFlags f = BindingFlags.NonPublic | BindingFlags.Static;
+            FieldInfo takes = typeof(AppleDriver).GetField("_takesRow", f);
+            FieldInfo media = typeof(KeyWatch).GetField("_mediaSeen", f);
+            FieldInfo maxF = typeof(KeyWatch).GetField("_maxFunctionKey", f);
+            if (takes == null || media == null || maxF == null)
+            { Check("состояние драйвера доступно", false, "нет поля"); return; }
+
+            object wasT = takes.GetValue(null), wasM = media.GetValue(null), wasX = maxF.GetValue(null);
+            Settings saved = _s.Snapshot();
+            MethodInfo m = typeof(MainWindow).GetMethod("PageKeys",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            try
+            {
+                takes.SetValue(null, true); media.SetValue(null, true); maxF.SetValue(null, 19);
+                _s.MediaFirst = false; _s.FnSubstitute = ModKey.None;
+                _eng.Apply(_s);
+
+                var boxes = new List<CheckBox>();
+                var combos = new List<ComboBox>();
+                UIElement page = (UIElement)m.Invoke(_win, null);
+                Walk(page, boxes, combos);
+                int dead = 0;
+                foreach (ComboBox b in combos) if (!b.IsEnabled) dead++;
+                Check("драйверу отданы ровно двенадцать строк, режим остаётся живым",
+                      dead == 12, "погашено списков: " + dead);
+                Check("о мёртвых назначениях F13 и дальше сказано",
+                      Says(page, "F13 и дальше всегда приходят обычными"), "не сказано");
+
+                // Контрольный опыт: у клавиатуры ровно двенадцать F-клавиш — тогда
+                // при уступленном ряде гаснет и режим, а говорить не о чем.
+                maxF.SetValue(null, 12);
+                _eng.Apply(_s);
+                boxes = new List<CheckBox>(); combos = new List<ComboBox>();
+                page = (UIElement)m.Invoke(_win, null);
+                Walk(page, boxes, combos);
+                dead = 0;
+                foreach (ComboBox b in combos) if (!b.IsEnabled) dead++;
+                Check("контроль: без клавиш выше двенадцатой гаснет и режим",
+                      dead == 13, "погашено списков: " + dead);
+            }
+            catch (Exception e) { Check("страница «Клавиши» собирается", false, Inner(e)); }
+            finally
+            {
+                takes.SetValue(null, wasT); media.SetValue(null, wasM); maxF.SetValue(null, wasX);
+                Restore(saved);
+            }
+        }
+
+        /// <summary>
+        /// Половинки пары стрелок таблица macOS забирает по одной — карточка «Показать
+        /// все» для того и есть. Сноска, спрашивающая только про левую и верхнюю,
+        /// обещала листание страницы, тогда как Fn+↓ уходил в конец документа.
+        /// </summary>
+        static void FnNoteChecksBothArrows()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== пара стрелок в сноске о навигации Fn ==");
+            Settings saved = _s.Snapshot();
+            MethodInfo m = typeof(MainWindow).GetMethod("PageKeys",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            try
+            {
+                _s.MacShortcuts = true; _s.FnNavigation = true;
+                _s.MacShortcutsOff = new string[0];
+                _s.FnSubstitute = ModKey.RWin; _s.MapRWin = ModKey.RWin;
+                _eng.Apply(_s);
+                Check("контроль: пока пара целиком у таблицы, листание не обещают",
+                      !Says((UIElement)m.Invoke(_win, null), "Fn+↑↓ листают страницу"), "обещают");
+
+                _s.MacSet("docstart", false);         // выключили только ⌘↑
+                _eng.Apply(_s);
+                Check("половина пары осталась у таблицы — листание не обещают",
+                      !Says((UIElement)m.Invoke(_win, null), "Fn+↑↓ листают страницу"),
+                      "обещает листание, а ⌘↓ в таблице жив и даёт конец документа");
+
+                _s.MacSet("docend", false);           // теперь пары нет целиком
+                _eng.Apply(_s);
+                Check("контроль: пары нет целиком — листание обещают",
+                      Says((UIElement)m.Invoke(_win, null), "Fn+↑↓ листают страницу"),
+                      "не обещают — значит проверки выше ничего не доказывают");
+            }
+            catch (Exception e) { Check("страница «Клавиши» собирается", false, Inner(e)); }
+            Restore(saved);
+        }
+
+        /// <summary>
+        /// Выбранное руками исполнение побеждает и модель, и распознавание — так отвечает
+        /// Engine.Physical. Сноска обязана говорить то же самое: иначе две клавиши
+        /// меняются местами, а карточка уверяет, что распознано другое.
+        /// </summary>
+        static void PhysNoteFollowsChoice()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== исполнение, выбранное руками ==");
+            Settings saved = _s.Snapshot();
+            MethodInfo m = typeof(MainWindow).GetMethod("PageLayout",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            try
+            {
+                _s.Physical = PhysLayout.Auto; _eng.Apply(_s);
+                Check("контроль: при «Определять самой» сноска про нажатия есть",
+                      Says((UIElement)m.Invoke(_win, null), "определяется по нажатиям"),
+                      "её нет — значит проверка ниже ничего не доказывает");
+
+                _s.Physical = PhysLayout.Iso; _eng.Apply(_s);
+                Check("выбранное руками исполнение не выдают за распознанное",
+                      !Says((UIElement)m.Invoke(_win, null), "определяется по нажатиям"), "выдают");
+            }
+            catch (Exception e) { Check("страница «Раскладка» собирается", false, Inner(e)); }
+            Restore(saved);
+        }
+
+        /// <summary>
+        /// Выключенные переназначения — это выключенные переназначения. Обещать, что
+        /// назначение ⏏ работает, когда обработчик уходит молча, значит врать.
+        /// </summary>
+        static void OffMeansOff()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== выключенные переназначения на странице «Клавиши» ==");
+            BindingFlags f = BindingFlags.NonPublic | BindingFlags.Static;
+            FieldInfo seen = typeof(KeyWatch).GetField("_ejectSeen", f);
+            if (seen == null) { Check("признак прихода ⏏ доступен", false, "нет поля"); return; }
+            object was = seen.GetValue(null);
+            Settings saved = _s.Snapshot();
+            MethodInfo m = typeof(MainWindow).GetMethod("PageKeys",
+                BindingFlags.NonPublic | BindingFlags.Instance);
+            try
+            {
+                seen.SetValue(null, true);
+                _s.Enabled = true; _s.PauseWhenAppleAbsent = false; _eng.Apply(_s);
+                Check("контроль: при включённых переназначениях так и сказано",
+                      Says((UIElement)m.Invoke(_win, null), "назначение работает"),
+                      "не сказано — значит проверка ниже ничего не доказывает");
+
+                _s.Enabled = false; _eng.Apply(_s);
+                Check("при выключенных переназначениях не обещают, что назначение работает",
+                      !Says((UIElement)m.Invoke(_win, null), "назначение работает"), "обещают");
+            }
+            catch (Exception e) { Check("страница «Клавиши» собирается", false, Inner(e)); }
+            finally { seen.SetValue(null, was); Restore(saved); }
+        }
+
+        /// <summary>
         /// Прокрутить очередь потока окна. Без неё всё, что уходит через ToWindow,
         /// в стенде не выполняется никогда — то есть ответы всякой фоновой работы
         /// стенд не видит вовсе.
@@ -200,6 +359,14 @@ namespace MagicKeys
             UIElement page = (UIElement)driver.Invoke(_win, null);
             Check("досчитав, страница не обещает «Ищу 7-Zip…»",
                   !Says(page, "Ищу 7-Zip"), "обещает");
+            // Контрольный опыт: пока счёт идёт, «Ищу 7-Zip…» на странице есть —
+            // значит проверка выше меряет конец счёта, а не поломку обхода.
+            probedFor.SetValue(_win, null);
+            seven.SetValue(_win, null);
+            probing.SetValue(_win, true);
+            Check("контроль: пока счёт идёт, страница так и говорит",
+                  Says((UIElement)driver.Invoke(_win, null), "Ищу 7-Zip"), "не говорит");
+            probing.SetValue(_win, false);
         }
 
         /// <summary>
@@ -247,6 +414,9 @@ namespace MagicKeys
                 _s.FnSubstitute = ModKey.RAlt; _s.MapRAlt = ModKey.RAlt; _s.OptLevel = OptLevel.Off;
                 _eng.Apply(_s);
                 UIElement p = (UIElement)m.Invoke(_win, null);
+                Check("контроль: с ⌥-заменителем сноска обещает Fn+↑↓",
+                      Says(p, "Fn+↑↓ листают страницу"),
+                      "не обещает — значит проверки ниже ничего не доказывают");
                 Check("с ⌥-заменителем сноска не обещает Fn+←→",
                       !Says(p, "Fn+←→ уводят"), "обещает начало и конец строки");
 
@@ -799,6 +969,13 @@ namespace MagicKeys
             if (String.IsNullOrEmpty(name)) name = "переключатель без подписи";
             foreach (string s in Skip) if (name == s) { Console.WriteLine("  · " + name + " — пропущен нарочно"); return; }
 
+            // Погашенный переключатель стенд щёлкает всё равно: IsEnabled этому
+            // не мешает. Проверять его настройки полезно, а вот молчать о том, что
+            // человек до него не дотянется, — нет: ровно за это гасят строки ряда,
+            // отданного драйверу.
+            if (!cb.IsEnabled)
+                Console.WriteLine("  · " + name + " — погашен: щёлкает стенд, но не человек");
+
             bool was = cb.IsChecked == true;
             Settings saved = _s.Snapshot();
             Dictionary<string, string> before = Snap();
@@ -832,6 +1009,9 @@ namespace MagicKeys
                 Check("список из " + box.Items.Count + " пунктов", false, "выбирать не из чего");
                 return;
             }
+            if (!box.IsEnabled)
+                Console.WriteLine("  · список погашен: щёлкает стенд, но не человек");
+
             int was = box.SelectedIndex;
             var seen = new List<string>();
             bool ok = true;
@@ -908,6 +1088,22 @@ namespace MagicKeys
                             if (!also.Contains(mine[m])) mine.RemoveAt(m);
                     }
                     while (mine.Count > 1) mine.RemoveAt(1);
+
+                    // Общего поля может не быть вовсе: у списка «Переназначения» один
+                    // пункт правит выключатель, другой — паузу без клавиатуры Apple,
+                    // и пересечение пусто. Пустое пересечение отсекало из сравнения
+                    // всё — и самый важный список в программе был прикрыт проверкой,
+                    // которая не смотрела ни на что. Тогда берём объединение: это
+                    // и есть поля, за которые список отвечает.
+                    if (mine.Count == 0)
+                        foreach (string d in seen)
+                            foreach (string nm in Names(d))
+                                if (!mine.Contains(nm)) mine.Add(nm);
+
+                    Check("список «" + field + "»: есть поле, которым он себя опознаёт",
+                          mine.Count > 0,
+                          "пункты не меняют ни одного поля — возврат к показанному пункту " +
+                          "не проверен ничем");
                 }
                 string moved = Only(Diff(Snap(saved), Snap()), mine);
                 Check("список «" + field + "»: показанный пункт совпадает с настройками",

@@ -120,13 +120,14 @@ namespace MagicKeys
             string path = Devices.AppleStatusPath;
 
             // Срок тратим, только если было кого спрашивать. И только если за то время,
-            // пока мы узнавали путь, набор клавиатур не сменился: иначе свежий Invalidate
-            // затирается сроком, отсчитанным по старому пути, и новую клавиатуру не
-            // спросят целую минуту.
-            if (!String.IsNullOrEmpty(path) && path == Devices.AppleStatusPath)
-            {
-                lock (Sync) _stamp = DateTime.UtcNow;
-            }
+            // пока мы узнавали путь, набор клавиатур не сменился — спрашиваем об этом
+            // ровно тем же способом, каким ниже признаём ответ своим. Прежде здесь
+            // сверяли путь, а ниже возраст: между двумя разными вопросами оставалась
+            // щель, в которую проваливался Invalidate. Срок при этом уже потрачен,
+            // ответ уже выброшен — и «Спрашиваю у клавиатуры…» держалось минуту
+            // без единого запроса в полёте.
+            if (!String.IsNullOrEmpty(path))
+                lock (Sync) { if (age == _age) _stamp = DateTime.UtcNow; }
 
             int percent = -1, flags = -1;
             if (!String.IsNullOrEmpty(path)) Ask(path, out percent, out flags);

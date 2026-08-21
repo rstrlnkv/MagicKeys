@@ -186,7 +186,7 @@ namespace MagicKeys
             int apple = 0;
             foreach (KeyboardInfo k in all) if (k.IsApple) apple++;
 
-            string failure = _engine == null ? null : _engine.Failure;
+            string failure = _engine.Failure;
             if (!String.IsNullOrEmpty(failure))
                 _deviceLine.Text = "MagicKeys не получает нажатия — переназначения не работают. Перезапустите программу.";
             else if (apple > 0)
@@ -344,12 +344,17 @@ namespace MagicKeys
                 new Choice { Value = true,  Text = "Медиафункции сразу (как в macOS)" },
                 new Choice { Value = false, Text = "F-клавиши сразу (как обычно в Windows)" }
             }, _s.MediaFirst, delegate(object v) { _s.MediaFirst = (bool)v; Save(); BuildPage(); });
-            // Пока верхним рядом занимается драйвер, этот список тоже ни на что
-            // не влияет: перехват отступает раньше, чем спрашивает о режиме.
-            // Карточка выше про это говорит, а список стоял живым и обещал обратное.
-            if (YieldingNow) modeBox.IsEnabled = false;
 
-            stack.Children.Add(Card("Что делают F1–F12 без модификатора", null,
+            // Драйвер забирает ровно первые двенадцать — F13 и дальше он не трогает.
+            // Поэтому на клавиатуре с цифровым блоком режим продолжает решать всё
+            // для F13–F19, и гасить его нельзя: погашенный, он не давал вернуть
+            // назначения этих клавиш к жизни ничем.
+            bool aboveTwelve = Models.FunctionKeyCount() > 12;
+            if (YieldingNow && !aboveTwelve) modeBox.IsEnabled = false;
+
+            stack.Children.Add(Card(
+                YieldingNow && aboveTwelve ? "Что делают F13 и дальше без модификатора"
+                                           : "Что делают F1–F12 без модификатора", null,
                 Row("Основной режим", null, modeBox)));
 
             var fnChoices = new List<Choice>();
@@ -376,11 +381,17 @@ namespace MagicKeys
                     Save(); BuildPage();
                 });
 
-            if (!_s.MediaFirst && _s.FnSubstitute == ModKey.None && !YieldingNow)
+            // Уступленный ряд эту карточку не отменяет: F13 и дальше драйвер не трогает,
+            // и для них «F-клавиши сразу» без заменителя Fn значит ровно то же самое.
+            // Прежде при уступленном ряде карточка молчала — и назначения F13–F19
+            // не работали, не сказав об этом ни словом.
+            if (!_s.MediaFirst && _s.FnSubstitute == ModKey.None && (!YieldingNow || aboveTwelve))
             {
-                stack.Children.Add(Card("Назначения ниже сейчас ни на что не влияют", null,
+                string which = YieldingNow ? "F13 и дальше" : "F1–F12";
+                stack.Children.Add(Card("Назначения " +
+                    (YieldingNow ? "клавиш F13 и дальше" : "ниже") + " сейчас ни на что не влияют", null,
                     Note("Выбран режим «F-клавиши сразу», а заменителя Fn нет — значит " +
-                         "F1–F12 всегда приходят обычными F-клавишами и уходят в программы " +
+                         which + " всегда приходят обычными F-клавишами и уходят в программы " +
                          "как есть. Чтобы назначения заработали, выберите заменитель Fn " +
                          "в карточке ниже или выберите «Медиафункции сразу» в карточке выше.")));
             }
@@ -542,8 +553,15 @@ namespace MagicKeys
                 AddSingleRow(ejGrid, 0, "Eject", "Верхний правый угол, со значком извлечения",
                     _s.EjectKey, delegate(string id) { _s.EjectKey = id; Save(); });
 
+                // Исполняет назначение обработчик в App, а он молча уходит при
+                // выключенных переназначениях и на паузе без клавиатуры Apple.
+                // Сказать в этот миг «назначение работает» — обещать несделанное.
+                bool live = _s.Enabled && !(_s.PauseWhenAppleAbsent && !Devices.AppleConnected);
                 string ejNote = KeyWatch.EjectSeen
-                    ? "Эта клавиша с вашей клавиатуры приходит — назначение работает."
+                    ? (live
+                        ? "Эта клавиша с вашей клавиатуры приходит — назначение работает."
+                        : "Эта клавиша с вашей клавиатуры приходит, но сейчас назначение " +
+                          "не срабатывает: переназначения выключены на первой странице.")
                     : fm != null && fm.Gen == AppleGen.Alu
                         ? "Эта клавиша ещё не приходила. Алюминиевые модели по USB её присылают — " +
                           "нажмите, и назначение заработает."
@@ -691,8 +709,9 @@ namespace MagicKeys
                 : now == "plain" && _s.OptLevel != OptLevel.Off && _s.Reaches(ModKey.RAlt)
                     ? "Ничего не забирает: приходит в Windows как " + comes + ". " +
                       "Третий уровень при этом включён и живёт на другой клавише — той, " +
-                      "что приходит правым Alt. Выключить его можно, вернув сюда роль " +
-                      "«Символы ⌥»."
+                      "что приходит правым Alt. Выключить его можно так: вернуть сюда роль " +
+                      "«Символы ⌥», а потом снова выбрать «Обычный Alt». Выбор «Символы ⌥» " +
+                      "сам по себе третий уровень не выключает, а включает — на этой клавише."
                 : now == "symbols"
                     ? "Набирает символы, напечатанные на клавише третьими. Работает, только когда " +
                       "включены раскладки Apple." +
@@ -768,7 +787,7 @@ namespace MagicKeys
         private UIElement PageLayout()
         {
             var stack = new StackPanel();
-            PhysLayout phys = _engine == null ? PhysLayout.Ansi : _engine.Physical(_s);
+            PhysLayout phys = _engine.Physical(_s);
             PhysLayout detected = KeyWatch.DetectedPhysical;
 
             AppleModel model = Devices.AppleModel;
@@ -776,7 +795,16 @@ namespace MagicKeys
                               (_s.Physical == PhysLayout.Auto && detected == PhysLayout.Ansi
                                    && Devices.AppleModel == null
                                   ? " (пока по умолчанию — по нажатиям ничего не распознано)" : "") + ".\n";
-            if (model != null && model.Phys != PhysLayout.Auto)
+            // Спрашиваем в том же порядке, в каком отвечает Engine.Physical: выбор
+            // человека побеждает и модель, и распознавание. Прежде сноска про него
+            // не знала вовсе и при выставленном руками «ISO» уверяла, что исполнение
+            // определяют по нажатиям и распознано ANSI, — споря с собственной первой
+            // строкой и не давая понять, откуда взялась перестановка клавиш.
+            if (_s.Physical != PhysLayout.Auto)
+                physNote += "Так выбрано в списке ниже. Распознанное по нажатиям (" +
+                            Models.PhysName(detected) + ") и записанное в модели при этом " +
+                            "не учитываются: выбор человека главнее.";
+            else if (model != null && model.Phys != PhysLayout.Auto)
                 physNote += "Исполнение закодировано в идентификаторе модели — " + Models.PhysName(model.Phys) + ".";
             else
                 physNote += "У Magic Keyboard исполнение не закодировано в идентификаторе, поэтому оно " +
@@ -1025,7 +1053,7 @@ namespace MagicKeys
                 }
                 rows.Children.Add(KeyValue("Подключение", k.Bluetooth ? "Bluetooth" : "USB"));
                 rows.Children.Add(KeyValue("Идентификаторы", k.VendorProduct));
-                if (k.IsApple) rows.Children.Add(KeyValue("Исполнение", Models.PhysName(_engine == null ? PhysLayout.Auto : _engine.Physical(_s))));
+                if (k.IsApple) rows.Children.Add(KeyValue("Исполнение", Models.PhysName(_engine.Physical(_s))));
                 if (k.TotalKeys > 0) rows.Children.Add(KeyValue("Клавиш", k.TotalKeys.ToString()));
                 stack.Children.Add(Card(k.Model, k.IsApple ? "Правила MagicKeys рассчитаны на эту клавиатуру" : null, rows));
             }
@@ -1104,21 +1132,27 @@ namespace MagicKeys
             var mine = new List<string>();
             var taken = new List<string>();
 
-            if (TakenByTable(Vk.Up)) taken.Add("Fn+↑↓");
+            // Пару спрашиваем целиком, обе половины. В таблице они заведены отдельными
+            // строками и выключаются по одной — карточка «Показать все» для того и есть.
+            // Спрашивая только левую и верхнюю, сноска после выключения «В начало
+            // документа» обещала листание страницы, тогда как Fn+↓ по-прежнему уходил
+            // в конец документа.
+            if (TakenByTable(Vk.Up) || TakenByTable(Vk.Down)) taken.Add("Fn+↑↓");
             else mine.Add("Fn+↑↓ листают страницу");
 
-            if (TakenByTable(Vk.Left)) taken.Add("Fn+←→");
+            if (TakenByTable(Vk.Left) || TakenByTable(Vk.Right)) taken.Add("Fn+←→");
             else mine.Add("Fn+←→ уводят в начало и конец строки");
 
             if (TakenByTable(Vk.Back)) taken.Add("Fn+Backspace");
             else mine.Add("Fn+Backspace удаляет вперёд");
 
+            // Fn+Enter в таблице macOS не встречается ни при одном заменителе, поэтому
+            // без единой своей строки этот список не остаётся. Ветка «всё досталось
+            // таблице» здесь и стояла — надписью, которую нельзя показать.
             if (TakenByTable(Vk.Return)) taken.Add("Fn+Enter");
             else mine.Add("Fn+Enter — это Insert");
 
-            string said = mine.Count > 0
-                ? String.Join(", ", mine.ToArray()) + "."
-                : "Все шесть сочетаний сейчас достались таблице macOS.";
+            string said = String.Join(", ", mine.ToArray()) + ".";
 
             if (taken.Count > 0)
                 said += " " + String.Join(" и ", taken.ToArray()) +
@@ -1297,6 +1331,11 @@ namespace MagicKeys
                     if (sample.Count < 6) sample.Add(sc.Mac);
                 }
 
+                // Переключатель отвечает «включено хоть одно», и это надо сказать вслух:
+                // при одном включённом из двадцати он выглядел так же, как при всех
+                // двадцати. Щелчок по нему по-прежнему правит всю группу разом —
+                // теперь хотя бы видно, что именно он собирается переписать.
+                int onNow = on, allNow = all;
                 rows.Children.Add(Toggle(hints[g], on > 0, delegate(bool v)
                 {
                     foreach (MacShortcut sc in MacKeys.All)
@@ -1304,7 +1343,10 @@ namespace MagicKeys
                     Save(); BuildPage();
                 }));
                 rows.Children.Add(Note(String.Join(" · ", sample.ToArray()) +
-                                       (all > sample.Count ? " и ещё " + (all - sample.Count) : "")));
+                                       (all > sample.Count ? " и ещё " + (all - sample.Count) : "") +
+                                       (onNow > 0 && onNow < allNow
+                                            ? "  ·  включено " + onNow + " из " + allNow
+                                            : "")));
 
                 if (_macOpen == group)
                 {
@@ -1372,7 +1414,7 @@ namespace MagicKeys
             // Без сырого ввода программа перестаёт узнавать клавиатуру и, что хуже,
             // сторожить собственный перехват — сравнивать его показания становится не с чем.
             if (!String.IsNullOrEmpty(KeyWatch.Failure))
-                lines.Children.Add(Note("Windows отказала программе в подписке на ввод. Переназначения " +
+                lines.Children.Add(Note(KeyWatch.Failure + " Переназначения " +
                                         "работают, модель клавиатуры известна, а вот всё, что узнаётся " +
                                         "по нажатиям, — нет: исполнение клавиатуры, верхние F-клавиши, " +
                                         "клавиша Eject и страница «Диагностика». Помогает перезапуск программы."));

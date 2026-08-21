@@ -97,6 +97,18 @@ namespace MagicKeys
         private readonly Dictionary<ModKey, int> _modLifted = new Dictionary<ModKey, int>();
         private readonly HashSet<uint> _swallowed = new HashSet<uint>();
         private readonly HashSet<int> _navActive = new HashSet<int>();
+        /// <summary>
+        /// Клавиши, нажатие которых ушло в приложение своим ходом и которые человек
+        /// ещё держит.
+        ///
+        /// Седьмой слой, и он не «мы держим», а «держит приложение». Автоповтор Windows
+        /// приходит теми же нажатиями и от первого неотличим. Без этой записи слой,
+        /// спросивший Busy на автоповторе, брал клавишу себе посреди удержания — и потом
+        /// съедал её отпускание. В приложении клавиша оставалась зажатой навсегда, снять
+        /// её было нечем: физически человек её уже отпустил. Достаточно было держать ←
+        /// и потянуться к ⌘.
+        /// </summary>
+        private readonly HashSet<int> _letThrough = new HashSet<int>();
         private bool _fnHeld;
         /// <summary>
         /// Какая физическая клавиша сейчас работает заменителем Fn, или None.
@@ -109,6 +121,14 @@ namespace MagicKeys
         /// </summary>
         private ModKey _fnPhys;
         private int _subReleased;
+        /// <summary>
+        /// Чей код сняли МЫ, отступая под верхний ряд и навигацию, — и только его
+        /// возвращаем. Снять код мог и кто-то до нас: ClearHeld и ⌘+Tab снимают Win
+        /// и Alt намеренно и без возврата. Возвращая по общей записи о снятии, мы
+        /// нажимали Win при открытом переключателе окон — и следующий Tab уходил
+        /// как Win+Alt+Tab.
+        /// </summary>
+        private ModKey _subLifted;
         /// <summary>
         /// Alt, которым открыт переключатель окон. За физической клавишей он не стоит:
         /// подставленную Win мы сняли, а Alt нажали сами. Поэтому его приходится
@@ -234,7 +254,11 @@ namespace MagicKeys
         {
             try
             {
+                // И пауза, а не только выключатель. Выбрав «Только с Magic Keyboard»
+                // и отключив её, человек просил не вмешиваться вовсе — а любая правка
+                // настроек включала Num Lock на чужой полноразмерной клавиатуре.
                 if (s == null || !s.Enabled) return;
+                if (s.PauseWhenAppleAbsent && !Devices.AppleConnected) return;
                 string id = s.NumpadClear;
                 if (String.IsNullOrEmpty(id) || id == "none" || id == "key.numlock") return;
                 if ((Native.GetKeyState(Vk.NumLock) & 1) != 0) return;
@@ -270,7 +294,7 @@ namespace MagicKeys
             // Подписываемся один раз, до первого опроса.
             Devices.SetChanged += OnDevicesChanged;
 
-            // В стороне: опрос открывает каждую клавиатуру и тянет из неё три строки,
+            // В стороне: опрос открывает каждую клавиатуру и тянет из неё две строки,
             // а по Bluetooth это секунды. Start зовут с потока окна — окно не должно
             // ждать спящую клавиатуру, чтобы появиться.
             ThreadPool.QueueUserWorkItem(delegate
@@ -632,7 +656,7 @@ namespace MagicKeys
             // ⌘+Tab ведёт себя как Alt+Tab.
             if (s.CmdTabSwitchesWindows && vk == Vk.Tab && CmdHeld && !Busy(vk, k.scanCode))
             {
-                if (!down) return false;   // нажатия не брали — и отпускание не наше
+                if (!down) { _letThrough.Remove(vk); return false; }   // нажатия не брали
                 _chordTaken[vk] = CmdTab;
                 {
                     if (!_cmdTabAlt)
@@ -700,7 +724,7 @@ namespace MagicKeys
                         // надо, и они это про себя объявляют сами.
                         // Отпускание сюда не доходит: если нажатие взяли, его разобрали
                         // выше; а если не взяли — оно и не наше.
-                        if (!down) return false;
+                        if (!down) { _letThrough.Remove(vk); return false; }
                         // Сюда доходит только первое нажатие: повторы разбирает продолжение
                         // выше, и по нему же решается, повторять ли посылку.
                         MacSend(sc);
@@ -798,12 +822,16 @@ namespace MagicKeys
             // замерено стендом, ⌘1 открывал меню и забирал фокус.
             if (cmdMiss)
             {
-                if (!down) return false;   // нажатия не брали — и отпускание не наше
+                if (!down) { _letThrough.Remove(vk); return false; }
                 if (WindowsHoldsMenuKey()) Input.Tap(VkNoop);
                 _chordTaken[vk] = null;
                 return true;
             }
 
+            // Клавиша уходит в приложение своим ходом — и до отпускания она его.
+            // Записываем это единственный раз, в самом конце: сюда доходит ровно то,
+            // от чего отказались все слои.
+            if (down) _letThrough.Add(vk); else _letThrough.Remove(vk);
             return false;
         }
 
@@ -1167,7 +1195,9 @@ namespace MagicKeys
                 if (down && _subReleased > 0 && _fnPhys != ModKey.None)
                 {
                     _modTaken.Add(phys);
-                    if (!_modLifted.ContainsKey(phys) && IsModifierKey(mod)) _modLifted[phys] = mod;
+                    // Что mod — модификатор, уже сказано: _fnPhys выставлен именно
+                    // по этому вопросу, а он проверен строкой выше.
+                    if (!_modLifted.ContainsKey(phys)) { _modLifted[phys] = mod; _subLifted = phys; }
                     return true;
                 }
             }
@@ -1272,7 +1302,10 @@ namespace MagicKeys
             return vk == Vk.LMenu || vk == Vk.RMenu || vk == Vk.LWin || vk == Vk.RWin;
         }
 
-        /// <summary>Что заменитель Fn держит в Windows прямо сейчас, или 0.</summary>
+        /// <summary>
+        /// Код, который заменитель Fn держит в Windows, — а если мы его уже сняли,
+        /// то тот, что снят и будет возвращён. Ноль — заменитель ни за чем не стоит.
+        /// </summary>
         private int FnHoldsVk
         {
             get
@@ -1319,7 +1352,12 @@ namespace MagicKeys
         /// </summary>
         private void SubstituteRelease()
         {
-            int vk = FnHoldsVk;
+            // Спрашиваем «что Windows держит СЕЙЧАС», а не «что эта клавиша должна
+            // держать». Код мог быть снят и до нас — ClearHeld и ⌘+Tab снимают Win
+            // и Alt намеренно и без возврата. Снять их вторым разом значит послать
+            // отпускание без пары, а вернуть потом — нажать Win при открытом
+            // переключателе окон: следующий Tab уходил как Win+Alt+Tab.
+            int vk = _fnPhys == ModKey.None ? 0 : WindowsHolds(_fnPhys);
             if (_subReleased++ == 0 && vk != 0)
             {
                 if (IsMenuKey(vk)) Input.Tap(VkNoop);
@@ -1330,6 +1368,7 @@ namespace MagicKeys
                 // то есть на соседнюю вкладку. Записываем именно снятие, а не убираем
                 // запись из _injected: у заводского заменителя её там и не было.
                 _modLifted[_fnPhys] = vk;
+                _subLifted = _fnPhys;
             }
         }
 
@@ -1337,21 +1376,21 @@ namespace MagicKeys
         {
             if (--_subReleased > 0) return;
             _subReleased = 0;
-            if (_fnPhys == ModKey.None) return;
+            ModKey phys = _subLifted;
+            _subLifted = ModKey.None;
+            if (phys == ModKey.None) return;   // снимали не мы — и возвращать не нам
 
+            // Клавишу могли отпустить, пока мы держали её код снятым: её отпускание
+            // убирает запись о снятии, и возвращать тогда нечего.
             int vk;
-            if (!_modLifted.TryGetValue(_fnPhys, out vk)) return;
-            _modLifted.Remove(_fnPhys);
-
-            // Клавишу могли отпустить, пока мы держали её код снятым. Возвращать тогда
-            // нечего и нельзя: нажатия больше нет, а нажатый код остался бы висеть.
-            if (!_fnHeld) return;
+            if (!_modLifted.TryGetValue(phys, out vk)) return;
+            _modLifted.Remove(phys);
 
             Input.Key(vk, true);
             // Нажатие теперь наше — и отпускать его нам. У разбираемой клавиши запись
             // об этом и есть _injected; у неразбираемой код совпадает с её собственным,
             // и её настоящее отпускание снимет его само.
-            if (_modTaken.Contains(_fnPhys)) _injected[_fnPhys] = vk;
+            if (_modTaken.Contains(phys)) _injected[phys] = vk;
             if (IsMenuKey(vk)) Input.Tap(VkNoop);
         }
 
@@ -1496,14 +1535,17 @@ namespace MagicKeys
         ///
         /// Слоёв, умеющих взять нажатие себе, шесть, и каждый помнит взятое по-своему:
         /// навигация — по коду клавиши, раскладка и перестановка ISO — по скан-коду,
-        /// верхний ряд — по номеру. Пока нажатие держит один, второму брать его нельзя:
+        /// верхний ряд — по номеру. Седьмой хозяин — само приложение: клавиша, чьё
+        /// нажатие ушло насквозь, принадлежит ему до отпускания.
+        /// Пока нажатие держит один, второму брать его нельзя:
         /// иначе на отпускании сработает тот, чья проверка стоит выше, а запись второго
         /// останется навсегда — и следующее нажатие той же клавиши уйдёт в приложение,
         /// а её отпускание съедим мы. Клавиша останется зажатой, и снять её будет нечем.
         /// </summary>
         private bool Busy(int vk, uint scan)
         {
-            return _navActive.Contains(vk)
+            return _letThrough.Contains(vk)
+                || _navActive.Contains(vk)
                 || _chordTaken.ContainsKey(vk)
                 || _swallowed.Contains(scan)
                 || _isoSwapped.Contains(scan)
@@ -1546,7 +1588,9 @@ namespace MagicKeys
             foreach (KeyValuePair<ModKey, int> pair in new List<KeyValuePair<ModKey, int>>(_injected))
                 if (pair.Value == Vk.LWin || pair.Value == Vk.RWin)
                 {
-                    Input.Key(pair.Value, false);
+                    // Уже снятое не снимаем: запись в _injected при снятии остаётся,
+                    // и правду про «держит ли Windows» говорит только WindowsHolds.
+                    if (!_modLifted.ContainsKey(pair.Key)) Input.Key(pair.Value, false);
                     _injected.Remove(pair.Key);
                 }
         }
@@ -1713,7 +1757,7 @@ namespace MagicKeys
                 // между ними, то есть одиночное нажатие, и выкидывала «Пуск» поверх работы.
                 bool menu = _cmdTabAlt;
                 foreach (KeyValuePair<ModKey, int> pair in _injected)
-                    if (IsMenuKey(pair.Value)) menu = true;
+                    if (IsMenuKey(pair.Value) && !_modLifted.ContainsKey(pair.Key)) menu = true;
                 if (menu) Input.Tap(VkNoop);
 
                 // Запоминаем, что отпустили. Перечёт ниже спрашивает Windows про
@@ -1724,7 +1768,9 @@ namespace MagicKeys
                 var letGo = new List<int>();
                 foreach (KeyValuePair<ModKey, int> pair in new List<KeyValuePair<ModKey, int>>(_injected))
                 {
-                    Input.Key(pair.Value, false);
+                    // Снятое Windows не держит — отпускать нечего. В «уже отпущено»
+                    // оно всё равно попадёт: строкой ниже, вместе со всем снятым.
+                    if (!_modLifted.ContainsKey(pair.Key)) Input.Key(pair.Value, false);
                     letGo.Add(pair.Value);
                 }
                 _injected.Clear();
@@ -1739,12 +1785,14 @@ namespace MagicKeys
                 _fnHeld = false;
                 _fnPhys = ModKey.None;
                 _subReleased = 0;
+                _subLifted = ModKey.None;
                 _chordTaken.Clear();
                 // Настройки могли смениться — запомненную раскладку окна забываем.
                 _layHkl = IntPtr.Zero; _layFor = null; _layFile = null;
                 _hkl = IntPtr.Zero;
                 _deadPrefix = null;
                 _swallowed.Clear();
+                _letThrough.Clear();
 
 
                 // Отпускаем то, что держим ЗА человека, а не только модификаторы.

@@ -327,11 +327,6 @@ namespace MagicKeys
         [DllImport("hid.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.U1)]
         public static extern bool HidD_GetInputReport(IntPtr h, [In, Out] byte[] buffer, int size);
 
-        [DllImport("hid.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.U1)]
-        public static extern bool HidD_GetFeature(IntPtr h, [In, Out] byte[] buffer, int size);
-
-        [DllImport("hid.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.U1)]
-        public static extern bool HidD_SetFeature(IntPtr h, [In] byte[] buffer, int size);
 
         // ---------- разбор отчётов HID: медиастраница и Eject ----------
 

@@ -439,14 +439,14 @@ namespace MagicKeys
 
         // ------------------------------------------------------------------ мелочи
 
+        private const long MaxInstaller = 200L * 1024 * 1024;
+
         /// <summary>
         /// Забрать файл по ссылке. Своими руками, а не WebClient, ради трёх вещей:
         /// каждый переход проверяется на https (WebClient молча уходит с https на http),
         /// у ожидания есть срок (иначе «Скачиваю…» висит до пяти минут молча),
         /// и у размера есть потолок (сервер отвечает не тем, чем обещал, чаще, чем кажется).
         /// </summary>
-        private const long MaxInstaller = 200L * 1024 * 1024;
-
         private static bool Grab(Uri url, string path, out string error)
         {
             error = null;
@@ -512,6 +512,18 @@ namespace MagicKeys
                                 return false;
                             }
                         }
+                    }
+
+                    // Дочитали до конца — но того ли размера, что обещали? Оборванная
+                    // загрузка без исключения доходит сюда молча, а дальше её ловит
+                    // проверка подписи и называет «файл изменён после подписания»:
+                    // человек читает про подделку пакета там, где кончилась связь.
+                    if (response.ContentLength > 0 && total != response.ContentLength)
+                    {
+                        Diag.Log("обновление: скачано " + total + " из " + response.ContentLength);
+                        error = "связь оборвалась: скачано " + (total / 1024) + " КБ из "
+                              + (response.ContentLength / 1024) + " КБ";
+                        return false;
                     }
                     return true;
                 }

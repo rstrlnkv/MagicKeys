@@ -296,17 +296,26 @@ namespace MagicKeys
             }
 
             // Теперь выбираем коллекцию: ту, чей идентификатор изделия совпал
-            // с найденной клавиатурой Apple. Не совпало ни с одной — берём первую:
-            // модель может быть незнакомой, а показать заряд всё же лучше, чем нет.
-            // Мыши и трекпада в списке клавиатур нет, так что совпадение с ними
-            // случиться не может.
+            // с найденной клавиатурой Apple.
             foreach (KeyValuePair<int, string> p in statusPaths)
             {
                 foreach (KeyboardInfo k in result)
                     if (k.IsApple && k.ProductId == p.Key) { statusPath = p.Value; break; }
                 if (statusPath != null) break;
             }
-            if (statusPath == null && statusPaths.Count > 0) statusPath = statusPaths[0].Value;
+
+            // Не совпало ни с одной — берём первую, но только когда клавиатура Apple
+            // в списке всё-таки есть: модель может быть незнакомой, а показать заряд
+            // лучше, чем нет. Без клавиатуры эта ветка брала коллекцию мыши или
+            // трекпада — они приходят с мака в комплекте чаще, чем поодиночке, —
+            // и человек с одной только Magic Mouse читал «Клавиатура Apple не найдена ·
+            // заряд 64 %». Число настоящее, но не о том устройстве.
+            if (statusPath == null && statusPaths.Count > 0)
+            {
+                bool anyApple = false;
+                foreach (KeyboardInfo k in result) if (k.IsApple) anyApple = true;
+                if (anyApple) statusPath = statusPaths[0].Value;
+            }
 
             return result;
         }

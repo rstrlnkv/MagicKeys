@@ -994,7 +994,7 @@ namespace MagicKeys
                     output = "На пути к файлу драйвера есть точка повторного разбора — установку не начинаю.";
                     return false;
                 }
-                return Pnputil("/add-driver \"" + inf + "\" /install", out output);
+                return Pnputil("/add-driver \"" + inf + "\" /install", false, out output);
             }
         }
 
@@ -1025,7 +1025,7 @@ namespace MagicKeys
                        + "Его можно убрать через «Диспетчер устройств».";
                 return false;
             }
-            return Pnputil("/delete-driver \"" + published + "\" /uninstall /force", out output);
+            return Pnputil("/delete-driver \"" + published + "\" /uninstall /force", true, out output);
         }
 
         /// <summary>
@@ -1050,7 +1050,9 @@ namespace MagicKeys
                         string text;
                         using (var sr = new StreamReader(f, Encoding.Default, true))
                             text = sr.ReadToEnd();
-                        if (text.IndexOf(mark, StringComparison.OrdinalIgnoreCase) >= 0)
+                        // С точкой: голое «keymagic» совпадает и внутри «KeyMagic2.cat»,
+                        // и перебор по WantedInf сносил не тот драйвер семейства.
+                        if (text.IndexOf(mark + ".", StringComparison.OrdinalIgnoreCase) >= 0)
                             return Path.GetFileName(f);
                     }
                     catch { }
@@ -1079,7 +1081,13 @@ namespace MagicKeys
         /// 0xE0000247, да ещё и в кодировке консоли, которую мы читали как системную —
         /// то есть кириллица доходила мусором.
         /// </summary>
-        private static bool Pnputil(string args, out string output)
+        /// <param name="removing">
+        /// Убираем драйвер, а не ставим. Ответы у pnputil общие на оба случая, а слова
+        /// к ним нужны разные: после удачного удаления «до этого драйвер не заработает»
+        /// читалось как прямая противоположность правде, а «удалять нечего» приходило
+        /// на путь установки, где удалять никто не просил.
+        /// </param>
+        private static bool Pnputil(string args, bool removing, out string output)
         {
             output = null;
             try
@@ -1089,7 +1097,8 @@ namespace MagicKeys
                 psi.WorkingDirectory = sys;
                 psi.UseShellExecute = true;      // нужно для запроса прав
                 psi.Verb = "runas";
-                psi.CreateNoWindow = true;
+                // Окно прячет только это: CreateNoWindow при UseShellExecute не значит
+                // ничего — так описано в .NET, и так оно и есть.
                 psi.WindowStyle = ProcessWindowStyle.Hidden;
                 Process started = Process.Start(psi);
                 if (started == null)
@@ -1104,11 +1113,12 @@ namespace MagicKeys
                         // Не убиваем: установщик драйверов на медленной машине бывает
                         // долгим, а прерванная установка хуже долгой. Но и успехом
                         // не называем — говорим то, что есть.
-                        output = "Установка идёт дольше обычного. Она продолжается сама; "
-                               + "загляните сюда позже или переподключите клавиатуру.";
+                        output = (removing ? "Удаление идёт" : "Установка идёт")
+                               + " дольше обычного. Оно продолжается само; "
+                               + "загляните сюда позже.";
                         return false;
                     }
-                    return Verdict(p.ExitCode, out output);
+                    return Verdict(p.ExitCode, removing, out output);
                 }
             }
             catch (System.ComponentModel.Win32Exception e)
@@ -1131,7 +1141,7 @@ namespace MagicKeys
         }
 
         /// <summary>Код возврата pnputil человеческими словами.</summary>
-        private static bool Verdict(int code, out string output)
+        private static bool Verdict(int code, bool removing, out string output)
         {
             switch (code)
             {
@@ -1142,22 +1152,33 @@ namespace MagicKeys
                     // Успех, а не отказ. Считая его отказом, программа говорила
                     // «установить не удалось» и тут же, на том же экране, показывала
                     // драйвер установленным.
-                    // Про установку здесь не говорим: об этом уже сказал тот, кто нас
-                    // позвал, — а он же советует переподключить клавиатуру. Два совета
-                    // подряд, да ещё противоположных, хуже одного.
-                    output = "Windows просит перезагрузить компьютер — до этого драйвер не заработает.";
+                    // Про само действие здесь не говорим: об этом уже сказал тот, кто нас
+                    // позвал. А вот чего ждать после перезагрузки — говорим, и это разное:
+                    // общая на оба случая строка про «драйвер не заработает» после удаления
+                    // обещала прямо обратное тому, что произошло.
+                    output = removing
+                        ? "Windows просит перезагрузить компьютер — до этого драйвер останется в работе."
+                        : "Windows просит перезагрузить компьютер — до этого драйвер не заработает.";
                     return true;
                 case 5:
-                    output = "Windows не дала прав на установку драйвера.";
+                    output = removing
+                        ? "Windows не дала прав на удаление драйвера."
+                        : "Windows не дала прав на установку драйвера.";
                     return false;
                 case 1223:
                     output = "Запрос прав администратора отклонён.";
                     return false;
                 case 259:
-                    output = "Такого драйвера в системе нет — удалять нечего.";
+                    // ERROR_NO_MORE_ITEMS. При удалении это «такого в хранилище нет»,
+                    // при установке — «пакет не подошёл ни одному устройству».
+                    output = removing
+                        ? "Такого драйвера в системе нет — удалять нечего."
+                        : "Windows не нашла в этом пакете драйвера для вашей клавиатуры.";
                     return false;
                 case 87:
-                    output = "Windows не приняла путь к файлу драйвера.";
+                    output = removing
+                        ? "Windows не приняла имя, под которым драйвер лежит в хранилище."
+                        : "Windows не приняла путь к файлу драйвера.";
                     return false;
                 default:
                     output = "Установщик драйверов Windows ответил кодом " + code + ".";

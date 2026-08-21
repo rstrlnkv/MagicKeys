@@ -16,7 +16,9 @@ namespace MagicKeys
 {
     internal static class MakeIcon
     {
-        private static readonly int[] Show = { 256, 128, 64, 48, 32, 24, 20, 16 };
+        // Все десять — те же, что в самом значке. Прежде 40 и 96 на лист не попадали,
+        // а посмотреть стоит как раз на них: это масштабы 250 % и 600 %.
+        private static readonly int[] Show = { 256, 128, 96, 64, 48, 40, 32, 24, 20, 16 };
         private static readonly int[] TraySizes = { 16, 20, 24, 32 };
 
         private static int Main(string[] args)

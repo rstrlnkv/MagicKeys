@@ -62,6 +62,8 @@ namespace MagicKeys
             ModifierChangedMidPress();
             OneOwnerPerKey();
             SubstituteOnPlainKey();
+            RepeatStaysWhereItWent();
+            LiftedOnlyOnce();
             LayoutLevels();
             SnapshotIndependence();
             LayoutGuess();
@@ -1433,6 +1435,126 @@ namespace MagicKeys
                   "таблица отступила, и клавиша ушла переставленной: " + Sent());
             Send(Vk.Oem3, 0x29, false, false);
             Clear();
+        }
+
+        /// <summary>
+        /// Автоповтор клавиши, ушедшей в приложение, не достаётся никакому слою.
+        ///
+        /// Windows начинает повторять через полсекунды удержания, и повторное нажатие
+        /// от первого неотличимо. Взяв его себе, слой съедает потом и отпускание —
+        /// в приложении клавиша остаётся зажатой навсегда, а снять её нечем: человек
+        /// её уже отпустил. Достаточно держать ← и потянуться к ⌘.
+        /// </summary>
+        static void RepeatStaysWhereItWent()
+        {
+            Head("Автоповтор идёт туда же, куда ушло нажатие");
+
+            // Слой аккордов macOS: ⌘← из таблицы.
+            Settings s = Fresh();
+            Use(s);
+            bool first = Down(Vk.Left);
+            Down(Vk.Left);                      // автоповтор без ⌘
+            Down(Vk.LWin); Clear();             // ⌘ нажали, не отпуская ←
+            bool repeat = Down(Vk.Left);        // автоповтор УЖЕ при зажатой ⌘
+            bool up = Up(Vk.Left);
+            Check("аккорд не отбирает автоповтор клавиши, ушедшей насквозь",
+                  !first && !repeat && !up,
+                  "нажатие=" + first + ", повтор=" + repeat + ", отпускание=" + up +
+                  ", пришло «" + Sent() + "»");
+            Clear(); Up(Vk.LWin); Clear();
+
+            // Контрольный опыт: без автоповтора между нажатием и ⌘ отпускание доходит —
+            // значит проверка выше меряет автоповтор, а не порядок модификаторов.
+            Use(s);
+            Down(Vk.Left); Down(Vk.LWin); Clear();
+            bool ctlUp = Up(Vk.Left);
+            Check("контроль: без автоповтора отпускание всё равно доходит", !ctlUp,
+                  "отпускание=" + ctlUp);
+            Clear(); Up(Vk.LWin); Clear();
+
+            // Промах мимо таблицы: ⌘K глотается, и отпускание «K» съедалось бы.
+            Use(s);
+            Down(Vk.K); Down(Vk.K);
+            Down(Vk.LWin); Clear();
+            bool kRepeat = Down(Vk.K);
+            bool kUp = Up(Vk.K);
+            Check("промах мимо таблицы не отбирает автоповтор буквы",
+                  !kRepeat && !kUp, "повтор=" + kRepeat + ", отпускание=" + kUp +
+                  ", пришло «" + Sent() + "»");
+            Clear(); Up(Vk.LWin); Clear();
+
+            // Навигация Fn: заменитель нажали посреди удержания стрелки.
+            Settings n = Fresh();
+            n.FnNavigation = true; n.MacShortcuts = false;
+            n.FnSubstitute = ModKey.RAlt;
+            Use(n);
+            Down(Vk.Up); Down(Vk.Up);
+            DownE(Vk.RMenu); Clear();
+            bool nRepeat = Down(Vk.Up);
+            bool nUp = Up(Vk.Up);
+            Check("навигация Fn не отбирает автоповтор стрелки",
+                  !nRepeat && !nUp, "повтор=" + nRepeat + ", отпускание=" + nUp +
+                  ", пришло «" + Sent() + "»");
+            Clear(); UpE(Vk.RMenu); Clear();
+
+            // Раскладка Apple: ⌥ нажали посреди удержания буквы.
+            Settings l = Fresh();
+            l.AppleLayoutEnabled = true; l.OptLevel = OptLevel.AnyOption;
+            l.MacShortcuts = false;
+            Use(l);
+            Down(Vk.A); Down(Vk.A);
+            Down(Vk.LMenu); Clear();
+            bool aRepeat = Down(Vk.A);
+            bool aUp = Up(Vk.A);
+            Check("раскладка Apple не отбирает автоповтор буквы",
+                  !aRepeat && !aUp, "повтор=" + aRepeat + ", отпускание=" + aUp +
+                  ", пришло «" + Sent() + "»");
+            Clear(); Up(Vk.LMenu); Clear();
+        }
+
+        /// <summary>
+        /// Код, уже снятый у Windows, не снимают вторым разом и не возвращают нажатым.
+        /// Win и Alt снимают без возврата нарочно: сами по себе они открывают «Пуск»
+        /// и строку меню, а нажатая Win при открытом переключателе окон превращает
+        /// следующий Tab в Win+Alt+Tab.
+        /// </summary>
+        static void LiftedOnlyOnce()
+        {
+            Head("Снятое не снимают дважды");
+            Settings s = Fresh();
+            s.FnSubstitute = ModKey.LWin;
+            Use(s);
+            Down(Vk.LWin);
+            Down(Vk.C); Up(Vk.C);               // ⌘C: ClearHeld снял Win без возврата
+            Clear();
+            Down(Vk.F4); Up(Vk.F4);             // Fn+F4 — настоящая F4
+            Check("уже снятый код не снимают вторым разом",
+                  Count(Sent(), N(Vk.LWin) + "^") == 0, Sent());
+            Check("и не возвращают нажатым: Win снимали без возврата",
+                  Count(Sent(), N(Vk.LWin) + "v") == 0, Sent());
+            Clear(); Up(Vk.LWin); Clear();
+
+            // Контрольный опыт: без предварительного снятия Fn+F4 щит ставит и снимает
+            // Win честно — значит проверки выше меряют повторное снятие, а не то, что
+            // щита нет вовсе.
+            Use(s);
+            Down(Vk.LWin); Clear();
+            Down(Vk.F4); Up(Vk.F4);
+            Check("контроль: неснятый код Fn+F4 снимает сам",
+                  Count(Sent(), N(Vk.LWin) + "^") == 1, Sent());
+            Clear(); Up(Vk.LWin); Clear();
+
+            // ⌘+Tab после ⌘C: ReleaseWindowsKey слал Win^ вторым разом.
+            Settings t = Fresh();
+            t.CmdTabSwitchesWindows = true;
+            Use(t);
+            Down(Vk.LWin);
+            Down(Vk.C); Up(Vk.C);
+            Clear();
+            Down(Vk.Tab);
+            Check("⌘+Tab не снимает уже снятую Win второй раз",
+                  Count(Sent(), N(Vk.LWin) + "^") == 0, Sent());
+            Clear(); Up(Vk.Tab); Up(Vk.LWin); Clear();
         }
 
         /// <summary>Что перехват считает снятым у Windows на время.</summary>

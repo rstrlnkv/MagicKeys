@@ -2069,9 +2069,13 @@ namespace MagicKeys
 
             AppleModel a1644 = Models.Find(0x0267);      // Magic Keyboard 2015
             AppleModel a2450 = Models.Find(0x029C);      // она же 2021 года, без Touch ID
-            Check("у A1644 в углу ⏏", Says(a1644, "eject"), "её там нет");
+            // ⏏ теперь не надпись, а нарисованная фигура — Apple печатает на этой
+            // клавише значок. Спрашиваем про то, что рисуется, а не про слово.
+            Check("у A1644 в углу ⏏", Draws(a1644, "eject"), "её там нет");
             Check("у A2450 там замок", Says(a2450, "lock"), "его там нет");
-            Check("а ⏏ у неё уже нет", !Says(a2450, "eject"), "⏏ осталась");
+            Check("а ⏏ у неё уже нет", !Draws(a2450, "eject"), "⏏ осталась");
+            Check("у ⏏ есть подсказка словом", Mentions(TipOfArt(a1644, "eject"), "eject"),
+                  "сказано: " + TipOfArt(a1644, "eject"));
             Check("у модели с Touch ID там датчик", Sensor(compact), "датчика нет");
 
             // Правый control есть только у полноразмерной.
@@ -2222,6 +2226,22 @@ namespace MagicKeys
             if (m == null) return false;
             foreach (KeyCap k in KeyboardArt.Layout(m, PhysLayout.Ansi)) if (k.Cap == cap) return true;
             return false;
+        }
+
+        /// <summary>Есть ли на схеме клавиша, на которой нарисован такой значок.</summary>
+        static bool Draws(AppleModel m, string art)
+        {
+            if (m == null) return false;
+            foreach (KeyCap k in KeyboardArt.Layout(m, PhysLayout.Ansi)) if (k.Art == art) return true;
+            return false;
+        }
+
+        /// <summary>Подсказка клавиши со значком: словом её называют только там.</summary>
+        static string TipOfArt(AppleModel m, string art)
+        {
+            if (m == null) return null;
+            foreach (KeyCap k in KeyboardArt.Layout(m, PhysLayout.Ansi)) if (k.Art == art) return k.Tip;
+            return null;
         }
 
         /// <summary>Есть ли на схеме круглый датчик Touch ID.</summary>

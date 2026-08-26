@@ -256,6 +256,21 @@ namespace MagicKeys
 
         static void Head(string t) { Console.WriteLine(); Console.WriteLine("== " + t + " =="); }
 
+        /// <summary>
+        /// Настройки прямо из строки XML — так проверяется файл от прежней версии,
+        /// в котором нового поля нет вовсе. Через диск это делать незачем: читает
+        /// их тот же сериализатор.
+        /// </summary>
+        static Settings FromXml(string xml)
+        {
+            try
+            {
+                using (var sr = new System.IO.StringReader(xml))
+                    return (Settings)new System.Xml.Serialization.XmlSerializer(typeof(Settings)).Deserialize(sr);
+            }
+            catch { return null; }
+        }
+
         // ---------- настройки ----------
 
         static void Enabled()
@@ -2660,6 +2675,25 @@ namespace MagicKeys
             s.FnSubstitute = ModKey.LShift;                 // такого окно не предлагает
             s.Normalize();
             Check("недопустимый заменитель Fn обнуляется", s.FnSubstitute == ModKey.None, "" + s.FnSubstitute);
+
+            // Правый control окно предлагает: у полноразмерных он есть, и это
+            // единственная там клавиша, не занятая ни ⌘, ни ⌥.
+            s = new Settings(); s.FnSubstitute = ModKey.RCtrl; s.Normalize();
+            Check("правый control заменителем Fn допустим", s.FnSubstitute == ModKey.RCtrl, "" + s.FnSubstitute);
+
+            // Файл от прежней версии этого поля не знает — и не должен ничего менять
+            // тому, кто его не трогал. Читаем настройки без этого поля вовсе.
+            Settings old = FromXml(
+                "<?xml version=\"1.0\"?>" +
+                "<Settings xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\">" +
+                "<MapLCtrl>LWin</MapLCtrl><MapLWin>LCtrl</MapLWin></Settings>");
+            Check("файл от прежней версии читается", old != null, "не прочитался");
+            if (old != null)
+            {
+                old.Normalize();
+                Check("правый control в нём остаётся собой", old.MapRCtrl == ModKey.RCtrl, "" + old.MapRCtrl);
+                Check("контроль: прочее из файла применилось", old.MapLCtrl == ModKey.LWin, "" + old.MapLCtrl);
+            }
 
             s = new Settings(); s.SpaceSearch = "чепуха"; s.Normalize();
             Check("неизвестный ответ про пробел — это ⌘", s.SpaceSearch == Settings.SpaceCmd, s.SpaceSearch);

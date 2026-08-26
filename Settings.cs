@@ -82,6 +82,18 @@ namespace MagicKeys
 
         /// <summary>Во что превращается каждая клавиша-модификатор.</summary>
         public ModKey MapLCtrl = ModKey.LCtrl;
+
+        /// <summary>
+        /// Правый control — он есть у всех полноразмерных клавиатур Apple.
+        ///
+        /// Заведён позже прочих: в программе было записано, что такой клавиши у Apple
+        /// не бывает, и обмер официальных снимков это опроверг — она стоит в нижнем
+        /// ряду справа у A1243, A1843, A2520 и A3119. До того готовая схема «⌘ работает
+        /// как Ctrl» уводила левый control и оставляла правый контролом, а поправить
+        /// это было негде. С завода — сам собой: у тех, кто его не трогал, не меняется
+        /// ничего.
+        /// </summary>
+        public ModKey MapRCtrl = ModKey.RCtrl;
         public ModKey MapLWin = ModKey.LWin;
         public ModKey MapLAlt = ModKey.LAlt;
         public ModKey MapRAlt = ModKey.RAlt;
@@ -491,6 +503,7 @@ namespace MagicKeys
             switch (phys)
             {
                 case ModKey.LCtrl: return MapLCtrl;
+                case ModKey.RCtrl: return MapRCtrl;
                 case ModKey.LWin: return MapLWin;
                 case ModKey.LAlt: return MapLAlt;
                 case ModKey.RAlt: return MapRAlt;
@@ -512,7 +525,7 @@ namespace MagicKeys
         {
             ModKey[] all =
             {
-                ModKey.CapsLock, ModKey.LCtrl, ModKey.LAlt, ModKey.RAlt,
+                ModKey.CapsLock, ModKey.LCtrl, ModKey.RCtrl, ModKey.LAlt, ModKey.RAlt,
                 ModKey.LWin, ModKey.RWin
             };
             foreach (ModKey phys in all) if (TargetOf(phys) == target) return true;
@@ -547,10 +560,12 @@ namespace MagicKeys
             if (LayoutBindings == null) LayoutBindings = new LayoutBinding[0];
             if (MacShortcutsOff == null) MacShortcutsOff = new string[0];
 
-            // Заменитель Fn — только то, что предлагает окно.
+            // Заменитель Fn — только то, что предлагает окно. Правый control сюда
+            // добавлен вместе с настройкой: у полноразмерных он есть, и на них это
+            // единственная свободная клавиша, не занятая ни ⌘, ни ⌥.
             if (FnSubstitute != ModKey.None && FnSubstitute != ModKey.RAlt
                 && FnSubstitute != ModKey.RWin && FnSubstitute != ModKey.LWin
-                && FnSubstitute != ModKey.CapsLock)
+                && FnSubstitute != ModKey.RCtrl && FnSubstitute != ModKey.CapsLock)
                 FnSubstitute = ModKey.None;
 
             if (SpaceSearch != SpaceCmd && SpaceSearch != SpaceCtrl && SpaceSearch != SpaceNone)

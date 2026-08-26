@@ -400,16 +400,30 @@ namespace MagicKeys
 
             var fnChoices = new List<Choice>();
             fnChoices.Add(new Choice { Value = ModKey.None, Text = "Нет — переключать только в этом окне" });
-            // Правого control в списке нет: на клавиатурах Apple его не бывает,
-            // а предлагать несуществующую клавишу — обещать то, чего не нажать.
+            // Правый control в списке есть — у полноразмерных клавиатур Apple он имеется.
+            // Здесь было записано, что «на клавиатурах Apple его не бывает»; обмер
+            // официальных снимков это опроверг, а список тем временем не предлагал
+            // единственную свободную клавишу тем, у кого она есть.
             //
             // Правый ⌥ есть, хотя о нём спрашивает и карточка ниже. Без него список лгал:
             // с завода заменитель — именно правый ⌥, в списке его не было, и список
             // показывал «Нет». Прикоснувшийся к нему человек не выбирал ничего — и терял
             // замену Fn. Два места об одной клавише — плохо; место, показывающее неправду, —
             // хуже, поэтому карточка перерисовывается вслед за списком.
-            foreach (ModKey m in new[] { ModKey.RAlt, ModKey.RWin, ModKey.LWin, ModKey.CapsLock })
-                fnChoices.Add(new Choice { Value = m, Text = ModNames.Of(m) });
+            //
+            // Клавишу, которой у этой клавиатуры нет, из списка не убираем, а подписываем.
+            // Убрать её значило бы показать первый пункт вместо выбранного — то есть
+            // соврать о состоянии; а на японской компактной с завода выбрана как раз
+            // такая клавиша, и человеку надо увидеть, почему Fn+стрелки молчат.
+            foreach (ModKey m in new[] { ModKey.RAlt, ModKey.RWin, ModKey.LWin, ModKey.RCtrl, ModKey.CapsLock })
+            {
+                if (m == ModKey.RCtrl && !Has(Vk.RControl) && _s.FnSubstitute != ModKey.RCtrl) continue;
+                fnChoices.Add(new Choice
+                {
+                    Value = m,
+                    Text = ModNames.Of(m) + (Has(ModNames.VirtualKey(m)) ? "" : " — у этой клавиатуры её нет")
+                });
+            }
 
             var fnBox = Combo(fnChoices.ToArray(), _s.FnSubstitute,
                 delegate(object v)
@@ -681,6 +695,10 @@ namespace MagicKeys
                 _s.MapLCtrl = ModKey.LWin;
                 _s.MapLWin = ModKey.LCtrl;
                 _s.MapRWin = ModKey.RCtrl;
+                // И правый control — туда же, куда левый. Оставленный собой, он делал
+                // из двух одинаковых с виду клавиш две разные: левая открывала «Пуск»,
+                // правая по-прежнему давала Ctrl.
+                _s.MapRCtrl = ModKey.RWin;
                 _s.MapLAlt = ModKey.LAlt;
                 _s.MapRAlt = ModKey.RAlt;
                 Save(); BuildPage();
@@ -688,6 +706,7 @@ namespace MagicKeys
             presets.Children.Add(PresetButton("Как в Windows", "Ctrl / Win / Alt встают по местам", delegate
             {
                 _s.MapLCtrl = ModKey.LCtrl;
+                _s.MapRCtrl = ModKey.RCtrl;
                 _s.MapLAlt = ModKey.LWin;
                 _s.MapLWin = ModKey.LAlt;
                 _s.MapRWin = ModKey.RAlt;
@@ -702,6 +721,7 @@ namespace MagicKeys
                 // обещать «как приходит от клавиатуры» и оставить Escape.
                 _s.MapCapsLock = ModKey.CapsLock;
                 _s.MapLCtrl = ModKey.LCtrl;
+                _s.MapRCtrl = ModKey.RCtrl;
                 _s.MapLWin = ModKey.LWin;
                 _s.MapLAlt = ModKey.LAlt;
                 _s.MapRAlt = ModKey.RAlt;
@@ -727,17 +747,32 @@ namespace MagicKeys
             // продолжала обещать сочетания, которые перешли к таблице macOS.
             //
             // Caps Lock первой строкой: с мака его меняют чаще, чем все остальные вместе.
-            AddModRow(grid, 0, "Caps Lock", "Часто удобнее как control или Escape", _s.MapCapsLock,
+            bool jis = ArtPhys(Devices.AppleModel) == PhysLayout.Jis;
+            AddModRow(grid, 0, "Caps Lock",
+                jis ? "Нижний левый угол — у японской она стоит там"
+                    : "Часто удобнее как control или Escape", _s.MapCapsLock,
                 delegate(ModKey m) { _s.MapCapsLock = m; Save(); BuildPage(); });
-            AddModRow(grid, 1, "control (левый)", "Крайняя левая клавиша", _s.MapLCtrl,
+            AddModRow(grid, 1, "control (левый)",
+                jis ? "В ряду с «A» — там, где у прочих Caps Lock" : "Крайняя левая клавиша", _s.MapLCtrl,
                 delegate(ModKey m) { _s.MapLCtrl = m; Save(); BuildPage(); });
-            AddModRow(grid, 2, "⌥ option (левый)", "Между control и ⌘", _s.MapLAlt,
+            AddModRow(grid, 2, "⌥ option (левый)",
+                jis ? "Между Caps Lock и ⌘" : "Между control и ⌘", _s.MapLAlt,
                 delegate(ModKey m) { _s.MapLAlt = m; Save(); BuildPage(); });
-            AddModRow(grid, 3, "⌘ command (левая)", "Слева от пробела", _s.MapLWin,
+            AddModRow(grid, 3, "⌘ command (левая)",
+                jis ? "Между ⌥ и 英数" : "Слева от пробела", _s.MapLWin,
                 delegate(ModKey m) { _s.MapLWin = m; Save(); BuildPage(); });
-            AddModRow(grid, 4, "⌘ command (правая)", "Справа от пробела", _s.MapRWin,
+            AddModRow(grid, 4, "⌘ command (правая)",
+                jis ? "Справа от かな" : "Справа от пробела", _s.MapRWin,
                 delegate(ModKey m) { _s.MapRWin = m; Save(); BuildPage(); });
             // Правого ⌥ здесь нет: у него своя карточка выше, где он спрашивается один раз.
+
+            // Правый control — только у полноразмерных, но показать его надо и тогда,
+            // когда он уже переназначен: спрятанная настройка, которую нечем вернуть,
+            // хуже лишней строки. То же правило, что у карточки ⏏.
+            if (Has(Vk.RControl) || _s.MapRCtrl != ModKey.RCtrl)
+                AddModRow(grid, 5, "control (правый)",
+                    "Нижний правый угол — он есть только у полноразмерных", _s.MapRCtrl,
+                    delegate(ModKey m) { _s.MapRCtrl = m; Save(); BuildPage(); });
 
             stack.Children.Add(Card("Отдельные клавиши", "Слева — что напечатано на клавише, справа — чем она станет.", grid));
         }
@@ -824,6 +859,18 @@ namespace MagicKeys
                 if (pick != "plain") _s.MapRAlt = ModKey.RAlt;
                 Save(); BuildPage();
             })));
+            // Клавиши может не быть вовсе. У японской компактной правый ⌥ не стоит нигде:
+            // его место занял fn с глобусом — замерено по снимку с японского сайта Apple.
+            // А с завода именно он назначен заменителем Fn, и без этой строки человек
+            // видел карточку про клавишу, которой у него нет, и молчащие Fn+стрелки.
+            //
+            // Первой строкой, а не последней: она отменяет всё, что сказано ниже,
+            // и прочитать её надо до того, как поверишь описанию.
+            if (!Has(Vk.RMenu))
+                rows.Children.Add(Note("У вашей клавиатуры правого ⌥ нет — на его месте стоит fn " +
+                                       "с глобусом, а сама fn до Windows не доходит. Ничего из " +
+                                       "написанного ниже работать не будет: выберите заменителем Fn " +
+                                       "другую клавишу в карточке «Что делают F1–F12»."));
             rows.Children.Add(Note(what));
 
             if (now == "symbols")
@@ -1606,6 +1653,14 @@ namespace MagicKeys
         private System.Windows.Threading.DispatcherTimer _artFade;
 
         /// <summary>
+        /// Чужая модель, выбранная в списке, — пусто значит «своя». На диск не пишется
+        /// нарочно: это не настройка, а разглядывание. Пережившее выключение «показывать
+        /// A1243» — это карточка, которая молча врёт про клавиатуру на столе.
+        /// </summary>
+        private string _artPick;
+        private bool _artPickPad;
+
+        /// <summary>
         /// Схема клавиатуры: та самая модель, которую узнала программа.
         ///
         /// Затем, чтобы человек увидел своими глазами, что программа поняла его
@@ -1617,42 +1672,157 @@ namespace MagicKeys
         /// </summary>
         private UIElement KeyboardCard()
         {
-            AppleModel m = Devices.AppleModel;
-            if (m == null)
-                return Card("Ваша клавиатура", null,
-                    Note("Клавиатуры Apple сейчас не видно, и рисовать нечего: схема " +
-                         "показывает ту модель, которую программа узнала, а не любую."));
+            AppleModel mine = Devices.AppleModel;
+            AppleModel m = mine;
+            if (_artPick != null)
+            {
+                AppleModel other = Models.ByName(_artPick, _artPickPad);
+                if (other != null) m = other;
+            }
 
-            PhysLayout phys = _engine == null ? PhysLayout.Ansi : _engine.Physical(_s);
-            _art = KeyboardArt.Draw(m, phys, delegate(int vk)
+            // Своей клавиатуры нет — показываем самую новую. Пустая карточка со списком,
+            // в котором что-то выбрано, а под ним ничего не нарисовано, обещает то,
+            // чего не даёт: список говорит «A1242», а показать его отказывается.
+            if (m == null) m = Newest();
+
+            // Своя клавиатура или чужая — от этого зависит не только надпись.
+            // Обводка значит «эту клавишу программа видела своими глазами», и рисовать
+            // её на чужой схеме нельзя: своими глазами она видела совсем другую.
+            bool own = Models.Same(m, mine);
+
+            var parts = new List<UIElement>();
+            PhysLayout phys = ArtPhys(m);
+            _art = KeyboardArt.Draw(m, phys, !own ? null : new Func<int, KeyboardArt.State>(delegate(int vk)
             {
                 return KeyWatch.Seen(vk) ? KeyboardArt.State.Seen : KeyboardArt.State.Unknown;
-            });
+            }));
             _artDown = 0;
+            parts.Add(_art.Element);
 
-            string phrase = Models.GenName(m.Gen) + " · " + Models.PhysName(phys);
+            // Нажатия подсвечиваются только на своей схеме — по той же причине.
+            if (!own) _art = null;
+
+            string title = own ? m.Name : "Клавиатуры Apple";
+            string phrase = m.Designation + " · " + Models.GenName(m.Gen) + " · " + Models.PhysName(phys);
+
+            parts.Add(Row("Показать",
+                          mine == null ? "Своя выберется сама, когда клавиатура будет на месте"
+                                       : "Своя клавиатура выбрана сама",
+                          ModelBox(mine, m)));
 
             // Оговорки — сноской, а не на клавишах: на клавише в сорок точек шириной
             // «приходит в Windows как Num Lock» не помещается никак, а обрезанное
             // «приход…» — это не подпись, а обещание, которого не разобрать. На самих
             // клавишах то же самое живёт подсказкой под курсором.
             var quirks = new System.Text.StringBuilder();
-            quirks.Append("Обведённые клавиши программа уже видела своими глазами — значит, ");
-            quirks.Append("они доходят до Windows. Нажмите любую: она подсветится.");
+            if (own)
+            {
+                quirks.Append("Обведённые клавиши программа уже видела своими глазами — значит, ");
+                quirks.Append("они доходят до Windows. Нажмите любую: она подсветится.");
+            }
+            else if (mine == null)
+            {
+                quirks.Append("Клавиатуры Apple сейчас не видно, и это не ваша схема, а просто ");
+                quirks.Append("схема: посмотреть в списке можно любую. Когда клавиатура окажется ");
+                quirks.Append("на месте, карточка покажет её — и отметит клавиши, которые до ");
+                quirks.Append("Windows доходят.");
+            }
+            else
+            {
+                quirks.Append("Это не ваша клавиатура, а выбранная в списке. Обводок и подсветки ");
+                quirks.Append("на ней нет: своими глазами программа видела не её.");
+            }
+
             quirks.Append("\n\nfn до Windows не доходит вовсе — её обрабатывает сама клавиатура, ");
             quirks.Append("и вместо неё работает заменитель Fn.");
             if (m.Eject)
-                quirks.Append(" Клавиша Eject не доходит тоже.");
+                quirks.Append(" Eject обычной клавишей не приходит, но программа видит её " +
+                              "сырым вводом: действие ей назначают на странице «Клавиши».");
+            if (m.Lock)
+                quirks.Append(" Замок в правом верхнем углу запирает экран на Mac; " +
+                              "Windows такой клавиши не знает.");
             if (m.TouchId)
                 quirks.Append(" Touch ID — датчик, а не клавиша: в Windows он не работает.");
             if (m.Numpad)
                 quirks.Append(" На цифровом блоке Clear приходит как Num Lock, а «=» — кодом " +
                               "«очистить»: обеим программа возвращает смысл.");
-            quirks.Append("\n\nСхема нарисована по модели и исполнению, а не снята с вашего стола: " +
-                          "у клавиш здесь стандартные пропорции.");
+            quirks.Append("\n\nСхема нарисована по числам, снятым с официальных снимков Apple — " +
+                          "американских, британских и японских: ширина каждой клавиши, зазоры " +
+                          "и поля корпуса обмерены, а не подобраны на глаз.");
+            parts.Add(Note(quirks.ToString()));
 
-            return Card(m.Name, phrase, _art.Element, Note(quirks.ToString()));
+            return Card(title, phrase, parts.ToArray());
         }
+
+        /// <summary>
+        /// Есть ли такая клавиша у той клавиатуры, что сейчас на столе.
+        ///
+        /// Спрашивает схему — единственное место, где записано, из каких клавиш
+        /// состоит каждая модель. Клавиатуры не видно — отвечает «есть»: настройка,
+        /// спрятанная из-за незнания, человеку не найдётся вовсе.
+        /// </summary>
+        private bool Has(int vk)
+        {
+            AppleModel m = Devices.AppleModel;
+            return KeyboardArt.HasKey(m, ArtPhys(m), vk);
+        }
+
+        /// <summary>Самая новая клавиатура каталога без цифрового блока — ею карточка
+        /// заполняет пустоту, когда своей клавиатуры не видно.</summary>
+        private static AppleModel Newest()
+        {
+            AppleModel[] all = Models.All();
+            AppleModel best = all.Length > 0 ? all[all.Length - 1] : null;
+            for (int i = all.Length - 1; i >= 0; i--)
+                if (!all[i].Numpad) { best = all[i]; break; }
+            return best;
+        }
+
+        /// <summary>В каком исполнении рисовать эту клавиатуру.</summary>
+        private PhysLayout ArtPhys(AppleModel m)
+        {
+            // У старых моделей исполнение закодировано в коде устройства и спорить
+            // с ним нечему. У Magic Keyboard его выбирает настройка — та же самая,
+            // что и для перехвата: двух хозяев у одного вопроса не бывает.
+            if (m != null && m.Phys != PhysLayout.Auto) return m.Phys;
+            return _engine == null ? PhysLayout.Ansi : _engine.Physical(_s);
+        }
+
+        /// <summary>Список клавиатур: своя сверху, дальше все остальные по годам.</summary>
+        private ComboBox ModelBox(AppleModel mine, AppleModel shown)
+        {
+            var choices = new List<Choice>();
+            if (mine != null)
+                choices.Add(new Choice { Value = "", Text = "Ваша: " + mine.Name });
+            foreach (AppleModel m in Models.All())
+            {
+                if (Models.Same(m, mine)) continue;
+                choices.Add(new Choice
+                {
+                    Value = m.Designation + (m.Numpad ? "+" : ""),
+                    Text = m.Designation + " — " + m.Name
+                });
+            }
+
+            string current = Models.Same(shown, mine) || shown == null
+                           ? "" : shown.Designation + (shown.Numpad ? "+" : "");
+            ComboBox box = Combo(choices.ToArray(), current, delegate(object v)
+            {
+                string s = (string)v;
+                _artPickPad = s.EndsWith("+", StringComparison.Ordinal);
+                _artPick = s.Length == 0 ? null : s.TrimEnd('+');
+                BuildPage();
+            });
+
+            // Единственный список в программе, который ничего не настраивает: он меняет
+            // то, что показано, и только. Стенд иначе счёл бы его мёртвым — и был бы
+            // прав в общем случае: список, не меняющий ничего, обычно забытая заглушка.
+            box.Tag = ViewOnly;
+            return box;
+        }
+
+        /// <summary>Метка на списке, который меняет показанное, а не настройки.</summary>
+        internal const string ViewOnly = "показ";
 
         /// <summary>
         /// Подсветить нажатую клавишу и погасить её через треть секунды.

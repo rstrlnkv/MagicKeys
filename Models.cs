@@ -35,7 +35,10 @@ namespace MagicKeys
         public AppleGen Gen;
         public bool Numpad;
         public bool TouchId;
-        public bool Eject;           // клавиша ⏏ у алюминиевой серии
+        public bool Eject;           // ⏏ в правом верхнем углу — до Magic Keyboard 2021
+        public bool Lock;            // замок на её месте — у 2021 и 2024 без Touch ID
+        public bool Globe;           // на fn нарисован глобус — у 2021 и 2024
+        public bool ContextMenu;     // клавиша контекстного меню вместо fn в навигационном блоке
         public int FunctionKeys;     // 12 или 19: у полноразмерных есть ряд F13–F19
         public PhysLayout Phys;      // у старых моделей исполнение закодировано в PID
     }
@@ -55,13 +58,36 @@ namespace MagicKeys
             AppleModel m = new AppleModel();
             m.Product = pid; m.Name = name; m.Designation = designation; m.Year = year;
             m.Gen = gen; m.Numpad = numpad; m.TouchId = touchId; m.Phys = phys;
-            // ⏏ есть у всей алюминиевой серии и у полноразмерной Magic Keyboard;
-            // у моделей с Touch ID её место занял датчик.
-            m.Eject = gen == AppleGen.Alu || (gen == AppleGen.Magic2015 && numpad);
+            Fill(m);
+            ByProduct[pid] = m;
+        }
+
+        /// <summary>
+        /// Что следует из поколения и исполнения. Отдельной работой затем, что
+        /// таких мест два — каталог и запасной путь по названию, — и однажды они
+        /// уже разошлись: об одной и той же клавиатуре программа отвечала по-разному
+        /// в зависимости от того, узнала ли она её код.
+        /// </summary>
+        private static void Fill(AppleModel m)
+        {
+            bool magicNew = m.Gen == AppleGen.Magic2021 || m.Gen == AppleGen.Magic2024;
+
+            // Правый верхний угол занят ровно одной вещью из трёх. Замерено по снимкам
+            // Apple: у A1644 там ⏏ (а не пусто, как считалось), у A2450 и A3203 — замок,
+            // у моделей с Touch ID — датчик.
+            m.Eject = m.Gen == AppleGen.Alu || m.Gen == AppleGen.Magic2015;
+            m.Lock = magicNew && !m.TouchId;
+
+            // Глобус на fn появился вместе с поколением 2021 года.
+            m.Globe = magicNew;
+
+            // Клавиша контекстного меню — только у полноразмерных нового поколения:
+            // fn у них ушла в нижний ряд, и её место в навигационном блоке освободилось.
+            m.ContextMenu = magicNew && m.Numpad;
+
             // Ряд F13–F19 есть только у полноразмерных: он идёт над навигационным
             // блоком и цифровой клавиатурой.
-            m.FunctionKeys = numpad ? 19 : 12;
-            ByProduct[pid] = m;
+            m.FunctionKeys = m.Numpad ? 19 : 12;
         }
 
         private static void AddTriplet(int basePid, string name, string designation, int year, AppleGen gen, bool numpad)
@@ -100,6 +126,47 @@ namespace MagicKeys
             return ByProduct.TryGetValue(product, out m) ? m : null;
         }
 
+        /// <summary>Одна и та же ли это клавиатура. Номер модели и цифровой блок — всё, чем они различаются.</summary>
+        public static bool Same(AppleModel a, AppleModel b)
+        {
+            return a != null && b != null && a.Designation == b.Designation && a.Numpad == b.Numpad;
+        }
+
+        /// <summary>
+        /// Каталог по одной записи на клавиатуру, от старых к новым.
+        ///
+        /// У алюминиевой серии каждое исполнение заведено своим кодом, но клавиатура
+        /// это одна и та же, и в списке ей место одно. Список нужен карточке схемы:
+        /// показывает она узнанную модель, а посмотреть даёт любую.
+        /// </summary>
+        public static AppleModel[] All()
+        {
+            var list = new List<AppleModel>();
+            var taken = new Dictionary<string, bool>();
+            foreach (AppleModel m in ByProduct.Values)
+            {
+                string key = m.Designation + (m.Numpad ? "+" : "");
+                if (taken.ContainsKey(key)) continue;
+                taken[key] = true;
+                list.Add(m);
+            }
+            list.Sort(delegate(AppleModel a, AppleModel b)
+            {
+                if (a.Year != b.Year) return a.Year - b.Year;
+                if (a.Numpad != b.Numpad) return a.Numpad ? 1 : -1;
+                return String.CompareOrdinal(a.Designation, b.Designation);
+            });
+            return list.ToArray();
+        }
+
+        /// <summary>Клавиатура по номеру модели — им её называет список.</summary>
+        public static AppleModel ByName(string designation, bool numpad)
+        {
+            foreach (AppleModel m in All())
+                if (m.Designation == designation && m.Numpad == numpad) return m;
+            return null;
+        }
+
         /// <summary>
         /// Запасной путь для незнакомого идентификатора: клавиатура сама сообщает своё
         /// название строкой HID («Magic Keyboard with Numeric Keypad»), и по нему видно
@@ -119,17 +186,13 @@ namespace MagicKeys
             m.Numpad = p.IndexOf("numeric", StringComparison.Ordinal) >= 0
                     || p.IndexOf("keypad", StringComparison.Ordinal) >= 0;
             m.TouchId = p.IndexOf("touch id", StringComparison.Ordinal) >= 0;
-            m.FunctionKeys = m.Numpad ? 19 : 12;
             m.Phys = PhysLayout.Auto;
             m.Gen = p.IndexOf("magic", StringComparison.Ordinal) >= 0
                 ? (m.TouchId ? AppleGen.Magic2021 : AppleGen.Magic2015)
                 : AppleGen.Alu;
 
-            // Правило для ⏏ берём то же, что в основной таблице, а не своё. Своё
-            // говорило «есть блок и нет Touch ID», и алюминиевая компактная — как раз
-            // та, у которой ⏏ и есть, — получала «нет». Ответ про одну и ту же
-            // клавиатуру зависел от того, узнали ли её код.
-            m.Eject = m.Gen == AppleGen.Alu || (m.Gen == AppleGen.Magic2015 && m.Numpad);
+            // Всё остальное — тем же правилом, что и у моделей из каталога.
+            Fill(m);
             return m;
         }
 

@@ -93,6 +93,7 @@ namespace MagicKeys
             FnBehaviorUnknownIsNotRegistry();
             NarrowWindowKeepsWordsWhole();
             KeyboardArtIsHonest();
+            SettingsFollowTheKeyboard();
             ElevatedWindowIsSaidOutLoud();
 
             Console.WriteLine();
@@ -1650,6 +1651,98 @@ namespace MagicKeys
                   "вылезло " + spilled + ", первая — " + firstSpill);
         }
 
+        /// <summary>
+        /// Настройки идут за клавиатурой, а не за общим представлением о ней.
+        ///
+        /// Обмер снимков Apple показал две вещи, которых программа не знала: у полноразмерных
+        /// есть правый control, а у японской компактной нет правого ⌥ — того самого, который
+        /// с завода стоит заменителем Fn. Здесь проверяется, что окно и настройки об этом
+        /// знают: несуществующую клавишу не выдают за рабочую, существующую не прячут.
+        /// </summary>
+        static void SettingsFollowTheKeyboard()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== настройки идут за клавиатурой ==");
+
+            AppleModel compact = Models.Find(0x029A);      // Magic Keyboard с Touch ID
+            AppleModel full = Models.Find(0x029F);         // она же с цифровым блоком
+            Check("модели для проверки нашлись", compact != null && full != null, "нет в каталоге");
+            if (compact == null || full == null) return;
+
+            // ---- какие клавиши у клавиатуры есть ----
+            Check("у полноразмерной есть правый control",
+                  KeyboardArt.HasKey(full, PhysLayout.Ansi, Vk.RControl), "его нет");
+            Check("у компактной его нет",
+                  !KeyboardArt.HasKey(compact, PhysLayout.Ansi, Vk.RControl), "он есть");
+            Check("у японской компактной нет правого ⌥",
+                  !KeyboardArt.HasKey(compact, PhysLayout.Jis, Vk.RMenu), "он есть");
+            Check("контроль: у американской компактной он есть",
+                  KeyboardArt.HasKey(compact, PhysLayout.Ansi, Vk.RMenu), "его нет");
+            Check("про неузнанную клавиатуру ответ «есть»",
+                  KeyboardArt.HasKey(null, PhysLayout.Ansi, Vk.RMenu), "настройку спрячут ни за что");
+
+            // ---- правый control как настоящая клавиша ----
+            Settings saved = _s.Snapshot();
+            _s.MapRCtrl = ModKey.LWin;
+            Check("правый control ходит по своей настройке",
+                  _s.TargetOf(ModKey.RCtrl) == ModKey.LWin, "остался " + _s.TargetOf(ModKey.RCtrl));
+            _s.MapRCtrl = ModKey.RAlt;
+            Check("и делает правый ⌥ достижимым", _s.Reaches(ModKey.RAlt), "не достаёт");
+            Restore(saved);
+            Check("контроль: сам собой он ничего не меняет",
+                  _s.TargetOf(ModKey.RCtrl) == ModKey.RCtrl, "стал " + _s.TargetOf(ModKey.RCtrl));
+
+            // ---- что из этого видно в окне ----
+            Check("строка правого control есть при полноразмерной",
+                  KeysPageSays(full, PhysLayout.Ansi, "control (правый)"), "строки нет");
+            Check("и её нет при компактной",
+                  !KeysPageSays(compact, PhysLayout.Ansi, "control (правый)"), "строка появилась");
+
+            Check("про отсутствующий правый ⌥ окно говорит вслух",
+                  KeysPageSays(compact, PhysLayout.Jis, "правого ⌥ нет"), "промолчало");
+            Check("контроль: на американской не говорит",
+                  !KeysPageSays(compact, PhysLayout.Ansi, "правого ⌥ нет"), "сказало лишнего");
+        }
+
+        /// <summary>
+        /// Собрать страницу «Клавиши» так, будто на столе вот эта клавиатура, и поискать
+        /// в ней надпись. Клавиатуру подставляем прямо в Devices: живой на прогоне нет,
+        /// а окно спрашивает именно её.
+        /// </summary>
+        static bool KeysPageSays(AppleModel pretend, PhysLayout phys, string part)
+        {
+            FieldInfo fld = typeof(Devices).GetField("_appleModel",
+                BindingFlags.Static | BindingFlags.NonPublic);
+            object had = fld == null ? null : fld.GetValue(null);
+            Settings saved = _s.Snapshot();
+            try
+            {
+                if (fld != null) fld.SetValue(null, pretend);
+                _s.Physical = phys;
+                _eng.Apply(_s);
+
+                MethodInfo mi = typeof(MainWindow).GetMethod("PageKeys",
+                    BindingFlags.NonPublic | BindingFlags.Instance);
+                var page = (UIElement)mi.Invoke(_win, null);
+                var host = new Border { Width = 900, Child = page };
+                host.Measure(new Size(900, 8000));
+                host.Arrange(new Rect(0, 0, 900, host.DesiredSize.Height));
+                host.UpdateLayout();
+
+                var texts = new List<TextBlock>();
+                Texts(host, texts);
+                foreach (TextBlock tb in texts)
+                    if (tb.Text != null && tb.Text.IndexOf(part, StringComparison.Ordinal) >= 0) return true;
+                return false;
+            }
+            finally
+            {
+                if (fld != null) fld.SetValue(null, had);
+                Restore(saved);
+                _eng.Apply(_s);
+            }
+        }
+
         /// <summary>Все надписи в разложенном дереве — по видимому дереву, а не логическому:
         /// подписи переключателей и списков живут в шаблонах.</summary>
         static void Texts(DependencyObject node, List<TextBlock> found)
@@ -1883,6 +1976,143 @@ namespace MagicKeys
                   Mentions(TipOf(full, PhysLayout.Ansi, Vk.Clear), "очистить"),
                   "сказано: " + TipOf(full, PhysLayout.Ansi, Vk.Clear));
 
+            // ---- пропорции ----
+            // Ряд обязан замостить главный блок без щелей: сумма ширин равна его ширине.
+            // Это и есть обмер, переведённый в проверку, — 14,5 клавиши в каждом ряду
+            // у каждой модели. Прежняя схема считала блок пятнадцатью, и от этого
+            // esc с F-клавишами были шире настоящих на восьмую часть.
+            int rows = 0, ragged = 0;
+            string firstRagged = null;
+            foreach (int pid in AllProducts())
+            {
+                AppleModel mm = Models.Find(pid);
+                if (mm == null) continue;
+                foreach (PhysLayout phys in kinds)
+                {
+                    List<KeyCap> keys = KeyboardArt.Layout(mm, phys);
+                    for (int row = 0; row <= 5; row++)
+                    {
+                        double sum = 0;
+                        int cnt = 0;
+                        foreach (KeyCap k in keys)
+                        {
+                            if (k.X > 14.6) continue;               // только главный блок
+                            if (Math.Floor(k.Y + 0.001) != row) continue;
+                            if (k.Y > row + 0.4) continue;          // нижняя половина стрелок
+                            sum += k.W;
+                            cnt++;
+                        }
+                        if (cnt == 0) continue;                     // половинный ряд алюминиевой
+                        rows++;
+
+                        // У ISO и JIS средний ряд короче ровно на нижнюю половину Enter:
+                        // она принадлежит ряду выше и посчитана там.
+                        double want = 14.5;
+                        foreach (KeyCap k in keys)
+                            if (k.LowerW > 0 && Math.Floor(k.Y + 0.001) == row - 1) want = 14.5 - k.LowerW;
+
+                        if (Math.Abs(sum - want) > 0.001)
+                        {
+                            ragged++;
+                            if (firstRagged == null)
+                                firstRagged = mm.Designation + " " + phys + ", ряд " + row +
+                                              ": " + sum.ToString("F2") + " вместо " + want.ToString("F2");
+                        }
+                    }
+                }
+            }
+            Check("ряды замощают блок без щелей", ragged == 0 && rows > 60,
+                  "рядов " + rows + ", кривых " + ragged + ", первый — " + firstRagged);
+
+            // Число клавиш — то же, что Apple печатает в своих характеристиках
+            // беспроводных клавиатур: 78 у ANSI, 79 у ISO, 109 у полноразмерной.
+            // Проверка внешняя: сходится она не с нашим обмером, а с чужим счётом.
+            AppleModel alu = Models.Find(0x022C);        // Apple Wireless Keyboard A1255
+            AppleModel aluFull = Models.Find(0x0220);    // Apple Keyboard с блоком A1243
+            Check("у компактной ANSI 78 клавиш", Count(alu, PhysLayout.Ansi) == 78,
+                  "их " + Count(alu, PhysLayout.Ansi));
+            Check("у компактной ISO 79", Count(alu, PhysLayout.Iso) == 79,
+                  "их " + Count(alu, PhysLayout.Iso));
+            Check("у полноразмерной ANSI 109", Count(aluFull, PhysLayout.Ansi) == 109,
+                  "их " + Count(aluFull, PhysLayout.Ansi));
+
+            // Отношение сторон корпуса — самая внешняя проверка, какая тут возможна:
+            // ширину и глубину Apple печатает в характеристиках, и они ни от какого
+            // нашего обмера не зависят. 27,9 × 11,49 см даёт 2,4282; 41,87 × 11,49 — 3,6440.
+            // Сюда разом входит всё: ширина блока, высота ряда, зазор и поля корпуса.
+            Check("корпус компактной той же формы, что у Apple",
+                  Near(Shape(Models.Find(0x029C), PhysLayout.Ansi), 2.4282, 0.01),
+                  "вышло " + Shape(Models.Find(0x029C), PhysLayout.Ansi).ToString("F4"));
+            Check("и полноразмерной тоже",
+                  Near(Shape(Models.Find(0x029F), PhysLayout.Ansi), 3.6440, 0.01),
+                  "вышло " + Shape(Models.Find(0x029F), PhysLayout.Ansi).ToString("F4"));
+
+            // ---- приметы поколений ----
+            // Правый верхний угол пустым не бывает: там ⏏, замок или датчик.
+            int cornerless = 0;
+            string firstCornerless = null;
+            foreach (int pid in AllProducts())
+            {
+                AppleModel mm = Models.Find(pid);
+                if (mm == null) continue;
+                bool found = false;
+                foreach (KeyCap k in KeyboardArt.Layout(mm, PhysLayout.Ansi))
+                    if (k.X >= 13.4 && k.X <= 13.6 && k.Y < 0.6) found = true;
+                if (!found)
+                {
+                    cornerless++;
+                    if (firstCornerless == null) firstCornerless = mm.Designation;
+                }
+            }
+            Check("правый верхний угол занят у всех", cornerless == 0,
+                  "пустых " + cornerless + ", первая — " + firstCornerless);
+
+            AppleModel a1644 = Models.Find(0x0267);      // Magic Keyboard 2015
+            AppleModel a2450 = Models.Find(0x029C);      // она же 2021 года, без Touch ID
+            Check("у A1644 в углу ⏏", Says(a1644, "eject"), "её там нет");
+            Check("у A2450 там замок", Says(a2450, "lock"), "его там нет");
+            Check("а ⏏ у неё уже нет", !Says(a2450, "eject"), "⏏ осталась");
+            Check("у модели с Touch ID там датчик", Sensor(compact), "датчика нет");
+
+            // Правый control есть только у полноразмерной.
+            Check("у полноразмерной есть правый control",
+                  HasVk(full, PhysLayout.Ansi, Vk.RControl), "его нет");
+            Check("у компактной его нет",
+                  !HasVk(compact, PhysLayout.Ansi, Vk.RControl), "он появился");
+
+            // Клавиша контекстного меню — только у полноразмерных нового поколения.
+            AppleModel a1843 = Models.Find(0x026C);
+            Check("у A2520 есть клавиша меню", HasVk(full, PhysLayout.Ansi, Vk.Apps), "её нет");
+            Check("у A1843 на её месте fn", !HasVk(a1843, PhysLayout.Ansi, Vk.Apps), "меню появилось");
+
+            // ---- японская клавиатура ----
+            // Она не «ANSI плюс две клавиши»: control у неё стоит там, где у прочих
+            // caps lock, а caps lock — в нижнем ряду. Схема, рисовавшая их наоборот,
+            // обещала человеку не ту клавишу под тем же пальцем.
+            KeyCap jisCtrl = KeyAt(compact, PhysLayout.Jis, Vk.LControl);
+            KeyCap jisCaps = KeyAt(compact, PhysLayout.Jis, Vk.Capital);
+            Check("у JIS control в ряду с «A»", jisCtrl != null && jisCtrl.Y == 3,
+                  jisCtrl == null ? "его нет вовсе" : "он в ряду " + jisCtrl.Y);
+            Check("у JIS caps lock в нижнем ряду", jisCaps != null && jisCaps.Y == 5,
+                  jisCaps == null ? "её нет вовсе" : "она в ряду " + jisCaps.Y);
+
+            KeyCap ansiCaps = KeyAt(compact, PhysLayout.Ansi, Vk.Capital);
+            Check("контроль: у ANSI caps lock в ряду с «A»", ansiCaps != null && ansiCaps.Y == 3,
+                  ansiCaps == null ? "её нет" : "она в ряду " + ansiCaps.Y);
+
+            Check("у компактной JIS нет правой ⌥",
+                  !HasVk(compact, PhysLayout.Jis, Vk.RMenu), "она есть");
+            Check("контроль: у компактной ANSI она есть",
+                  HasVk(compact, PhysLayout.Ansi, Vk.RMenu), "её нет");
+
+            KeyCap jisOne = KeyAt(compact, PhysLayout.Jis, Vk.D1);
+            Check("у JIS клавиша «1» шире прочих", jisOne != null && jisOne.W == 1.25,
+                  jisOne == null ? "её нет" : "ширина " + jisOne.W);
+
+            // Вторая надпись на цифрах — та, что напечатана над цифрой.
+            Check("над «1» напечатана «!»", SubOf(compact, PhysLayout.Ansi, Vk.D1) == "!",
+                  "напечатано: " + SubOf(compact, PhysLayout.Ansi, Vk.D1));
+
             // И сам рисунок вместе с подсветкой. Живой клавиатуры на прогоне нет,
             // поэтому нажатие подаётся тем же путём, каким его подаёт перепись клавиш:
             // через обработчик окна. Проверяется то, ради чего схема и рисуется, —
@@ -1978,6 +2208,62 @@ namespace MagicKeys
         static bool Mentions(string s, string part)
         {
             return s != null && s.IndexOf(part, StringComparison.Ordinal) >= 0;
+        }
+
+        /// <summary>Сколько клавиш на схеме — то самое число, которое печатает Apple.</summary>
+        static int Count(AppleModel m, PhysLayout phys)
+        {
+            return m == null ? -1 : KeyboardArt.Layout(m, phys).Count;
+        }
+
+        /// <summary>Есть ли на схеме клавиша с такой надписью.</summary>
+        static bool Says(AppleModel m, string cap)
+        {
+            if (m == null) return false;
+            foreach (KeyCap k in KeyboardArt.Layout(m, PhysLayout.Ansi)) if (k.Cap == cap) return true;
+            return false;
+        }
+
+        /// <summary>Есть ли на схеме круглый датчик Touch ID.</summary>
+        static bool Sensor(AppleModel m)
+        {
+            if (m == null) return false;
+            foreach (KeyCap k in KeyboardArt.Layout(m, PhysLayout.Ansi)) if (k.Sensor) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Отношение ширины корпуса к глубине у нарисованной схемы. Берётся с самого
+        /// холста: он размечен в клавишах, и его пропорции — это пропорции клавиатуры.
+        /// </summary>
+        static double Shape(AppleModel m, PhysLayout phys)
+        {
+            if (m == null) return 0;
+            KeyboardView v = KeyboardArt.Draw(m, phys, null);
+            var box = v.Element as System.Windows.Controls.Viewbox;
+            if (box == null) return 0;
+            var body = box.Child as System.Windows.Controls.Border;
+            if (body == null) return 0;
+            var canvas = body.Child as System.Windows.Controls.Canvas;
+            if (canvas == null || canvas.Height <= 0) return 0;
+            return canvas.Width / canvas.Height;
+        }
+
+        static bool Near(double a, double b, double eps) { return Math.Abs(a - b) <= eps; }
+
+        /// <summary>Сама клавиша с таким кодом — когда важно, где она стоит и какой ширины.</summary>
+        static KeyCap KeyAt(AppleModel m, PhysLayout phys, int vk)
+        {
+            if (m == null) return null;
+            foreach (KeyCap k in KeyboardArt.Layout(m, phys)) if (k.Vk == vk) return k;
+            return null;
+        }
+
+        /// <summary>Верхняя надпись клавиши — та, что напечатана над основной.</summary>
+        static string SubOf(AppleModel m, PhysLayout phys, int vk)
+        {
+            foreach (KeyCap k in KeyboardArt.Layout(m, phys)) if (k.Vk == vk) return k.Sub;
+            return null;
         }
 
         /// <summary>Все коды товаров из каталога — через отражение, чтобы список был один.</summary>
@@ -2279,6 +2565,8 @@ namespace MagicKeys
             var seen = new List<string>();
             bool ok = true;
             string why = "";
+            bool viewOnly = (box.Tag as string) == MainWindow.ViewOnly;
+            int alive = 0;
 
             var dead = new List<string>();
             string badItem = "";
@@ -2295,6 +2583,17 @@ namespace MagicKeys
 
                 bool itemRebuilt = !ReferenceEquals(shownItem, Shown());
                 string diff = Diff(before, Snap());
+
+                // Список, помеченный «показ», настроек не трогает нарочно — он меняет
+                // то, что нарисовано. Мёртвым такой пункт делает не отсутствие правки
+                // в настройках, а отсутствие ответа вообще: страница не пересобралась.
+                if (viewOnly)
+                {
+                    if (!itemRebuilt) dead.Add(Text(box, i));
+                    else alive++;
+                    continue;
+                }
+
                 if (diff == "") { dead.Add(Text(box, i)); continue; }
                 if (_applied == applied) { ok = false; why = "пункт «" + Text(box, i) + "» не применился"; break; }
                 seen.Add(diff);
@@ -2307,6 +2606,15 @@ namespace MagicKeys
             {
                 ok = false;
                 why = "ничего не меняют: «" + String.Join("», «", dead.ToArray()) + "»";
+            }
+
+            if (viewOnly)
+            {
+                Check("список «показ»: " + alive + " пунктов меняют показанное", ok && alive > 0,
+                      ok ? "ни один пункт не пересобрал страницу" : why);
+                Restore(saved);
+                try { box.SelectedIndex = was; } catch { }
+                return;
             }
 
             string field = seen.Count > 0 ? Field(seen[0]) : "?";

@@ -27,6 +27,7 @@ namespace MagicKeys
         public string Tip;      // объяснение под курсором: на клавише оно не помещается
         public int Vk;          // виртуальный код — по нему клавиша подсвечивается; 0 — не подсвечивается
         public bool Small;      // мелкая подпись: функциональный ряд и слова вроде «page down»
+        public bool Sensor;     // круглый датчик Touch ID вместо надписи: он и на клавиатуре круг
 
         /// <summary>
         /// Ширина нижней половины у Г-образной клавиши. Ноль — клавиша прямоугольная.
@@ -147,11 +148,51 @@ namespace MagicKeys
         public enum State { Unknown, Seen, Down }
 
         // Ширина главного блока в клавишах: стандартный ряд «13 клавиш и двойной delete».
-        private const double Main = 15;
+        /// <summary>
+        /// Ширина главного блока в клавишах. Не пятнадцать, как считалось: обмер
+        /// официальных снимков Apple по пикселям даёт 14,5 — и у компактной, и у
+        /// полноразмерной. Складывается она одинаково во всех рядах: 1,5 + 12 + 1
+        /// в верхнем, 13 + 1,5 в цифровом, 1,75 + 12 + 0,75 у ISO.
+        /// </summary>
+        private const double Main = 14.5;
 
-        // Навигационный блок и цифровая клавиатура полноразмерной.
-        private const double NavX = Main + 0.6;
-        private const double PadX = NavX + 3.6;
+        // Навигационный блок и цифровая клавиатура полноразмерной. Зазор между
+        // блоками — вдвое шире обычного; замерено на двух снимках, сходится
+        // до сотых: 14,683 и 14,692; 17,860 и 17,873.
+        private const double NavX = 14.69;
+        private const double PadX = 17.87;
+
+        /// <summary>
+        /// Высота ряда в долях ширины клавиши: клавиатура чуть сплюснута по вертикали,
+        /// и квадратная сетка её выдаёт. Замерено на четырёх снимках, сходится:
+        /// 63,4/65, 168,8/173,5, 124,2/128, 42,2/43,4.
+        /// </summary>
+        private const double RowH = 0.972;
+
+        /// <summary>
+        /// Зазор между клавишами в долях клавиши — просвет корпуса, который между ними видно.
+        ///
+        /// Мерить его по светлой середине клавиши нельзя: у клавиши есть тёмный кант,
+        /// и порог «белое» отрезает его с обеих сторон, отчего зазор выходит в полтора
+        /// раза шире настоящего. Замерено по самому просвету — 11/104,2 на снимке
+        /// с чёрными клавишами и 17/153,6 на снимке с белыми, — и обе цифры сошлись.
+        /// </summary>
+        private const double GapU = 0.108;
+
+        /// <summary>
+        /// Поля корпуса вокруг клавиш — за вычетом половины зазора.
+        ///
+        /// Замерено от края корпуса до края клавиши: 0,144 сбоку, 0,185 сверху, 0,152 снизу.
+        /// Здесь они на ползазора меньше, потому что рисунок сам отступает на ползазора
+        /// с каждой стороны клавиши. Записать сюда измеренное значит прибавить эти
+        /// ползазора дважды — и клавиатура выйдет на процент приземистее настоящей.
+        /// Проверяется отношением сторон: оно обязано совпасть с опубликованным
+        /// у Apple, 2,4282 у компактной и 3,6440 у полноразмерной.
+        /// </summary>
+        private const double RimX = 0.090, RimTop = 0.130, RimBottom = 0.095;
+
+        /// <summary>Скругление корпуса. Замерено на четырёх снимках: 0,445…0,513.</summary>
+        private const double BodyR = 0.48;
 
         // ---------- раскладка ----------
 
@@ -176,65 +217,120 @@ namespace MagicKeys
             TopLetterRow(keys, iso, jis);
             MiddleLetterRow(keys, iso, jis);
             BottomLetterRow(keys, iso, jis);
-            SpaceRow(keys, numpad, jis);
-            if (numpad) RightBlocks(keys);
+            SpaceRow(keys, m, numpad, jis);
+            if (numpad) RightBlocks(keys, m);
 
             return keys;
         }
 
         /// <summary>
-        /// Верхний ряд. У Apple он в половину высоты и идёт вровень с остальными:
-        /// клавиши в нём одной ширины и заполняют ряд целиком, а не жмутся к левому краю.
+        /// Есть ли у этой клавиатуры такая клавиша.
+        ///
+        /// Спрашивают настройки: предлагать правый ⌥ там, где его нет, — обещать то,
+        /// чего не нажать, а с завода заменителем Fn стоит именно он, и на японской
+        /// компактной навигация Fn+стрелки молча не работала. Ответ берётся из той же
+        /// схемы, что и рисуется: другого списка клавиш в программе нет и заводить
+        /// второй нельзя — разойдутся.
+        ///
+        /// Клавиатура не узнана — отвечаем «есть». Спрятать настройку из-за незнания
+        /// хуже, чем показать лишнюю: первое человек не найдёт вовсе.
+        /// </summary>
+        public static bool HasKey(AppleModel m, PhysLayout phys, int vk)
+        {
+            if (m == null) return true;
+            foreach (KeyCap k in Layout(m, phys)) if (k.Vk == vk) return true;
+            return false;
+        }
+
+        /// <summary>
+        /// Верхний ряд: esc, двенадцать F и одна клавиша в правом верхнем углу.
+        ///
+        /// У Magic Keyboard он такой же высоты, как остальные, — это замерено: esc
+        /// и control на снимке одного размера. Половинный ряд остался у алюминиевой
+        /// серии, где он и был: её снимков сверху под рукой не было.
         /// </summary>
         private static void FunctionRow(List<KeyCap> keys, AppleModel m, bool numpad)
         {
-            const double Y = 0.42, H = 0.58;
+            bool half = m != null && m.Gen == AppleGen.Alu;
+            double y = half ? 0.42 : 0;
+            double h = half ? 0.58 : 1;
 
-            // Главный блок: esc и F1–F12 ровно на его ширину.
-            double w = Main / 13.0;
-            Add(keys, 0, Y, w, H, "esc", null, Vk.Escape, true);
+            Add(keys, 0, y, 1.5, h, "esc", null, Vk.Escape, true);
             for (int i = 0; i < 12; i++)
-                Add(keys, w * (i + 1), Y, w, H, "F" + (i + 1), null, Vk.F1 + i, true);
+                Add(keys, 1.5 + i, y, 1, h, "F" + (i + 1), null, Vk.F1 + i, true);
+            TopRight(keys, m, 13.5, y, h);
 
-            if (!numpad)
-            {
-                // У компактных правее F12 либо ничего, либо датчик, либо ⏏.
-                if (m != null && m.TouchId)
-                    Add(keys, Main, Y, 0, H, null, null, 0, true);   // места нет — датчик ниже
-                return;
-            }
+            if (!numpad) return;
 
             // Полноразмерная: F13–F15 над навигационным блоком, F16–F19 над цифровой
-            // клавиатурой — ровно так они и стоят.
+            // клавиатурой — ровно так они и стоят, и все семь обычной ширины.
             for (int i = 0; i < 3; i++)
-                Add(keys, NavX + i, Y, 1, H, "F" + (13 + i), null, Vk.F13 + i, true);
-
-            // Правый край: место под F16–F19 и, если она есть, ⏏.
-            bool eject = m != null && m.Eject;
-            int tail = eject ? 5 : 4;
-            double tw = 4.0 / tail;
+                Add(keys, NavX + i, y, 1, h, "F" + (13 + i), null, Vk.F13 + i, true);
             for (int i = 0; i < 4; i++)
-                Add(keys, PadX + i * tw, Y, tw, H, "F" + (16 + i), null, Vk.F13 + 3 + i, true);
-            if (eject)
-                Add(keys, PadX + 4 * tw, Y, tw, H, "eject", null, 0, true,
-                    "eject — до Windows не доходит: её обрабатывает сама клавиатура");
+                Add(keys, PadX + i, y, 1, h, "F" + (16 + i), null, Vk.F13 + 3 + i, true);
         }
 
-        /// <summary>Цифровой ряд. У JIS клавиши слева от «1» нет вовсе, зато справа «^» и «¥».</summary>
+        /// <summary>
+        /// Правый верхний угол главного блока. Пустым он не бывает ни у одной модели,
+        /// и то, что там стоит, — примета поколения: ⏏ до 2021 года, замок у моделей
+        /// без Touch ID, датчик у моделей с ним. Замерено по снимкам Apple: у A1644
+        /// там ⏏ — прежний комментарий обещал пустоту, — а у A2450 и A3203 замок.
+        /// </summary>
+        private static void TopRight(List<KeyCap> keys, AppleModel m, double x, double y, double h)
+        {
+            if (m == null) return;
+
+            if (m.TouchId)
+            {
+                KeyCap k = Add(keys, x, y, 1, h, null, null, 0, true,
+                    "Touch ID — датчик отпечатка, а не клавиша. В Windows он не работает");
+                k.Sensor = true;
+                return;
+            }
+            if (m.Lock)
+            {
+                Add(keys, x, y, 1, h, "lock", null, 0, true,
+                    "Замок — на Mac запирает экран. Windows такой клавиши не знает, " +
+                    "и программа её не перехватывает");
+                return;
+            }
+            if (m.Eject)
+                // Обычной клавишей она не приходит — своего кода у неё нет, — но сырой
+                // ввод её отдаёт, и программа её ловит: под неё написана карточка
+                // на странице «Клавиши». Обещать, что она «не доходит», значит прятать
+                // от человека настройку, которая у него уже есть.
+                Add(keys, x, y, 1, h, "eject", null, 0, true,
+                    "eject — обычной клавишей в Windows не приходит, но программа видит её " +
+                    "сырым вводом: действие ей назначают на странице «Клавиши»");
+        }
+
+        /// <summary>
+        /// Цифровой ряд. У JIS клавиши слева от «1» нет вовсе, зато справа «^» и «¥».
+        ///
+        /// Здесь же начинается вторая надпись: на живой клавиатуре над цифрой напечатан
+        /// её верхний знак, и без него ряд выглядит не клавиатурой Apple, а сеткой цифр.
+        /// </summary>
         private static void NumberRow(List<KeyCap> keys, bool jis)
         {
             const double Y = 1;
             string[] digits = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "0" };
+            string[] over = { "!", "@", "#", "$", "%", "^", "&", "*", "(", ")" };
             double x = 0;
-            if (!jis) { Add(keys, x, Y, 1, 1, "`", null, Vk.Oem3, false); x = 1; }
-            for (int i = 0; i < 10; i++) { Add(keys, x, Y, 1, 1, digits[i], null, Digit(i), false); x += 1; }
-            Add(keys, x, Y, 1, 1, "-", null, Vk.OemMinus, false); x += 1;
+            if (!jis) { Add(keys, x, Y, 1, 1, "`", "~", Vk.Oem3, false); x = 1; }
+
+            // У JIS клавиши слева от «1» нет, и ряд начинается с самой «1» — она за это
+            // шире прочих на четверть, а delete на столько же уже. Замерено; прежде схема
+            // давала обеим ширину соседей и уводила весь ряд влево на четверть клавиши.
+            double one = jis ? 1.25 : 1;
+            Add(keys, x, Y, one, 1, digits[0], over[0], Digit(0), false); x += one;
+            for (int i = 1; i < 10; i++) { Add(keys, x, Y, 1, 1, digits[i], over[i], Digit(i), false); x += 1; }
+            Add(keys, x, Y, 1, 1, "-", "_", Vk.OemMinus, false); x += 1;
             if (jis)
             {
-                Add(keys, x, Y, 1, 1, "^", null, Vk.Oem7, false); x += 1;
-                Add(keys, x, Y, 1, 1, "¥", null, Vk.Oem5, false); x += 1;
+                Add(keys, x, Y, 1, 1, "^", "~", Vk.Oem7, false); x += 1;
+                Add(keys, x, Y, 1, 1, "¥", "|", Vk.Oem5, false); x += 1;
             }
-            else { Add(keys, x, Y, 1, 1, "=", null, Vk.OemPlus, false); x += 1; }
+            else { Add(keys, x, Y, 1, 1, "=", "+", Vk.OemPlus, false); x += 1; }
             Add(keys, x, Y, Main - x, 1, "delete", null, Vk.Back, true,
                 "delete — стирает символ слева; Windows зовёт эту клавишу Backspace");
         }
@@ -243,29 +339,38 @@ namespace MagicKeys
         private static void TopLetterRow(List<KeyCap> keys, bool iso, bool jis)
         {
             const double Y = 2;
-            Add(keys, 0, Y, 1.5, 1, "tab", null, Vk.Tab, true);
+
+            // У JIS tab шириной в обычную клавишу, а не в полторы: ряду надо вместить
+            // на одну клавишу больше, и место взято отсюда. Замерено.
+            double tab = jis ? 1 : 1.5;
+            Add(keys, 0, Y, tab, 1, "tab", null, Vk.Tab, true);
             string[] top = { "Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P" };
-            for (int i = 0; i < 10; i++) Add(keys, 1.5 + i, Y, 1, 1, top[i], null, Letter(top[i]), false);
+            for (int i = 0; i < 10; i++) Add(keys, tab + i, Y, 1, 1, top[i], null, Letter(top[i]), false);
+            double x = tab + 10;
 
             if (jis)
             {
-                Add(keys, 11.5, Y, 1, 1, "@", null, Vk.Oem3, false);
-                Add(keys, 12.5, Y, 1, 1, "[", null, Vk.Oem4, false);
-            }
-            else
-            {
-                Add(keys, 11.5, Y, 1, 1, "[", null, Vk.Oem4, false);
-                Add(keys, 12.5, Y, 1, 1, "]", null, Vk.Oem6, false);
+                Add(keys, x, Y, 1, 1, "@", "`", Vk.Oem3, false); x += 1;
+                Add(keys, x, Y, 1, 1, "[", "{", Vk.Oem4, false); x += 1;
+
+                // Г-образный Enter японской: верхняя половина шире, чем у европейской,
+                // и начинается раньше — от 13, а не от 13,5.
+                KeyCap jisEnter = Add(keys, x, Y, Main - x, 2, "return", null, Vk.Return, true);
+                jisEnter.LowerW = 1.25;
+                return;
             }
 
-            if (iso || jis)
+            Add(keys, x, Y, 1, 1, "[", "{", Vk.Oem4, false); x += 1;
+            Add(keys, x, Y, 1, 1, "]", "}", Vk.Oem6, false); x += 1;
+
+            if (iso)
             {
                 // Г-образный: верхняя половина от 13.5 до края, нижняя — от 13.75,
                 // потому что в среднем ряду на одну клавишу больше.
-                KeyCap enter = Add(keys, 13.5, Y, 1.5, 2, "return", null, Vk.Return, true);
-                enter.LowerW = 1.25;
+                KeyCap enter = Add(keys, x, Y, Main - x, 2, "return", null, Vk.Return, true);
+                enter.LowerW = 0.75;
             }
-            else Add(keys, 13.5, Y, 1.5, 1, "\\", null, Vk.Oem5, false);
+            else Add(keys, x, Y, 1, 1, "\\", "|", Vk.Oem5, false);
         }
 
         /// <summary>Ряд с A.</summary>
@@ -273,31 +378,42 @@ namespace MagicKeys
         {
             const double Y = 3;
             string[] mid = { "A", "S", "D", "F", "G", "H", "J", "K", "L" };
-            // Caps lock одной ширины у всех исполнений — от этого и нижняя половина
-            // Г-образного Enter встаёт ровно под верхнюю: в среднем ряду на одну
-            // клавишу больше, и он ровно на неё уже.
-            const double caps = 1.75;
-            Add(keys, 0, Y, caps, 1, "caps lock", null, Vk.Capital, true);
-            for (int i = 0; i < 9; i++) Add(keys, caps + i, Y, 1, 1, mid[i], null, Letter(mid[i]), false);
-            double x = caps + 9;
+
+            // Слева у японской клавиатуры не caps lock, а control: caps lock у неё
+            // в нижнем ряду. Это не подпись, а другая клавиша с другим кодом — и она
+            // ещё и уже. Замерено по снимкам с японского сайта Apple.
+            double head = jis ? 1.25 : 1.75;
+            if (jis)
+                Add(keys, 0, Y, head, 1, "control", "⌃", Vk.LControl, true,
+                    "У японской клавиатуры control стоит здесь — там, где у прочих caps lock. " +
+                    "Сама caps lock ушла в нижний ряд");
+            else
+                Add(keys, 0, Y, head, 1, "caps lock", null, Vk.Capital, true);
+
+            for (int i = 0; i < 9; i++) Add(keys, head + i, Y, 1, 1, mid[i], null, Letter(mid[i]), false);
+            double x = head + 9;
 
             if (jis)
             {
                 // У JIS «;» приходит кодом OemPlus, а «:» — кодом Oem1. У ANSI те же коды
                 // достаются «=» и «;»: клавиши разные, коды одни и те же, и путать их нельзя.
-                Add(keys, x, Y, 1, 1, ";", null, Vk.OemPlus, false); x += 1;
-                Add(keys, x, Y, 1, 1, ":", null, Vk.Oem1, false); x += 1;
-                Add(keys, x, Y, 1, 1, "]", null, Vk.Oem6, false);
+                Add(keys, x, Y, 1, 1, ";", "+", Vk.OemPlus, false); x += 1;
+                Add(keys, x, Y, 1, 1, ":", "*", Vk.Oem1, false); x += 1;
+                Add(keys, x, Y, 1, 1, "]", "}", Vk.Oem6, false);
                 return;
             }
 
-            Add(keys, x, Y, 1, 1, ";", null, Vk.Oem1, false); x += 1;
-            Add(keys, x, Y, 1, 1, "'", null, Vk.Oem7, false); x += 1;
+            Add(keys, x, Y, 1, 1, ";", ":", Vk.Oem1, false); x += 1;
+            Add(keys, x, Y, 1, 1, "'", "\"", Vk.Oem7, false); x += 1;
             if (iso)
             {
                 // Тринадцатая клавиша ряда — Windows зовёт её Oem5, тем же кодом, что «\»
                 // у ANSI. Клавиши «\» у ISO при этом нет: её место занял Г-образный Enter.
-                Add(keys, x, Y, 1, 1, "#", null, Vk.Oem5, false);
+                // Что на ней напечатано, зависит от языка: «#» на британской, «*» на
+                // немецкой, «ё» на русской. Схема показывает исполнение, а не язык.
+                Add(keys, x, Y, 1, 1, "#", "~", Vk.Oem5, false,
+                    "Тринадцатая клавиша среднего ряда — она есть только у ISO. " +
+                    "Какой знак на ней напечатан, зависит от языка клавиатуры");
             }
             else Add(keys, x, Y, Main - x, 1, "return", null, Vk.Return, true);
         }
@@ -307,15 +423,20 @@ namespace MagicKeys
         {
             const double Y = 4;
             double x = 0;
-            double shift = iso ? 1.25 : 2.25;
+            // У JIS обе клавиши ⇧ одной ширины — 1,75; лишняя клавиша ряда стоит справа,
+            // а не слева, и место под неё берётся у правой. Замерено.
+            double shift = jis ? 1.75 : (iso ? 1.25 : 2.25);
             Add(keys, x, Y, shift, 1, "shift", "⇧", Vk.LShift, true); x += shift;
-            if (iso) { Add(keys, x, Y, 1, 1, "<", null, Vk.Oem102, false); x += 1; }
+            if (iso)
+                Add(keys, x++, Y, 1, 1, "<", ">", Vk.Oem102, false,
+                    "Лишняя клавиша ISO — она стоит слева от «Z». Какой знак на ней " +
+                    "напечатан, зависит от языка клавиатуры");
             string[] bot = { "Z", "X", "C", "V", "B", "N", "M" };
             for (int i = 0; i < 7; i++) { Add(keys, x, Y, 1, 1, bot[i], null, Letter(bot[i]), false); x += 1; }
-            Add(keys, x, Y, 1, 1, ",", null, Vk.OemComma, false); x += 1;
-            Add(keys, x, Y, 1, 1, ".", null, Vk.OemPeriod, false); x += 1;
-            Add(keys, x, Y, 1, 1, "/", null, Vk.Oem2, false); x += 1;
-            if (jis) { Add(keys, x, Y, 1, 1, "\\", null, Vk.Oem102, false); x += 1; }
+            Add(keys, x, Y, 1, 1, ",", "<", Vk.OemComma, false); x += 1;
+            Add(keys, x, Y, 1, 1, ".", ">", Vk.OemPeriod, false); x += 1;
+            Add(keys, x, Y, 1, 1, "/", "?", Vk.Oem2, false); x += 1;
+            if (jis) { Add(keys, x, Y, 1, 1, "\\", "_", Vk.Oem102, false); x += 1; }
             Add(keys, x, Y, Main - x, 1, "shift", "⇧", Vk.RShift, true);
         }
 
@@ -324,17 +445,21 @@ namespace MagicKeys
         /// здесь же живут fn и стрелки, у полноразмерной fn ушла в навигационный блок,
         /// а стрелки стоят под ним отдельным крестом.
         /// </summary>
-        private static void SpaceRow(List<KeyCap> keys, bool numpad, bool jis)
+        private static void SpaceRow(List<KeyCap> keys, AppleModel m, bool numpad, bool jis)
         {
+            if (jis) { JisSpaceRow(keys, m, numpad); return; }
+
             const double Y = 5;
             double x = 0;
             double arrows = numpad ? 0 : 3;
 
-            if (!numpad)
+            // fn слева есть у всех, кроме полноразмерных до 2021 года: у тех она ушла
+            // в навигационный блок, а нижний ряд начинается прямо с control. Замерено
+            // на снимках A1843 и A2520 — у первой слева три клавиши, у второй четыре.
+            bool leftFn = !numpad || (m != null && m.Globe);
+            if (leftFn)
             {
-                Add(keys, x, Y, 1, 1, "fn", null, 0, true,
-                    "fn — до Windows не доходит: её обрабатывает сама клавиатура. " +
-                    "Её работу берёт на себя заменитель Fn"); x += 1;
+                Add(keys, x, Y, 1, 1, "fn", null, 0, true, FnTip(m)); x += 1;
                 Add(keys, x, Y, 1, 1, "control", "⌃", Vk.LControl, true); x += 1;
                 Add(keys, x, Y, 1, 1, "option", "⌥", Vk.LMenu, true); x += 1;
                 Add(keys, x, Y, 1.25, 1, "command", "⌘", Vk.LWin, true); x += 1.25;
@@ -346,19 +471,9 @@ namespace MagicKeys
                 Add(keys, x, Y, 1.5, 1, "command", "⌘", Vk.LWin, true); x += 1.5;
             }
 
-            double right = numpad ? 2.75 : 2.25;   // правые command и option
-            if (jis)
-            {
-                Add(keys, x, Y, 1.25, 1, "英数", null, Vk.NonConvert, true,
-                    "英数 — переключение на латиницу; японской клавиатуры под рукой не было, " +
-                    "код взят из общего для Windows соответствия, а не измерен"); x += 1.25;
-                double sp = Main - arrows - right - 1.25 - x;
-                Add(keys, x, Y, sp, 1, null, null, Vk.Space, false); x += sp;
-                Add(keys, x, Y, 1.25, 1, "かな", null, Vk.Kana, true,
-                    "かな — переключение на кану; код взят из общего для Windows соответствия, " +
-                    "а не измерен"); x += 1.25;
-            }
-            else
+            // Справа у полноразмерной на одну клавишу больше: там есть правый control,
+            // которого у компактной нет вовсе.
+            double right = numpad ? 4.25 : 2.25;
             {
                 double sp = Main - arrows - right - x;
                 Add(keys, x, Y, sp, 1, null, null, Vk.Space, false); x += sp;
@@ -367,18 +482,68 @@ namespace MagicKeys
             if (numpad)
             {
                 Add(keys, x, Y, 1.5, 1, "command", "⌘", Vk.RWin, true); x += 1.5;
-                Add(keys, x, Y, Main - x, 1, "option", "⌥", Vk.RMenu, true);
+                Add(keys, x, Y, 1.25, 1, "option", "⌥", Vk.RMenu, true); x += 1.25;
+                Add(keys, x, Y, Main - x, 1, "control", "⌃", Vk.RControl, true);
                 return;
             }
 
             Add(keys, x, Y, 1.25, 1, "command", "⌘", Vk.RWin, true); x += 1.25;
             Add(keys, x, Y, Main - arrows - x, 1, "option", "⌥", Vk.RMenu, true);
+            Arrows(keys, Y);
+        }
 
-            // Стрелки компактной: ← и → в полную высоту, ↑ и ↓ друг над другом по половине.
-            Add(keys, Main - 3, Y, 1, 1, "←", null, Vk.Left, false);
-            Add(keys, Main - 2, Y, 1, 0.5, "↑", null, Vk.Up, true);
-            Add(keys, Main - 2, Y + 0.5, 1, 0.5, "↓", null, Vk.Down, true);
-            Add(keys, Main - 1, Y, 1, 1, "→", null, Vk.Right, false);
+        /// <summary>
+        /// Нижний ряд японской клавиатуры. Он не «тот же с двумя добавленными клавишами»,
+        /// как здесь считалось, а другой: caps lock стоит слева внизу, control в нижнем
+        /// ряду нет вовсе — он ушёл в ряд с «A», — пробел вдвое короче, а у компактной
+        /// справа от command стоит fn с глобусом, и правой ⌥ у неё нет.
+        ///
+        /// Замерено по снимкам сверху с японского сайта Apple, компактной и полноразмерной.
+        /// </summary>
+        private static void JisSpaceRow(List<KeyCap> keys, AppleModel m, bool numpad)
+        {
+            const double Y = 5;
+            double x = 0;
+
+            Add(keys, x, Y, 1, 1, "caps lock", null, Vk.Capital, true); x += 1;
+            Add(keys, x, Y, 1, 1, "option", "⌥", Vk.LMenu, true); x += 1;
+            Add(keys, x, Y, 1.25, 1, "command", "⌘", Vk.LWin, true); x += 1.25;
+            Add(keys, x, Y, 1.25, 1, "英数", null, Vk.NonConvert, true,
+                "英数 — переключение на латиницу; японской клавиатуры под рукой не было, " +
+                "код взят из общего для Windows соответствия, а не измерен"); x += 1.25;
+            Add(keys, x, Y, 3.5, 1, null, null, Vk.Space, false); x += 3.5;
+            Add(keys, x, Y, 1.25, 1, "かな", null, Vk.Kana, true,
+                "かな — переключение на кану; код взят из общего для Windows соответствия, " +
+                "а не измерен"); x += 1.25;
+            Add(keys, x, Y, 1.25, 1, "command", "⌘", Vk.RWin, true); x += 1.25;
+
+            if (numpad)
+            {
+                Add(keys, x, Y, 1.5, 1, "option", "⌥", Vk.RMenu, true); x += 1.5;
+                Add(keys, x, Y, 1.5, 1, "control", "⌃", Vk.RControl, true); x += 1.5;
+                Add(keys, x, Y, Main - x, 1, "fn", null, 0, true, FnTip(m));
+                return;
+            }
+
+            Add(keys, x, Y, Main - 3 - x, 1, "fn", null, 0, true, FnTip(m));
+            Arrows(keys, Y);
+        }
+
+        /// <summary>Стрелки компактной: ← и → в полную высоту, ↑ и ↓ друг над другом по половине.</summary>
+        private static void Arrows(List<KeyCap> keys, double y)
+        {
+            Add(keys, Main - 3, y, 1, 1, "←", null, Vk.Left, false);
+            Add(keys, Main - 2, y, 1, 0.5, "↑", null, Vk.Up, true);
+            Add(keys, Main - 2, y + 0.5, 1, 0.5, "↓", null, Vk.Down, true);
+            Add(keys, Main - 1, y, 1, 1, "→", null, Vk.Right, false);
+        }
+
+        /// <summary>Подсказка клавиши fn — она одна на все места, где эта клавиша стоит.</summary>
+        private static string FnTip(AppleModel m)
+        {
+            return (m != null && m.Globe ? "fn с глобусом — " : "fn — ") +
+                   "до Windows не доходит: её обрабатывает сама клавиатура. " +
+                   "Её работу берёт на себя заменитель Fn";
         }
 
         /// <summary>
@@ -389,11 +554,17 @@ namespace MagicKeys
         /// ради которых написана отдельная карточка настроек: clear приходит в Windows как
         /// Num Lock, а «=» — кодом «очистить».
         /// </summary>
-        private static void RightBlocks(List<KeyCap> keys)
+        private static void RightBlocks(List<KeyCap> keys, AppleModel m)
         {
-            Add(keys, NavX, 1, 1, 1, "fn", null, 0, true,
-                "fn — до Windows не доходит: её обрабатывает сама клавиатура. " +
-                "Её работу берёт на себя заменитель Fn");
+            // Над клавишей ⌦ у полноразмерных до 2021 года стоит fn. У новых её место
+            // занято клавишей контекстного меню — той, что на клавиатуре Windows зовётся
+            // «меню»: fn у них переехала в нижний ряд. Замерено по снимкам A1843 и A2520.
+            if (m != null && m.ContextMenu)
+                Add(keys, NavX, 1, 1, 1, "menu", null, Vk.Apps, true,
+                    "Клавиша контекстного меню — то же, что правая кнопка мыши. " +
+                    "Код взят из общего для Windows соответствия, а не измерен");
+            else
+                Add(keys, NavX, 1, 1, 1, "fn", null, 0, true, FnTip(m));
             Add(keys, NavX + 1, 1, 1, 1, "home", null, Vk.Home, true);
             Add(keys, NavX + 2, 1, 1, 1, "page up", null, Vk.Prior, true);
             Add(keys, NavX, 2, 1, 1, "delete", null, Vk.Delete, true,
@@ -500,9 +671,9 @@ namespace MagicKeys
         /// </summary>
         public static KeyboardView Draw(AppleModel m, PhysLayout phys, Func<int, State> state)
         {
-            const double U = 46;          // точек в одной клавише
-            const double Gap = 3.4;       // зазор между клавишами
-            const double Rim = 0.42;      // поля корпуса вокруг клавиш, в клавишах
+            const double U = 46;           // точек в ширине одной клавиши
+            double uy = U * RowH;          // и в высоте ряда: она меньше, так замерено
+            double gap = U * GapU;         // зазор между клавишами — одинаковый по обеим осям
 
             List<KeyCap> keys = Layout(m, phys);
             Skin skin = Skin.Pick();
@@ -522,8 +693,8 @@ namespace MagicKeys
 
             var canvas = new Canvas
             {
-                Width = (right - left + Rim * 2) * U,
-                Height = (bottom - top + Rim * 2) * U
+                Width = (right - left + RimX * 2) * U,
+                Height = (bottom - top) * uy + (RimTop + RimBottom) * uy
             };
 
             foreach (KeyCap k in keys)
@@ -533,7 +704,7 @@ namespace MagicKeys
 
                 var shape = new Path
                 {
-                    Data = Outline(k, left, top, Rim, U, Gap),
+                    Data = Outline(k, left, top, right, bottom, U, uy, gap),
                     Fill = s == State.Down ? skin.Down : skin.Key,
                     Stroke = s == State.Unknown ? skin.KeyEdge : skin.Live,
                     StrokeThickness = s == State.Unknown ? 1 : 1.8,
@@ -544,20 +715,55 @@ namespace MagicKeys
                 // Надпись — отдельно от фигуры: у Г-образной клавиши она стоит по центру
                 // верхней половины, а не по центру описанного прямоугольника.
                 KeyRect box = k.Rects()[0];
+                double bx = (box.X - left + RimX) * U + gap / 2;
+                double by = (box.Y - top + RimTop) * uy + gap / 2;
+                double bw = box.W * U - gap, bh = box.H * uy - gap;
+
+                // Датчик Touch ID — круг, а не надпись: он и на клавиатуре круг.
+                // Доля клавиши снята с того же снимка, что и всё остальное.
+                if (k.Sensor)
+                {
+                    double d = Math.Min(bw, bh) * 0.62;
+                    var dot = new Ellipse
+                    {
+                        Width = d,
+                        Height = d,
+                        Stroke = skin.LegendDim,
+                        StrokeThickness = 1,
+                        IsHitTestVisible = false
+                    };
+                    Canvas.SetLeft(dot, bx + (bw - d) / 2);
+                    Canvas.SetTop(dot, by + (bh - d) / 2);
+                    canvas.Children.Add(dot);
+                }
+
+                // Слово на широкой клавише прижато к её наружному нижнему углу, а не
+                // стоит по центру: «caps lock» — влево, «return» — вправо. Замерено
+                // по снимку: у «caps lock» слева 17 точек, справа 87; у «return»
+                // наоборот. Буквы и цифры при этом стоят ровно по центру.
+                bool word = k.Small && k.W > 1.001;
+                bool toRight = word && k.X + k.W / 2 > (left + right) / 2;
+                double pad = word ? U * 0.13 : 0;
+                TextAlignment side = !word ? TextAlignment.Center
+                                   : (toRight ? TextAlignment.Right : TextAlignment.Left);
+
                 var stack = new StackPanel
                 {
-                    Width = box.W * U - Gap,
+                    Width = bw - pad,
                     IsHitTestVisible = false
                 };
                 if (!String.IsNullOrEmpty(k.Sub))
-                    stack.Children.Add(Label(labels, k.Sub, U * 0.26, s, skin, true));
+                    stack.Children.Add(Label(labels, k.Sub, U * 0.26, s, skin, true, side));
                 if (!String.IsNullOrEmpty(k.Cap))
-                    stack.Children.Add(Label(labels, k.Cap, U * (k.Small ? 0.21 : 0.30), s, skin, false));
+                    stack.Children.Add(Label(labels, k.Cap, U * (k.Small ? 0.21 : 0.30), s, skin, false, side));
 
-                stack.Measure(new Size(box.W * U - Gap, box.H * U));
+                stack.Measure(new Size(bw - pad, bh));
                 double th = stack.DesiredSize.Height;
-                Canvas.SetLeft(stack, (box.X - left + Rim) * U + Gap / 2);
-                Canvas.SetTop(stack, (box.Y - top + Rim) * U + (box.H * U - Gap - th) / 2 + Gap / 2);
+                Canvas.SetLeft(stack, bx + (word && !toRight ? pad : 0));
+                // Прижимаем ко дну, но не выше середины: в половинном ряду алюминиевой
+                // серии слово выше клавиши, и «прижать ко дну» вытолкнуло бы его наружу.
+                Canvas.SetTop(stack, word ? by + Math.Max((bh - th) / 2, bh - th - pad)
+                                          : by + (bh - th) / 2);
                 canvas.Children.Add(stack);
 
                 string tip = k.Tip;
@@ -574,7 +780,7 @@ namespace MagicKeys
             var body = new Border
             {
                 Background = skin.Body,
-                CornerRadius = new CornerRadius(U * 0.22),
+                CornerRadius = new CornerRadius(U * BodyR),
                 Child = canvas
             };
 
@@ -591,13 +797,13 @@ namespace MagicKeys
         }
 
         private static TextBlock Label(List<TextBlock> labels, string text, double size,
-                                       State s, Skin skin, bool dim)
+                                       State s, Skin skin, bool dim, TextAlignment side)
         {
             var tb = new TextBlock
             {
                 Text = text,
                 FontSize = size,
-                TextAlignment = TextAlignment.Center,
+                TextAlignment = side,
                 TextWrapping = TextWrapping.Wrap,
                 LineHeight = size * 1.15,
                 LineStackingStrategy = LineStackingStrategy.BlockLineHeight,
@@ -613,30 +819,73 @@ namespace MagicKeys
         /// а не две положенные рядом: два прямоугольника дали бы шов посередине клавиши,
         /// которого на живой клавиатуре нет.
         /// </summary>
-        private static Geometry Outline(KeyCap k, double left, double top, double rim,
-                                        double u, double gap)
+        private static Geometry Outline(KeyCap k, double left, double top, double right, double bottom,
+                                        double u, double uy, double gap)
         {
             double r = u * 0.13;
             KeyRect[] parts = k.Rects();
             if (parts.Length == 1)
             {
                 KeyRect a = parts[0];
-                var rect = new Rect((a.X - left + rim) * u + gap / 2, (a.Y - top + rim) * u + gap / 2,
-                                    a.W * u - gap, a.H * u - gap);
+                var rect = new Rect((a.X - left + RimX) * u + gap / 2, (a.Y - top + RimTop) * uy + gap / 2,
+                                    a.W * u - gap, a.H * uy - gap);
+
+                // Наружный угол угловой клавиши повторяет угол корпуса — он шире
+                // прочих ровно на поле. Клавиш таких четыре, и без них рисунок
+                // выглядит чертежом: на живой клавиатуре это первое, что видно.
+                double big = (BodyR - RimX) * u;
+                bool l = a.X <= left, t = a.Y <= top;
+                bool rr = a.X + a.W >= right, b = a.Y + a.H >= bottom;
+                if (l || t || rr || b)
+                    return Frame(rect, l && t ? big : r, rr && t ? big : r,
+                                       rr && b ? big : r, l && b ? big : r);
                 return new RectangleGeometry(rect, r, r);
             }
 
             // Г-образная: верхний прямоугольник и нижний, объединённые в одну фигуру.
             KeyRect up = parts[0], low = parts[1];
             var upper = new RectangleGeometry(
-                new Rect((up.X - left + rim) * u + gap / 2, (up.Y - top + rim) * u + gap / 2,
-                         up.W * u - gap, up.H * u - gap / 2), r, r);
+                new Rect((up.X - left + RimX) * u + gap / 2, (up.Y - top + RimTop) * uy + gap / 2,
+                         up.W * u - gap, up.H * uy - gap / 2), r, r);
             var lower = new RectangleGeometry(
-                new Rect((low.X - left + rim) * u + gap / 2, (low.Y - top + rim) * u,
-                         low.W * u - gap, low.H * u - gap / 2), r, r);
+                new Rect((low.X - left + RimX) * u + gap / 2, (low.Y - top + RimTop) * uy,
+                         low.W * u - gap, low.H * uy - gap / 2), r, r);
             var union = new CombinedGeometry(GeometryCombineMode.Union, upper, lower);
             union.Freeze();
             return union;
+        }
+
+        /// <summary>Прямоугольник, у которого каждый угол скруглён по-своему.</summary>
+        private static Geometry Frame(Rect r, double tl, double tr, double br, double bl)
+        {
+            // Радиус больше половины стороны выворачивает фигуру наизнанку: у половинного
+            // ряда алюминиевой серии клавиша ниже, чем угол корпуса, и esc отращивала
+            // синий шип выше собственной клавиши.
+            double cap = Math.Min(r.Width, r.Height) / 2;
+            if (tl > cap) tl = cap;
+            if (tr > cap) tr = cap;
+            if (br > cap) br = cap;
+            if (bl > cap) bl = cap;
+
+            var f = new PathFigure { StartPoint = new Point(r.Left + tl, r.Top), IsClosed = true, IsFilled = true };
+            f.Segments.Add(new LineSegment(new Point(r.Right - tr, r.Top), true));
+            f.Segments.Add(Bend(new Point(r.Right, r.Top + tr), tr));
+            f.Segments.Add(new LineSegment(new Point(r.Right, r.Bottom - br), true));
+            f.Segments.Add(Bend(new Point(r.Right - br, r.Bottom), br));
+            f.Segments.Add(new LineSegment(new Point(r.Left + bl, r.Bottom), true));
+            f.Segments.Add(Bend(new Point(r.Left, r.Bottom - bl), bl));
+            f.Segments.Add(new LineSegment(new Point(r.Left, r.Top + tl), true));
+            f.Segments.Add(Bend(new Point(r.Left + tl, r.Top), tl));
+
+            var g = new PathGeometry();
+            g.Figures.Add(f);
+            g.Freeze();
+            return g;
+        }
+
+        private static ArcSegment Bend(Point to, double r)
+        {
+            return new ArcSegment(to, new Size(r, r), 0, false, SweepDirection.Clockwise, true);
         }
     }
 }

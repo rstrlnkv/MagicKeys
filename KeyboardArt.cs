@@ -448,7 +448,7 @@ namespace MagicKeys
                     "У японской клавиатуры control стоит здесь — там, где у прочих caps lock. " +
                     "Сама caps lock ушла в нижний ряд");
             else
-                Add(keys, 0, Y, head, 1, "caps lock", null, Vk.Capital, true);
+                Caps(keys, 0, Y, head);
 
             for (int i = 0; i < 9; i++) Add(keys, head + i, Y, 1, 1, mid[i], null, Letter(mid[i]), false);
             double x = head + 9;
@@ -565,7 +565,7 @@ namespace MagicKeys
             const double Y = 5;
             double x = 0;
 
-            Add(keys, x, Y, 1, 1, "caps lock", null, Vk.Capital, true); x += 1;
+            Caps(keys, x, Y, 1); x += 1;
             Add(keys, x, Y, 1, 1, "option", "⌥", Vk.LMenu, true); x += 1;
             Add(keys, x, Y, 1.25, 1, "command", "⌘", Vk.LWin, true); x += 1.25;
             Add(keys, x, Y, 1.25, 1, "英数", null, Vk.NonConvert, true,
@@ -596,6 +596,23 @@ namespace MagicKeys
             Arrow(keys, Main - 2, y, 1, 0.5, "up", Vk.Up);
             Arrow(keys, Main - 2, y + 0.5, 1, 0.5, "down", Vk.Down);
             Arrow(keys, Main - 1, y, 1, 1, "right", Vk.Right);
+        }
+
+        /// <summary>
+        /// Caps Lock — со своей лампочкой в левом верхнем углу. Она там есть у всех
+        /// клавиатур Apple, и без неё клавиша выглядит просто широкой.
+        /// </summary>
+        private static void Caps(List<KeyCap> keys, double x, double y, double w)
+        {
+            KeyCap k = Add(keys, x, y, w, 1, "caps lock", null, Vk.Capital, true);
+            k.Art = "caps-led";
+        }
+
+        /// <summary>Клавиша ⌦ навигационного блока: значок вместо слова.</summary>
+        private static void Forward(List<KeyCap> keys, double x, double y, string tip)
+        {
+            KeyCap k = Add(keys, x, y, 1, 1, null, null, Vk.Delete, true, tip);
+            k.Art = "delete-forward";
         }
 
         /// <summary>
@@ -652,7 +669,10 @@ namespace MagicKeys
                 Add(keys, NavX, 1, 1, 1, "fn", null, 0, true, FnTip(m));
             Add(keys, NavX + 1, 1, 1, 1, "home", null, Vk.Home, true);
             Add(keys, NavX + 2, 1, 1, 1, "page up", null, Vk.Prior, true);
-            Add(keys, NavX, 2, 1, 1, "delete", null, Vk.Delete, true,
+            // На этой клавише Apple печатает значок ⌦, а не слово: слово «delete»
+            // стоит на другой — той, что стирает влево, — и две подписи «delete»
+            // на одной клавиатуре путают ровно то, что схема должна различать.
+            Forward(keys, NavX, 2,
                 "delete — стирает символ справа; Windows зовёт эту клавишу Delete");
             Add(keys, NavX + 1, 2, 1, 1, "end", null, Vk.End, true);
             Add(keys, NavX + 2, 2, 1, 1, "page down", null, Vk.Next, true);
@@ -832,7 +852,7 @@ namespace MagicKeys
                 bool toRight = word && k.X + k.W / 2 > (left + right) / 2;
                 // Значок и надпись на одной клавише — это верхний ряд: значок сверху,
                 // номер под ним. По центру их ставить нельзя, они встают друг на друга.
-                bool underArt = !String.IsNullOrEmpty(k.Art) && !String.IsNullOrEmpty(k.Cap);
+                bool underArt = !String.IsNullOrEmpty(k.Art) && !String.IsNullOrEmpty(k.Cap) && !word;
                 double pad = word ? U * 0.13 : 0;
                 TextAlignment side = !word ? TextAlignment.Center
                                    : (toRight ? TextAlignment.Right : TextAlignment.Left);

@@ -41,6 +41,15 @@ namespace MagicKeys
             var made = new List<Path>();
             if (String.IsNullOrEmpty(art)) return made;
 
+            // Лампочка Caps Lock живёт в левом верхнем углу клавиши, а не по центру,
+            // и от ширины клавиши не зависит: отмеряем её от высоты ряда. Клавиша эта
+            // широкая, и доля ширины увела бы точку на треть клавиши вправо.
+            if (art == "caps-led")
+            {
+                made.Add(Solid(ink, Circle(x + h * 0.17, y + h * 0.20, h * 0.05)));
+                return made;
+            }
+
             double s = Math.Min(w, h) * (underWord ? 0.30 : 0.34);   // сторона квадрата значка
             double u = s / 2;                                        // половина: от неё все размеры
             double cx = x + w / 2;
@@ -131,6 +140,31 @@ namespace MagicKeys
                 case "mute": Speaker(made, ink, cx, cy, u, line, 0); break;
                 case "vol-down": Speaker(made, ink, cx, cy, u, line, 1); break;
                 case "vol-up": Speaker(made, ink, cx, cy, u, line, 2); break;
+
+                // ⌦ — стирание вправо: бирка остриём вправо и крестик внутри.
+                // Именно вправо: ⌫ (стирание влево) — её зеркало, и путать их нельзя.
+                case "delete-forward":
+                    {
+                        var tag = new PathFigure
+                        {
+                            StartPoint = new Point(cx - u, cy - u * 0.72),
+                            IsClosed = true,
+                            IsFilled = false
+                        };
+                        tag.Segments.Add(new LineSegment(new Point(cx + u * 0.35, cy - u * 0.72), true));
+                        tag.Segments.Add(new LineSegment(new Point(cx + u, cy), true));
+                        tag.Segments.Add(new LineSegment(new Point(cx + u * 0.35, cy + u * 0.72), true));
+                        tag.Segments.Add(new LineSegment(new Point(cx - u, cy + u * 0.72), true));
+                        var tagGeom = new PathGeometry();
+                        tagGeom.Figures.Add(tag);
+
+                        made.Add(Line(ink, line, tagGeom,
+                            new LineGeometry(new Point(cx - u * 0.62, cy - u * 0.34),
+                                             new Point(cx + u * 0.08, cy + u * 0.34)),
+                            new LineGeometry(new Point(cx - u * 0.62, cy + u * 0.34),
+                                             new Point(cx + u * 0.08, cy - u * 0.34))));
+                    }
+                    break;
 
                 // Клавиша контекстного меню: страница с выделенной строкой.
                 case "menu":

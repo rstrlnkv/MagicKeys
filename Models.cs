@@ -227,6 +227,40 @@ namespace MagicKeys
             }
         }
 
+        /// <summary>
+        /// Значки на F1–F12 — те, что Apple печатает на самих клавишах.
+        ///
+        /// Пусто — клавиша без значка: у поколения 2015–2017 это F5 и F6, там на живой
+        /// клавиатуре действительно ничего не напечатано. Рисует их KeyboardGlyphs.
+        /// </summary>
+        public static string[] FKeyArt(AppleGen gen)
+        {
+            switch (gen)
+            {
+                case AppleGen.Magic2021:
+                case AppleGen.Magic2024:
+                    return new string[]
+                    {
+                        "bright-down", "bright-up", "mission", "search", "mic", "moon",
+                        "prev", "play", "next", "mute", "vol-down", "vol-up"
+                    };
+                case AppleGen.Alu:
+                    // У алюминиевой на F5 и F6 подсветка клавиш — своя пара значков.
+                    return new string[]
+                    {
+                        "bright-down", "bright-up", "mission", "launchpad",
+                        "backlight-down", "backlight-up",
+                        "prev", "play", "next", "mute", "vol-down", "vol-up"
+                    };
+                default:
+                    return new string[]
+                    {
+                        "bright-down", "bright-up", "mission", "launchpad", "", "",
+                        "prev", "play", "next", "mute", "vol-down", "vol-up"
+                    };
+            }
+        }
+
         /// <summary>Подписи клавиш F1–F12 у этого поколения — их видно в интерфейсе.</summary>
         public static string[] Legend(AppleGen gen)
         {

@@ -136,8 +136,15 @@ namespace MagicKeys
             for (int i = 0; i < p.Labels.Count; i++)
                 p.Labels[i].Foreground = s == KeyboardArt.State.Down ? _skin.DownText
                                        : (p.Labels[i].Tag == null ? _skin.Legend : _skin.LegendDim);
+            // Значок бывает залитым, бывает штриховым — красим ту кисть, которая
+            // у него есть. Назначить обе значит обвести залитую фигуру контуром
+            // и сделать её жирнее, чем нарисована.
+            Brush ink = s == KeyboardArt.State.Down ? _skin.DownText : _skin.Legend;
             for (int i = 0; i < p.Glyphs.Count; i++)
-                p.Glyphs[i].Fill = s == KeyboardArt.State.Down ? _skin.DownText : _skin.Legend;
+            {
+                if (p.Glyphs[i].Fill != null) p.Glyphs[i].Fill = ink;
+                if (p.Glyphs[i].Stroke != null) p.Glyphs[i].Stroke = ink;
+            }
         }
     }
 
@@ -211,8 +218,22 @@ namespace MagicKeys
         /// </summary>
         private const double RimX = 0.090, RimTop = 0.130, RimBottom = 0.095;
 
-        /// <summary>Скругление корпуса. Замерено на четырёх снимках: 0,445…0,513.</summary>
-        private const double BodyR = 0.48;
+        /// <summary>
+        /// Скругление корпуса — примета поколения, а не общая величина.
+        ///
+        /// Замерено: у A1843 угол выходит на прямую через 27 точек при шаге клавиш
+        /// 107,4 — это 0,25 клавиши. У A2450, A2520, A3118 и A3119 — от 0,445 до 0,513,
+        /// вдвое круглее. Старые клавиатуры заметно прямее, и одинаковое скругление
+        /// на всех выдаёт рисунок с одного взгляда.
+        ///
+        /// Алюминиевой серии снимка сверху не нашлось; ей дан тот же угол, что и её
+        /// ближайшей родне, — она уж точно не круглее Magic Keyboard 2015 года.
+        /// </summary>
+        private static double BodyRound(AppleModel m)
+        {
+            if (m == null) return 0.48;
+            return m.Gen == AppleGen.Magic2021 || m.Gen == AppleGen.Magic2024 ? 0.48 : 0.25;
+        }
 
         // ---------- раскладка ----------
 
@@ -276,8 +297,20 @@ namespace MagicKeys
             double h = half ? 0.58 : 1;
 
             Add(keys, 0, y, 1.5, h, "esc", null, Vk.Escape, true);
+
+            // На F1–F12 у Apple стоит значок, а номер под ним мелко. Голое «F1»
+            // она не печатает нигде, и без значков верхний ряд выглядит чужим,
+            // сколько бы ни были верны пропорции.
+            string[] art = Models.FKeyArt(m == null ? AppleGen.Unknown : m.Gen);
+            string[] says = Models.Legend(m == null ? AppleGen.Unknown : m.Gen);
             for (int i = 0; i < 12; i++)
-                Add(keys, 1.5 + i, y, 1, h, "F" + (i + 1), null, Vk.F1 + i, true);
+            {
+                KeyCap f = Add(keys, 1.5 + i, y, 1, h, "F" + (i + 1), null, Vk.F1 + i, true,
+                               String.IsNullOrEmpty(says[i]) ? null : "F" + (i + 1) + " — " + says[i]);
+                // У половинного ряда алюминиевой значку места нет: клавиша вдвое ниже,
+                // и значок со словом на ней встают друг на друга.
+                if (!half) f.Art = art[i];
+            }
             TopRight(keys, m, 13.5, y, h);
 
             if (!numpad) return;
@@ -747,7 +780,7 @@ namespace MagicKeys
 
                 var shape = new Path
                 {
-                    Data = Outline(k, left, top, right, bottom, U, uy, gap),
+                    Data = Outline(k, left, top, right, bottom, U, uy, gap, BodyRound(m)),
                     Fill = s == State.Down ? skin.Down : skin.Key,
                     Stroke = s == State.Unknown ? skin.KeyEdge : skin.Live,
                     StrokeThickness = s == State.Unknown ? 1 : 1.8,
@@ -788,19 +821,19 @@ namespace MagicKeys
                 // наоборот. Буквы и цифры при этом стоят ровно по центру.
                 bool word = k.Small && k.W > 1.001;
                 bool toRight = word && k.X + k.W / 2 > (left + right) / 2;
+                // Значок и надпись на одной клавише — это верхний ряд: значок сверху,
+                // номер под ним. По центру их ставить нельзя, они встают друг на друга.
+                bool underArt = !String.IsNullOrEmpty(k.Art) && !String.IsNullOrEmpty(k.Cap);
                 double pad = word ? U * 0.13 : 0;
                 TextAlignment side = !word ? TextAlignment.Center
                                    : (toRight ? TextAlignment.Right : TextAlignment.Left);
 
                 // Значок, нарисованный фигурой, — на тех клавишах, где Apple печатает
                 // значок, а не слово: ⏏ и стрелки. Слово при этом живёт в подсказке.
-                var glyphs = new List<Path>();
-                if (!String.IsNullOrEmpty(k.Art))
-                {
-                    Path art = Glyph(k.Art, bx, by, bw, bh,
-                                     s == State.Down ? skin.DownText : skin.Legend);
-                    if (art != null) { canvas.Children.Add(art); glyphs.Add(art); }
-                }
+                List<Path> glyphs = KeyboardGlyphs.Draw(k.Art, bx, by, bw, bh,
+                                                        s == State.Down ? skin.DownText : skin.Legend,
+                                                        !String.IsNullOrEmpty(k.Cap));
+                foreach (Path art in glyphs) canvas.Children.Add(art);
 
                 var stack = new StackPanel
                 {
@@ -817,8 +850,9 @@ namespace MagicKeys
                 Canvas.SetLeft(stack, bx + (word && !toRight ? pad : 0));
                 // Прижимаем ко дну, но не выше середины: в половинном ряду алюминиевой
                 // серии слово выше клавиши, и «прижать ко дну» вытолкнуло бы его наружу.
-                Canvas.SetTop(stack, word ? by + Math.Max((bh - th) / 2, bh - th - pad)
-                                          : by + (bh - th) / 2);
+                Canvas.SetTop(stack, underArt ? by + bh - th - U * 0.09
+                                    : word ? by + Math.Max((bh - th) / 2, bh - th - pad)
+                                           : by + (bh - th) / 2);
                 canvas.Children.Add(stack);
 
                 string tip = k.Tip;
@@ -835,7 +869,7 @@ namespace MagicKeys
             var body = new Border
             {
                 Background = skin.Body,
-                CornerRadius = new CornerRadius(U * BodyR),
+                CornerRadius = new CornerRadius(U * BodyRound(m)),
                 Child = canvas
             };
 
@@ -875,7 +909,7 @@ namespace MagicKeys
         /// которого на живой клавиатуре нет.
         /// </summary>
         private static Geometry Outline(KeyCap k, double left, double top, double right, double bottom,
-                                        double u, double uy, double gap)
+                                        double u, double uy, double gap, double bodyR)
         {
             double r = u * 0.13;
             KeyRect[] parts = k.Rects();
@@ -888,7 +922,7 @@ namespace MagicKeys
                 // Наружный угол угловой клавиши повторяет угол корпуса — он шире
                 // прочих ровно на поле. Клавиш таких четыре, и без них рисунок
                 // выглядит чертежом: на живой клавиатуре это первое, что видно.
-                double big = (BodyR - RimX) * u;
+                double big = (bodyR - RimX) * u;
                 bool l = a.X <= left, t = a.Y <= top;
                 bool rr = a.X + a.W >= right, b = a.Y + a.H >= bottom;
                 if (l || t || rr || b)
@@ -935,70 +969,6 @@ namespace MagicKeys
             return g;
         }
 
-        /// <summary>
-        /// Значок на клавише, нарисованный фигурой.
-        ///
-        /// Шрифтом их не нарисовать: ⏏ системный шрифт не знает вовсе — за это в своде
-        /// правил и записано «вместо значков слова». Но правило про шрифт, а не про
-        /// рисунок: свою фигуру нарисовать можно, и датчик Touch ID уже так нарисован.
-        /// Стрелки у Apple — сплошные треугольники, а не ← и →, и это первое, чем
-        /// её клавиатура отличается от чужой на вид.
-        /// </summary>
-        private static Path Glyph(string art, double bx, double by, double bw, double bh, Brush ink)
-        {
-            double cx = bx + bw / 2, cy = by + bh / 2;
-            double s = Math.Min(bw, bh) * (art == "eject" ? 0.20 : 0.17);   // сторона значка
-
-            var f = new PathFigure { IsClosed = true, IsFilled = true };
-            switch (art)
-            {
-                case "eject":
-                    // Треугольник вершиной вверх и полоска под ним — врозь, как у Apple.
-                    // Полоску рисуем вторым контуром той же фигуры.
-                    f.StartPoint = new Point(cx, cy - s * 0.85);
-                    f.Segments.Add(new LineSegment(new Point(cx + s, cy + s * 0.1), true));
-                    f.Segments.Add(new LineSegment(new Point(cx - s, cy + s * 0.1), true));
-                    break;
-                case "up":
-                    f.StartPoint = new Point(cx, cy - s * 0.8);
-                    f.Segments.Add(new LineSegment(new Point(cx + s * 0.8, cy + s * 0.6), true));
-                    f.Segments.Add(new LineSegment(new Point(cx - s * 0.8, cy + s * 0.6), true));
-                    break;
-                case "down":
-                    f.StartPoint = new Point(cx, cy + s * 0.8);
-                    f.Segments.Add(new LineSegment(new Point(cx + s * 0.8, cy - s * 0.6), true));
-                    f.Segments.Add(new LineSegment(new Point(cx - s * 0.8, cy - s * 0.6), true));
-                    break;
-                case "left":
-                    f.StartPoint = new Point(cx - s * 0.8, cy);
-                    f.Segments.Add(new LineSegment(new Point(cx + s * 0.6, cy - s * 0.8), true));
-                    f.Segments.Add(new LineSegment(new Point(cx + s * 0.6, cy + s * 0.8), true));
-                    break;
-                case "right":
-                    f.StartPoint = new Point(cx + s * 0.8, cy);
-                    f.Segments.Add(new LineSegment(new Point(cx - s * 0.6, cy - s * 0.8), true));
-                    f.Segments.Add(new LineSegment(new Point(cx - s * 0.6, cy + s * 0.8), true));
-                    break;
-                default:
-                    return null;
-            }
-
-            var g = new PathGeometry();
-            g.Figures.Add(f);
-            if (art == "eject")
-            {
-                var bar = new PathFigure { IsClosed = true, IsFilled = true };
-                double h = s * 0.26, w = s * 0.95, y = cy + s * 0.45;
-                bar.StartPoint = new Point(cx - w, y);
-                bar.Segments.Add(new LineSegment(new Point(cx + w, y), true));
-                bar.Segments.Add(new LineSegment(new Point(cx + w, y + h), true));
-                bar.Segments.Add(new LineSegment(new Point(cx - w, y + h), true));
-                g.Figures.Add(bar);
-            }
-            g.Freeze();
-
-            return new Path { Data = g, Fill = ink, IsHitTestVisible = false };
-        }
 
         /// <summary>Прямоугольник, у которого каждый угол скруглён по-своему.</summary>
         private static Geometry Frame(Rect r, double tl, double tr, double br, double bl)

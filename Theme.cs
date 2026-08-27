@@ -160,6 +160,15 @@ namespace MagicKeys
                 .Replace("{TEXTSEC}", dark ? "#B0FFFFFF" : "#9E000000")
                 .Replace("{TEXTTER}", dark ? "#78FFFFFF" : "#72000000")
                 .Replace("{HOVER}", dark ? "#14FFFFFF" : "#0A000000")
+                // Бейджи чейнджлога: три рода изменений, у каждого своя подложка.
+                // В светлой теме нужны другие тона, а не те же с прозрачностью:
+                // светлая надпись на светлой подложке не читается.
+                .Replace("{BADGENEWBG}", dark ? "#3327C05A" : "#1F1E9E4A")
+                .Replace("{BADGENEWTEXT}", dark ? "#FF6BE39A" : "#FF12703A")
+                .Replace("{BADGEFIXBG}", dark ? "#33E0803A" : "#1FC96A12")
+                .Replace("{BADGEFIXTEXT}", dark ? "#FFF0B070" : "#FF8A4A08")
+                .Replace("{BADGEUPDBG}", dark ? "#335A9BE0" : "#1F2C7BC8")
+                .Replace("{BADGEUPDTEXT}", dark ? "#FF8FC4EE" : "#FF14507F")
                 .Replace("{ACCENT}", Hex(accentUi))
                 .Replace("{ACCENTTEXT}", accentText);
 
@@ -186,6 +195,12 @@ namespace MagicKeys
   <SolidColorBrush x:Key='TextSec' Color='{TEXTSEC}'/>
   <SolidColorBrush x:Key='TextTer' Color='{TEXTTER}'/>
   <SolidColorBrush x:Key='Hover' Color='{HOVER}'/>
+  <SolidColorBrush x:Key='BadgeNewBg' Color='{BADGENEWBG}'/>
+  <SolidColorBrush x:Key='BadgeNewText' Color='{BADGENEWTEXT}'/>
+  <SolidColorBrush x:Key='BadgeFixBg' Color='{BADGEFIXBG}'/>
+  <SolidColorBrush x:Key='BadgeFixText' Color='{BADGEFIXTEXT}'/>
+  <SolidColorBrush x:Key='BadgeUpdBg' Color='{BADGEUPDBG}'/>
+  <SolidColorBrush x:Key='BadgeUpdText' Color='{BADGEUPDTEXT}'/>
   <SolidColorBrush x:Key='Accent' Color='{ACCENT}'/>
   <SolidColorBrush x:Key='AccentText' Color='{ACCENTTEXT}'/>
 

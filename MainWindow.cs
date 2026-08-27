@@ -3076,7 +3076,18 @@ namespace MagicKeys
 
             var news = new Button { Content = "Что нового", Height = 38, Margin = new Thickness(0, 0, 6, 0) };
             news.SetResourceReference(StyleProperty, "Btn");
-            news.Click += delegate { Updater.OpenPage(Updater.ReleasesPage); };
+            // Своим окном, а не походом в браузер. Прежде кнопка вела на страницу
+            // выпусков — и не отвечала ровно тому, кто спрашивает чаще всех: человеку,
+            // который только что обновился. Его версии на той странице может не быть
+            // вовсе, а у сборки со своей машины её там нет никогда.
+            news.Click += delegate
+            {
+                var w = new ChangelogWindow();
+                // Хозяина берём у самой кнопки: карточка собирается статическим
+                // методом, и this здесь взять неоткуда.
+                w.Owner = Window.GetWindow(news);
+                w.ShowDialog();
+            };
             grid.Children.Add(news);
 
             var code = new Button { Content = "GitHub", Height = 38, Margin = new Thickness(6, 0, 0, 0) };

@@ -5,6 +5,7 @@
 // этот — что настройки слушаются человека. Между ними ровно та щель, куда проваливается
 // переключатель, забытый при перестройке страницы: он есть, он щёлкает, и он ничей.
 using System;
+using System.IO;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Text;
@@ -94,6 +95,7 @@ namespace MagicKeys
             NarrowWindowKeepsWordsWhole();
             KeyboardArtIsHonest();
             SettingsFollowTheKeyboard();
+            ChangelogIsReadable();
             ElevatedWindowIsSaidOutLoud();
 
             Console.WriteLine();
@@ -1649,6 +1651,91 @@ namespace MagicKeys
                   "порвано " + torn + ", первое — " + firstTorn);
             Check("при сжатом окне надписи не вылезают за карточку", spilled == 0,
                   "вылезло " + spilled + ", первая — " + firstSpill);
+        }
+
+        /// <summary>
+        /// Чейнджлог разбирается и читается человеком.
+        ///
+        /// Второе — не придирка. Окно рисует его надписями, а системный шрифт не знает
+        /// ⌫, ⌧, ⏏ и ⌦: на схеме их поэтому рисуют фигурой, но в тексте фигуре взяться
+        /// неоткуда, и вместо значка выходит пустой квадрат. Поймано глазами на первом
+        /// же снимке окна — значит, проверке тут и место.
+        /// </summary>
+        static void ChangelogIsReadable()
+        {
+            Console.WriteLine();
+            Console.WriteLine("== чейнджлог ==");
+
+            string path = null;
+            foreach (string p in new[] { "CHANGELOG.md", @"..\CHANGELOG.md" })
+                if (File.Exists(p)) { path = p; break; }
+            Check("файл чейнджлога нашёлся", path != null, "нет CHANGELOG.md");
+            if (path == null) return;
+
+            string text = File.ReadAllText(path, Encoding.UTF8);
+
+            // Разбор — тем же кодом, каким его читает окно.
+            var entries = new List<ChangelogEntry>();
+            ChangelogEntry current = null;
+            foreach (string raw in text.Split((char)10))
+            {
+                string line = raw.Trim();
+                if (line.StartsWith("## ", StringComparison.Ordinal))
+                {
+                    current = new ChangelogEntry();
+                    string head = line.Substring(3).Trim();
+                    int dash = head.IndexOf('—');
+                    if (dash > 0)
+                    {
+                        current.Version = head.Substring(0, dash).Trim();
+                        current.Date = head.Substring(dash + 1).Trim();
+                    }
+                    else current.Version = head;
+                    entries.Add(current);
+                    continue;
+                }
+                if (current == null || line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal)) continue;
+                if (line.StartsWith("- ", StringComparison.Ordinal))
+                    current.Lines.Add(Changelog.Split(line.Substring(2)));
+            }
+
+            Check("выпуски разобрались", entries.Count >= 3, "нашлось " + entries.Count);
+
+            int nameless = 0, dateless = 0, empty = 0, badBadge = 0;
+            string firstBad = null;
+            foreach (ChangelogEntry e in entries)
+            {
+                if (Updater.ParseVersion(e.Version) == null) nameless++;
+                if (e.Date.Length == 0) dateless++;
+                if (e.Lines.Count == 0) empty++;
+                foreach (ChangelogLine l in e.Lines)
+                {
+                    if (l.Badge != "NEW" && l.Badge != "FIX" && l.Badge != "UPD")
+                    {
+                        badBadge++;
+                        if (firstBad == null) firstBad = e.Version + ": «" + Short(l.Text) + "»";
+                    }
+                }
+            }
+            Check("у каждого выпуска разбираемый номер", nameless == 0, "без номера " + nameless);
+            Check("у каждого выпуска есть дата", dateless == 0, "без даты " + dateless);
+            Check("пустых выпусков нет", empty == 0, "пустых " + empty);
+            Check("бейдж у каждой строки — NEW, FIX или UPD", badBadge == 0,
+                  "чужих " + badBadge + ", первая — " + firstBad);
+
+            // Самая свежая запись обязана совпасть с версией программы: иначе человек,
+            // который только что обновился, откроет окно и своей версии в нём не найдёт.
+            Check("свежий выпуск — это версия программы",
+                  entries.Count > 0 && entries[0].Version == BuildInfo.Version,
+                  "в чейнджлоге " + (entries.Count > 0 ? entries[0].Version : "—") +
+                  ", в программе " + BuildInfo.Version);
+
+            // Значки, которых нет в системном шрифте. В окне они станут квадратами.
+            string mute = "";
+            foreach (char c in new[] { '⌫', '⌧', '⏏', '⌦' })
+                if (text.IndexOf(c) >= 0) mute += c + " ";
+            Check("в тексте нет значков, которых не рисует шрифт", mute.Length == 0,
+                  "встретились: " + mute);
         }
 
         /// <summary>

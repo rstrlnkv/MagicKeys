@@ -1730,6 +1730,25 @@ namespace MagicKeys
                   "в чейнджлоге " + (entries.Count > 0 ? entries[0].Version : "—") +
                   ", в программе " + BuildInfo.Version);
 
+            // Длина строки. Чейнджлог читает человек, а не разработчик: строка говорит,
+            // ЧТО он получит, и не рассказывает, как это устроено внутри. Первая
+            // редакция объясняла, из чего собиралась клавиша Enter, — это гордость
+            // автора, а не польза читателю. Предел грубый, но он ловит именно абзацы.
+            int longest = 0, wordy = 0;
+            string firstWordy = null;
+            foreach (ChangelogEntry e in entries)
+                foreach (ChangelogLine l in e.Lines)
+                {
+                    if (l.Text.Length > longest) longest = l.Text.Length;
+                    if (l.Text.Length > 180)
+                    {
+                        wordy++;
+                        if (firstWordy == null) firstWordy = e.Version + ": «" + Short(l.Text) + "»";
+                    }
+                }
+            Check("строки говорят коротко (самая длинная — " + longest + " знаков)", wordy == 0,
+                  "длинных " + wordy + ", первая — " + firstWordy);
+
             // Значки, которых нет в системном шрифте. В окне они станут квадратами.
             string mute = "";
             foreach (char c in new[] { '⌫', '⌧', '⏏', '⌦' })

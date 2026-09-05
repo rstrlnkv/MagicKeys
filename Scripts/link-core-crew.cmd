@@ -20,12 +20,12 @@ rem не осталось, они приходят из ~\.claude\agents, а с�
 rem честнее выглядит отсутствующей.
 setlocal
 set ROOT=%~dp0..
-set CC=%ROOT%\..\Core-Crew\projects\MagicKeys
+set CC=%ROOT%\..\CoreCrew\projects\MagicKeys
 
 if not exist "%CC%\" (
   echo Нет Core Crew рядом с этим деревом. Ожидается:
   echo   %CC%
-  echo Поставить: git clone https://github.com/rstrlnkv/Core-Crew.git
+  echo Поставить: git clone https://github.com/rstrlnkv/CoreCrew.git
   exit /b 1
 )
 

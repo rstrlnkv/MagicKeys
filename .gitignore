@@ -39,3 +39,5 @@ drivers/
 /tools/preview.png
 MagicKeys.Tests.exe
 MagicKeys.WindowTests.exe
+.claude/agents
+.claude/crew

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Раскладка MagicKeys. Данные получены из Unicode CLDR (keyboards/osx),
-     лицензия Unicode; см. README. Исходник: tr.xml -->
+     лицензия Unicode; см. NOTICE.md. Исходник: tr.xml -->
 <AppleLayout id="tr-F" title="Турецкая (F)" macName="Turkish">
   <Key scan="56" iso="B00" base="§" shift="±" diff="base shift"/>
   <Key scan="2C" iso="B01" base="j" shift="J" opt="∆" optShift="Ô" diff="base shift opt optShift"/>

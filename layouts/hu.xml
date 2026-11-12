@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Раскладка MagicKeys. Данные получены из Unicode CLDR (keyboards/osx),
-     лицензия Unicode; см. README. Исходник: hu.xml -->
+     лицензия Unicode; см. NOTICE.md. Исходник: hu.xml -->
 <AppleLayout id="hu" title="Венгерская" macName="Hungarian">
   <Key scan="56" iso="B00" base="0" shift="§" opt="¬" optShift="•" diff="base shift opt optShift"/>
   <Key scan="2C" iso="B01" base="y" shift="Y" opt="«" optShift="&lt;" diff="opt optShift"/>

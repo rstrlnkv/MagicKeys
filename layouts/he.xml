@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Раскладка MagicKeys. Данные получены из Unicode CLDR (keyboards/osx),
-     лицензия Unicode; см. README. Исходник: he.xml -->
+     лицензия Unicode; см. NOTICE.md. Исходник: he.xml -->
 <AppleLayout id="he" title="Иврит" macName="Hebrew">
   <Key scan="2C" iso="B01" base="ז" opt="–" optShift="–" diff="opt optShift"/>
   <Key scan="2D" iso="B02" base="ס" opt="—" optShift="—" diff="opt optShift"/>

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Раскладка MagicKeys. Данные получены из Unicode CLDR (keyboards/osx),
-     лицензия Unicode; см. README. Исходник: de.xml -->
+     лицензия Unicode; см. NOTICE.md. Исходник: de.xml -->
 <AppleLayout id="de" title="Немецкая" macName="German">
   <Key scan="56" iso="B00" base="^" shift="°" opt="„" optShift="“" dead="base" diff="base shift opt optShift"/>
   <Key scan="2C" iso="B01" base="y" shift="Y" opt="¥" optShift="‡" diff="opt optShift"/>

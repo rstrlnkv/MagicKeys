@@ -13,7 +13,7 @@ if not exist "%NETDIR%\csc.exe" (
 set TOOL=%TEMP%\magickeys-makeicon.exe
 "%NETDIR%\csc.exe" /nologo /target:exe /codepage:65001 /out:"%TOOL%" ^
   /r:System.dll /r:System.Drawing.dll ^
-  "%~dp0..\Iconography.cs" "%~dp0MakeIcon.cs"
+  "%~dp0..\src\Iconography.cs" "%~dp0MakeIcon.cs"
 if errorlevel 1 exit /b 1
 
 "%TOOL%" "%~dp0.."

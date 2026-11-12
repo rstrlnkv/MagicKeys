@@ -8,12 +8,13 @@ if not exist "%NETDIR%\csc.exe" (
   exit /b 1
 )
 set WPF=%NETDIR%\WPF
-set SRC=%~dp0..
+for %%R in ("%~dp0..") do set ROOT=%%~fR
+set SRC=%ROOT%\src
 set REFS=/r:System.dll /r:System.Core.dll /r:System.Xml.dll /r:System.Web.Extensions.dll /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Management.dll /r:"%NETDIR%\System.Xaml.dll" /r:"%WPF%\WindowsBase.dll" /r:"%WPF%\PresentationCore.dll" /r:"%WPF%\PresentationFramework.dll"
 set CODE="%SRC%\BuildInfo.cs" "%SRC%\BuildInfo.g.cs" "%SRC%\Updater.cs" "%SRC%\Diag.cs" "%SRC%\Iconography.cs" "%SRC%\Native.cs" "%SRC%\Models.cs" "%SRC%\AppleDriver.cs" "%SRC%\AppleDriverSetup.cs" "%SRC%\KeyWatch.cs" "%SRC%\KeyboardBattery.cs" "%SRC%\AppleLayout.cs" "%SRC%\Input.cs" "%SRC%\MacKeys.cs" "%SRC%\Actions.cs" "%SRC%\Brightness.cs" "%SRC%\Settings.cs" "%SRC%\Devices.cs" "%SRC%\Elevated.cs" "%SRC%\KeyboardArt.cs" "%SRC%\KeyboardGlyphs.cs" "%SRC%\Changelog.cs" "%SRC%\ChangelogWindow.cs" "%SRC%\Engine.cs" "%SRC%\Theme.cs" "%SRC%\Fluent.cs" "%SRC%\Osd.cs" "%SRC%\MainWindow.cs" "%SRC%\App.cs"
 
 rem Версия собирается сборкой программы: без неё стенду нечего компилировать.
-if not exist "%SRC%\BuildInfo.g.cs" call "%SRC%\build.cmd" >nul
+if not exist "%SRC%\BuildInfo.g.cs" call "%ROOT%\scripts\build.cmd" >nul
 
 "%NETDIR%\csc.exe" /nologo /target:exe /platform:anycpu /codepage:65001 /main:MagicKeys.SettingsTests ^
   /out:"%SRC%\MagicKeys.Tests.exe" %REFS% %CODE% "%~dp0SettingsTests.cs"

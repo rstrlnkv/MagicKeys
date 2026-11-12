@@ -121,7 +121,7 @@
       </Component>
 
       <Component Id="Readme" Guid="*" Win64="yes">
-        <File Id="README.md" Source="$(var.SourceDir)\README.md" KeyPath="yes" />
+        <File Id="README.md" Source="$(var.SourceDir)\README.ru.md" Name="README.md" KeyPath="yes" />
       </Component>
 
       <!-- Куда поставили и хотели ли ярлык. Читается при следующем обновлении. -->

@@ -19,7 +19,7 @@ rem Версию берём из самой программы, а не пише
 rem нести программу 0.1.0: обновление это переживает, потому что старая версия
 rem удаляется до установки новой, — но стоит удалению споткнуться, и Windows увидит
 rem одинаковые версии файла, не заменит его и отчитается об успехе.
-for /f "delims=" %%V in ('powershell -NoProfile -Command "[regex]::Match((Get-Content -Raw '%ROOT%\BuildInfo.cs'), 'const string Version = ' + [char]34 + '([^' + [char]34 + ']+)').Groups[1].Value"') do set VERSION=%%V
+for /f "delims=" %%V in ('powershell -NoProfile -Command "[regex]::Match((Get-Content -Raw '%ROOT%\src\BuildInfo.cs'), 'const string Version = ' + [char]34 + '([^' + [char]34 + ']+)').Groups[1].Value"') do set VERSION=%%V
 if not defined VERSION (
   echo Не удалось прочитать версию из BuildInfo.cs.
   exit /b 1
@@ -30,7 +30,7 @@ if not "%~1"=="" if not "%~1"=="%VERSION%" (
 )
 
 if not exist "%ROOT%\MagicKeys.exe" (
-  echo Нет MagicKeys.exe — сначала соберите программу: build.cmd
+  echo Нет MagicKeys.exe — сначала соберите программу: scripts\build.cmd
   exit /b 1
 )
 
@@ -40,13 +40,13 @@ rem 0.2.0 с программой 0.1.0 внутри — и человек по�
 rem обновление сверяет тег с версией собранного файла, а не с именем пакета.
 powershell -NoProfile -Command "exit [int]((Get-Item '%ROOT%\MagicKeys.exe').VersionInfo.FileVersion -notlike '%VERSION%*')"
 if errorlevel 1 (
-  echo Версия собранного MagicKeys.exe не сходится с %VERSION% — пересоберите: build.cmd
+  echo Версия собранного MagicKeys.exe не сходится с %VERSION% — пересоберите: scripts\build.cmd
   exit /b 1
 )
 
 rem Эти три собирать нечем — они просто лежат в репозитории. Совет «соберите
 rem программу» отправил бы делать то, что не помогает.
-for %%F in ("%ROOT%\MagicKeys.ico" "%ROOT%\LICENSE" "%ROOT%\README.md") do (
+for %%F in ("%ROOT%\MagicKeys.ico" "%ROOT%\LICENSE" "%ROOT%\README.ru.md") do (
   if not exist %%F (
     echo Нет файла %%F — он должен лежать в корне репозитория.
     exit /b 1

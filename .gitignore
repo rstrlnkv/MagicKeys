@@ -16,31 +16,10 @@ drivers/
 *.tmp
 *.log
 
-# Приватное лежит в Core Crew (соседний репозиторий, ..\CoreCrew\projects\MagicKeys),
-# а сюда приходит ссылками: папки — соединением, файлы — жёсткой ссылкой (настоящие
-# символьные на Windows требуют особых прав). Игнорируются именно ссылки, иначе git
-# видел бы одно и то же дважды и предлагал добавить содержимое приватного
-# репозитория в открытый. Ставит и чинит их Scripts\link-core-crew.cmd.
-#
-# До 05.09.2026 приватное лежало в .backstage, а до 06.09.2026 — ещё и в отдельном
-# репозитории rstrlnkv/MagicKeys-Backstage. Нет ни того, ни другого: репозиторий
-# удалён владельцем, содержимое и история целиком в Core Crew — сшивка 72343d5
-# из fc3b343, его последнего коммита.
-#
-# Ссылок пять. Шестой, /docs, здесь больше нет: она вела в пустой каталог, и
-# ссылка на пустоту честнее выглядит отсутствующей.
-/CLAUDE.md
-/ARCHITECTURE.md
-/.claude/
-/plugins/
-/.claude-plugin/
-
 # Рабочие файлы разбора и замеров
 /tools/preview.png
 MagicKeys.Tests.exe
 MagicKeys.WindowTests.exe
-.claude/agents
-.claude/crew
 # corecrew: internal Claude files and secrets stay out of this repo
 CLAUDE.md
 CLAUDE.local.md

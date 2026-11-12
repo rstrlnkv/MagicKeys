@@ -7,6 +7,12 @@ and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-11-13
+
+### Changed
+
+- The README installed next to the program is now a short guide in Russian.
+
 ## [0.2.2] - 2026-08-28
 
 ### Added

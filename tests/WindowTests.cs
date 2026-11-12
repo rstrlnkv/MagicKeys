@@ -1666,40 +1666,43 @@ namespace MagicKeys
             Console.WriteLine();
             Console.WriteLine("== чейнджлог ==");
 
-            string path = null;
-            foreach (string p in new[] { "CHANGELOG.md", @"..\CHANGELOG.md" })
-                if (File.Exists(p)) { path = p; break; }
-            Check("файл чейнджлога нашёлся", path != null, "нет CHANGELOG.md");
+            // Формат Keep a Changelog: группа «### Добавлено» и т. п. становится бейджем
+            // каждой своей строки, а пустой [Unreleased] выпуском не считается.
+            List<ChangelogEntry> sample = Changelog.Parse(
+                "# Журнал изменений\n\n## [Unreleased]\n\n## [1.2.0] - 2026-01-02\n\n" +
+                "### Добавлено\n\n- Новое\n\n### Изменено\n\n- Другое\n\n### Исправлено\n\n- Починено\n");
+            Check("образец: один выпуск, без [Unreleased]", sample.Count == 1, "выпусков " + sample.Count);
+            if (sample.Count == 1)
+            {
+                Check("образец: номер и дата из «## [1.2.0] - 2026-01-02»",
+                      sample[0].Version == "1.2.0" && sample[0].Date == "2026-01-02",
+                      sample[0].Version + " / " + sample[0].Date);
+                string badges = "";
+                foreach (ChangelogLine l in sample[0].Lines) badges += l.Badge + " ";
+                Check("образец: группы стали бейджами NEW, UPD, FIX", badges == "NEW UPD FIX ", badges);
+            }
+
+            string path = null, english = null;
+            foreach (string dir in new[] { "", @"..\" })
+                if (File.Exists(dir + "CHANGELOG.ru.md")) { path = dir + "CHANGELOG.ru.md"; english = dir + "CHANGELOG.md"; break; }
+            Check("файл чейнджлога нашёлся", path != null, "нет CHANGELOG.ru.md");
             if (path == null) return;
 
             string text = File.ReadAllText(path, Encoding.UTF8);
 
             // Разбор — тем же кодом, каким его читает окно.
-            var entries = new List<ChangelogEntry>();
-            ChangelogEntry current = null;
-            foreach (string raw in text.Split((char)10))
-            {
-                string line = raw.Trim();
-                if (line.StartsWith("## ", StringComparison.Ordinal))
-                {
-                    current = new ChangelogEntry();
-                    string head = line.Substring(3).Trim();
-                    int dash = head.IndexOf('—');
-                    if (dash > 0)
-                    {
-                        current.Version = head.Substring(0, dash).Trim();
-                        current.Date = head.Substring(dash + 1).Trim();
-                    }
-                    else current.Version = head;
-                    entries.Add(current);
-                    continue;
-                }
-                if (current == null || line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal)) continue;
-                if (line.StartsWith("- ", StringComparison.Ordinal))
-                    current.Lines.Add(Changelog.Split(line.Substring(2)));
-            }
+            List<ChangelogEntry> entries = Changelog.Parse(text);
 
             Check("выпуски разобрались", entries.Count >= 3, "нашлось " + entries.Count);
+
+            // Английский CHANGELOG.md — основной в репозитории, русский — перевод для окна.
+            // Выпуски у них одни и те же, иначе окно расскажет не то, что страница проекта.
+            string ru = "", en = "";
+            foreach (ChangelogEntry e in entries) ru += e.Version + " " + e.Date + "; ";
+            if (File.Exists(english))
+                foreach (ChangelogEntry e in Changelog.Parse(File.ReadAllText(english, Encoding.UTF8)))
+                    en += e.Version + " " + e.Date + "; ";
+            Check("выпуски в CHANGELOG.md и CHANGELOG.ru.md те же", ru == en, "ru: " + ru + " en: " + en);
 
             int nameless = 0, dateless = 0, empty = 0, badBadge = 0;
             string firstBad = null;

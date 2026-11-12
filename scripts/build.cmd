@@ -22,7 +22,7 @@ for /f "delims=" %%I in ('git -C "%ROOT%" rev-list --count HEAD 2^>nul') do set 
 
 "%NETDIR%\csc.exe" /nologo /target:winexe /optimize+ /platform:anycpu /codepage:65001 ^
   /out:"%ROOT%\MagicKeys.exe" /win32icon:"%ROOT%\MagicKeys.ico" ^
-  /resource:"%ROOT%\CHANGELOG.md",changelog ^
+  /resource:"%ROOT%\CHANGELOG.ru.md",changelog ^
   /r:System.dll /r:System.Core.dll /r:System.Xml.dll /r:System.Web.Extensions.dll ^
   /r:System.Drawing.dll /r:System.Windows.Forms.dll /r:System.Management.dll ^
   /r:"%NETDIR%\System.Xaml.dll" ^

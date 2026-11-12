@@ -22,14 +22,13 @@ namespace MagicKeys
     {
         public string Version = "";
         public string Date = "";
-        public string Note = "";           // «Первый выпуск.» и подобное — абзац перед списком
         public List<ChangelogLine> Lines = new List<ChangelogLine>();
     }
 
     /// <summary>
     /// Чейнджлог, лежащий внутри программы.
     ///
-    /// `CHANGELOG.md` кладётся в сборку ресурсом — так же, как номер сборки
+    /// `CHANGELOG.ru.md` (русский перевод `CHANGELOG.md`) кладётся в сборку ресурсом — так же, как номер сборки
     /// вписывается в `BuildInfo.g.cs`. Причина простая: до этого прочитать
     /// «что нового» изнутри было нельзя ни при каких условиях. Кнопка уводила
     /// в браузер, на страницу выпусков, — и работало это ровно до того случая,
@@ -45,75 +44,66 @@ namespace MagicKeys
         /// <summary>Выпуски, свежий первым. Пусто — ресурса нет (сборка без чейнджлога).</summary>
         public static List<ChangelogEntry> Read()
         {
-            var list = new List<ChangelogEntry>();
             string text = Raw();
-            if (String.IsNullOrEmpty(text)) return list;
+            return String.IsNullOrEmpty(text) ? new List<ChangelogEntry>() : Parse(text);
+        }
 
+        /// <summary>
+        /// Разобрать чейнджлог в формате Keep a Changelog: «## [0.2.1] - 2026-08-27»,
+        /// под ним группы «### Добавлено» и строки «- ...». Группа становится бейджем
+        /// каждой своей строки — окно рисует бейджи NEW, FIX и UPD, как прежде.
+        /// [Unreleased] выпуском не считается: у него нет ни номера, ни даты.
+        /// </summary>
+        public static List<ChangelogEntry> Parse(string text)
+        {
+            var list = new List<ChangelogEntry>();
             ChangelogEntry current = null;
+            string badge = "";
+
             foreach (string raw in text.Split((char)10))
             {
                 string line = raw.Trim();
 
                 if (line.StartsWith("## ", StringComparison.Ordinal))
                 {
-                    current = new ChangelogEntry();
+                    current = null;
+                    badge = "";
                     string head = line.Substring(3).Trim();
+                    int close = head.IndexOf(']');
+                    if (!head.StartsWith("[", StringComparison.Ordinal) || close < 0) continue;
 
-                    // «0.2.1 — 2026-08-27»: номер, длинное тире, дата.
-                    int dash = head.IndexOf('—');
-                    if (dash > 0)
-                    {
-                        current.Version = head.Substring(0, dash).Trim();
-                        current.Date = head.Substring(dash + 1).Trim();
-                    }
-                    else current.Version = head;
+                    string version = head.Substring(1, close - 1).Trim();
+                    if (version == "Unreleased") continue;
 
+                    current = new ChangelogEntry { Version = version };
+                    int dash = head.IndexOf(" - ", close, StringComparison.Ordinal);
+                    if (dash > 0) current.Date = head.Substring(dash + 3).Trim();
                     list.Add(current);
                     continue;
                 }
 
-                if (current == null) continue;      // шапка файла до первого выпуска
-                if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal)) continue;
+                if (current == null) continue;      // шапка файла и [Unreleased]
 
-                if (line.StartsWith("- ", StringComparison.Ordinal))
-                    current.Lines.Add(Split(line.Substring(2)));
-                else if (current.Lines.Count == 0 && current.Note.Length == 0)
-                    current.Note = Plain(line);
+                if (line.StartsWith("### ", StringComparison.Ordinal))
+                    badge = BadgeOf(line.Substring(4).Trim());
+                else if (line.StartsWith("- ", StringComparison.Ordinal))
+                    current.Lines.Add(new ChangelogLine { Badge = badge, Text = line.Substring(2).Trim().Replace("`", "") });
             }
             return list;
         }
 
         /// <summary>
-        /// Разобрать строку списка на бейдж и текст. «**NEW** Правый control стал
-        /// клавишей» — это бейдж «NEW» и всё остальное; звёздочки и обратные кавычки
-        /// убираются, потому что в окне их некому превратить в оформление.
+        /// Бейдж по группе. Добавленное — NEW, исправленное и закрытые дыры — FIX,
+        /// всё прочее (изменено, удалено, устарело) — UPD.
         /// </summary>
-        public static ChangelogLine Split(string bullet)
+        private static string BadgeOf(string group)
         {
-            var line = new ChangelogLine();
-            string s = bullet.Trim();
-
-            if (s.StartsWith("**", StringComparison.Ordinal))
+            switch (group)
             {
-                int end = s.IndexOf("**", 2, StringComparison.Ordinal);
-                if (end > 2)
-                {
-                    line.Badge = s.Substring(2, end - 2).Trim();
-                    s = s.Substring(end + 2).TrimStart();
-                }
+                case "Добавлено": case "Added": return "NEW";
+                case "Исправлено": case "Fixed": case "Безопасность": case "Security": return "FIX";
+                default: return "UPD";
             }
-            line.Text = s.Replace("`", "");
-            return line;
-        }
-
-        /// <summary>
-        /// То же самое одной строкой — для мест, где бейджу негде быть отдельным:
-        /// абзац перед списком и подсказка о найденном обновлении.
-        /// </summary>
-        public static string Plain(string text)
-        {
-            ChangelogLine line = Split(text);
-            return line.Badge.Length > 0 ? line.Badge + " · " + line.Text : line.Text;
         }
 
         private static string Raw()

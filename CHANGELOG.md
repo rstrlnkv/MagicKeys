@@ -1,38 +1,59 @@
-# Что менялось
+# Changelog
 
-Заметные изменения в MagicKeys, свежее сверху. Бейдж в начале строки говорит,
-что это за изменение: **NEW** — появилось, **FIX** — исправлено, **UPD** —
-переделано.
+**English** · [Русский](CHANGELOG.ru.md)
 
-## 0.2.2 — 2026-08-28
+All notable changes to MagicKeys. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-- **NEW** «Что нового» открывается окном в самой программе: вся история выпусков, без похода в браузер.
+## [Unreleased]
 
-## 0.2.1 — 2026-08-27
+## [0.2.2] - 2026-08-28
 
-- **NEW** На верхнем ряду — те же значки, что напечатаны на живой клавише: яркость, Mission Control, Launchpad, перемотка, звук.
-- **NEW** Извлечение, стирание вправо, стрелки и лампочка Caps Lock тоже стали значками, а не словами.
-- **UPD** У клавиатур до 2021 года углы корпуса нарисованы прямыми — такими, какие они есть.
-- **FIX** Enter у европейской и японской клавиатуры больше не выглядит сломанным.
-- **UPD** Про Fn больше не сказано, будто она бесполезна: она работает, просто до Windows не доходит.
+### Added
 
-## 0.2.0 — 2026-08-27
+- "What's new" opens as a window inside the app: the whole release history, no trip to the browser.
 
-- **NEW** Карточка «Ваша клавиатура»: программа показывает модель, которую узнала, и отмечает клавиши, которые до Windows доходят. Нажмите любую — подсветится.
-- **NEW** Правый control настраивается наравне с остальными модификаторами.
-- **NEW** Клавишу, которой у вас нет, программа больше не предлагает: у японской компактной нет правого ⌥, а он стоял заменителем Fn.
-- **UPD** Подсказки называют то место, где клавиша стоит на вашей клавиатуре.
-- **FIX** Клавише извлечения снова можно назначить действие на Magic Keyboard с цифровым блоком.
-- **UPD** В диагностике у медиакодов появились имена вместо номеров.
+## [0.2.1] - 2026-08-27
 
-## 0.1.0 — 2026-08-21
+### Added
 
-Первый выпуск.
+- The top row shows the same icons as the real keys: brightness, Mission Control, Launchpad, playback, volume.
+- Eject, forward delete, the arrows and the Caps Lock light are icons too, not words.
 
-- **NEW** Сочетания как на маке: ⌘C копирует, ⌘← уходит в начало строки, ⌥← прыгает через слово.
-- **NEW** Верхний ряд даёт то, что на нём напечатано: громкость, яркость, перемотку.
-- **NEW** Модификаторы направляются куда угодно — готовыми схемами или по одной клавише.
-- **NEW** Раскладки Apple: тридцать три языка, мёртвые клавиши работают, в систему ничего не ставится.
-- **NEW** Яркость внешних мониторов — того Windows не умеет вовсе.
-- **NEW** Заряд клавиатуры, которого Windows не показывает.
-- **NEW** Цифровой блок: клавиша очистки и «=» снова делают то, что на них написано.
+### Changed
+
+- Keyboards made before 2021 are drawn with square corners, as they really are.
+- The app no longer says Fn is useless: it works, it just never reaches Windows.
+
+### Fixed
+
+- Enter on European and Japanese keyboards no longer looks broken.
+
+## [0.2.0] - 2026-08-27
+
+### Added
+
+- "Your keyboard" card: the app shows the model it recognised and marks the keys that reach Windows. Press any key to see it light up.
+- Right Control can be remapped like the other modifiers.
+- The app no longer offers keys you do not have: the compact Japanese keyboard has no right ⌥, yet it was offered as the Fn substitute.
+
+### Changed
+
+- Hints name the place where the key sits on your keyboard.
+- Diagnostics show media codes by name instead of number.
+
+### Fixed
+
+- The Eject key can again be given an action on the Magic Keyboard with Numeric Keypad.
+
+## [0.1.0] - 2026-08-21
+
+### Added
+
+- Mac shortcuts: ⌘C copies, ⌘← jumps to the start of the line, ⌥← skips a word.
+- The top row does what is printed on it: volume, brightness, playback.
+- Modifiers can be sent anywhere, with ready-made schemes or one key at a time.
+- Apple layouts: thirty-three languages, dead keys work, nothing is installed into the system.
+- Brightness of external monitors, which Windows cannot do at all.
+- Keyboard battery level, which Windows does not show.
+- Numeric keypad: Clear and "=" do what is printed on them again.

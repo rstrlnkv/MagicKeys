@@ -54,7 +54,7 @@ namespace MagicKeys
                 // Молчать нельзя: пустое окно человек читает как поломку программы,
                 // а не как «в эту сборку историю не положили».
                 stack.Children.Add(Note("История изменений в эту сборку не попала. " +
-                                        "Она есть в файле CHANGELOG.md рядом с исходниками " +
+                                        "Она есть в файле CHANGELOG.ru.md рядом с исходниками " +
                                         "и на странице выпусков."));
             }
             else
@@ -70,13 +70,6 @@ namespace MagicKeys
 
                     stack.Children.Add(Head(e, yours, first));
                     first = false;
-
-                    if (e.Note.Length > 0)
-                    {
-                        TextBlock note = Note(e.Note);
-                        note.Margin = new Thickness(0, 12, 0, 0);
-                        stack.Children.Add(note);
-                    }
 
                     foreach (ChangelogLine line in e.Lines) stack.Children.Add(Row(line));
                 }

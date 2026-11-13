@@ -155,6 +155,16 @@ namespace MagicKeys
                 return false;
             }
 
+            if (!RunReg("add \"" + path + "\" /v OSXFnBehavior /t REG_DWORD /d " + value + " /f", out error))
+                return false;
+            Refresh(true);
+            return true;
+        }
+
+        /// <summary>Запускает reg.exe с запросом прав администратора и ждёт его.</summary>
+        private static bool RunReg(string args, out string error)
+        {
+            error = null;
             try
             {
                 // Полный путь, а не имя. ShellExecute ищет имя без пути и в текущем
@@ -163,8 +173,7 @@ namespace MagicKeys
                 // туда reg.exe исполнился бы с правами администратора: готовый переход
                 // из пользователя в администраторы, ради одного нажатия кнопки.
                 var psi = new System.Diagnostics.ProcessStartInfo(
-                    System.IO.Path.Combine(Environment.SystemDirectory, "reg.exe"),
-                    "add \"" + path + "\" /v OSXFnBehavior /t REG_DWORD /d " + value + " /f");
+                    System.IO.Path.Combine(Environment.SystemDirectory, "reg.exe"), args);
                 psi.UseShellExecute = true;
                 psi.Verb = "runas";
                 psi.WorkingDirectory = Environment.SystemDirectory;
@@ -186,7 +195,6 @@ namespace MagicKeys
                     if (!p.HasExited) { error = "Windows не ответила на запрос записи"; return false; }
                     if (p.ExitCode != 0) { error = "Windows отказалась записать значение (код " + p.ExitCode + ")"; return false; }
                 }
-                Refresh(true);
                 return true;
             }
             catch (System.ComponentModel.Win32Exception e)
@@ -201,10 +209,84 @@ namespace MagicKeys
             }
             catch (Exception e)
             {
-                Diag.Log("драйвер Apple: не удалось записать OSXFnBehavior", e);
+                Diag.Log("драйвер Apple: не удалось записать значение: " + args, e);
                 error = "Не удалось записать значение драйвера.";
                 return false;
             }
+        }
+
+        // HID-коды F13–F24 на странице клавиатуры.
+        private const byte HidF13 = 0x68, HidF24 = 0x73;
+
+        /// <summary>
+        /// Таблица Keymap без пар, которые переделывают F13–F24. Keymap — пары байтов
+        /// «HID-код клавиши → HID-код замены»; по умолчанию Keymagic2.inf пишет туда
+        /// F14 → Print Screen, F15 → Scroll Lock, F16 → Pause. Подмена идёт в ядре,
+        /// до перехвата, и назначения программы на эти клавиши не срабатывали никогда.
+        /// Остальные пары (японские клавиши) остаются. Если убирать нечего, возвращается
+        /// тот же массив — по нему и видно, что писать ничего не надо.
+        /// </summary>
+        public static byte[] WithoutFunctionKeys(byte[] keymap)
+        {
+            if (keymap == null) return null;
+            var kept = new List<byte>(keymap.Length);
+            int i = 0;
+            for (; i + 1 < keymap.Length; i += 2)
+            {
+                if (keymap[i] >= HidF13 && keymap[i] <= HidF24) continue;
+                kept.Add(keymap[i]);
+                kept.Add(keymap[i + 1]);
+            }
+            if (i < keymap.Length) kept.Add(keymap[i]);
+            return kept.Count == keymap.Length ? keymap : kept.ToArray();
+        }
+
+        /// <summary>
+        /// Есть ли в Keymap работающей службы драйвера пары, которые переделывают F13–F24.
+        /// Читается там же, куда пишет INF и где лежит OSXFnBehavior: в ключе службы.
+        /// </summary>
+        public static bool KeymapTakesFunctionKeys
+        {
+            get
+            {
+                byte[] map = LiveKeymap();
+                return map != null && WithoutFunctionKeys(map) != map;
+            }
+        }
+
+        private static byte[] LiveKeymap()
+        {
+            string live = LiveServiceKey();
+            if (live == null) return null;
+            try
+            {
+                using (RegistryKey k = OpenLocal(live))
+                    return k == null ? null : k.GetValue("Keymap") as byte[];
+            }
+            catch (Exception e) { Diag.Log("драйвер Apple: не прочитать Keymap", e); return null; }
+        }
+
+        /// <summary>
+        /// Убирает из Keymap работающей службы пары для F13–F24 — с запросом прав
+        /// администратора, как и OSXFnBehavior. Драйвер перечитывает таблицу, когда
+        /// клавиатура подключается заново.
+        /// </summary>
+        public static bool ReleaseFunctionKeys(out string error)
+        {
+            error = null;
+            string live = LiveServiceKey();
+            byte[] map = LiveKeymap();
+            byte[] trimmed = WithoutFunctionKeys(map);
+            if (live == null || map == null || trimmed == map)
+            {
+                error = "Убирать нечего.";
+                return false;
+            }
+            // Пустое двоичное значение reg.exe принимает только без /d вовсе.
+            string data = trimmed.Length == 0
+                ? ""
+                : " /d " + BitConverter.ToString(trimmed).Replace("-", "");
+            return RunReg("add \"" + live + "\" /v Keymap /t REG_BINARY" + data + " /f", out error);
         }
 
         public static void Refresh(bool force)

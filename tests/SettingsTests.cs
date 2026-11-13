@@ -85,6 +85,7 @@ namespace MagicKeys
             BrokenFile();
             NormalizeRules();
             WatchdogHoldsItsTongue();
+            DriverKeymapLeavesFunctionKeys();
 
             Console.WriteLine();
             Console.WriteLine("прошло " + _pass + ", провалено " + _fail);
@@ -2620,6 +2621,46 @@ namespace MagicKeys
         /// и до сих пор их «проверял» стенд окна — тем, что спрашивал у Normalize,
         /// выполнил ли Normalize своё же правило.
         /// </summary>
+
+        /// <summary>
+        /// Таблица Keymap драйвера Apple: пары «HID-код клавиши → HID-код замены».
+        /// Значения по умолчанию из Keymagic2.inf делают из F14, F15 и F16 Print Screen,
+        /// Scroll Lock и Pause — и назначения программы на них не срабатывают никогда.
+        /// </summary>
+        static void DriverKeymapLeavesFunctionKeys()
+        {
+            string got = Hex(AppleDriver.WithoutFunctionKeys(Bytes("69 46 6A 47 6B 48 91 8B 90 88")));
+            Check("Keymap драйвера: пары F14–F16 убраны, японские оставлены",
+                  got == "91 8B 90 88", got);
+
+            got = Hex(AppleDriver.WithoutFunctionKeys(Bytes("68 46 73 47 67 48 74 49")));
+            Check("Keymap драйвера: убирается ровно F13–F24, соседи F12 и за F24 остаются",
+                  got == "67 48 74 49", got);
+
+            byte[] same = Bytes("91 8B 90 88");
+            Check("Keymap драйвера без F-клавиш остаётся тем же массивом",
+                  AppleDriver.WithoutFunctionKeys(same) == same, "вернулся новый массив");
+
+            got = Hex(AppleDriver.WithoutFunctionKeys(Bytes("69 46 91")));
+            Check("Keymap драйвера: непарный хвостовой байт не теряется",
+                  got == "91", got);
+        }
+
+        static byte[] Bytes(string hex)
+        {
+            string[] parts = hex.Split(' ');
+            var b = new byte[parts.Length];
+            for (int i = 0; i < parts.Length; i++) b[i] = Convert.ToByte(parts[i], 16);
+            return b;
+        }
+
+        static string Hex(byte[] b)
+        {
+            if (b == null) return "null";
+            var parts = new string[b.Length];
+            for (int i = 0; i < b.Length; i++) parts[i] = b[i].ToString("X2");
+            return String.Join(" ", parts);
+        }
 
         /// <summary>
         /// Решение сторожа перехвата. Сам сторож ставит настоящий глобальный перехват —

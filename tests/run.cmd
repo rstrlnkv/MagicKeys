@@ -17,22 +17,22 @@ rem Версия собирается сборкой программы: без 
 if not exist "%SRC%\BuildInfo.g.cs" call "%ROOT%\scripts\build.cmd" >nul
 
 "%NETDIR%\csc.exe" /nologo /target:exe /platform:anycpu /codepage:65001 /main:MagicKeys.SettingsTests ^
-  /out:"%SRC%\MagicKeys.Tests.exe" %REFS% %CODE% "%~dp0SettingsTests.cs"
+  /out:"%ROOT%\MagicKeys.Tests.exe" %REFS% %CODE% "%~dp0SettingsTests.cs"
 if errorlevel 1 exit /b 1
 
 "%NETDIR%\csc.exe" /nologo /target:exe /platform:anycpu /codepage:65001 /main:MagicKeys.WindowTests ^
-  /out:"%SRC%\MagicKeys.WindowTests.exe" %REFS% %CODE% "%~dp0WindowTests.cs"
+  /out:"%ROOT%\MagicKeys.WindowTests.exe" %REFS% %CODE% "%~dp0WindowTests.cs"
 if errorlevel 1 exit /b 1
 
 set RC=0
 echo === настройки ===
-"%SRC%\MagicKeys.Tests.exe"
+"%ROOT%\MagicKeys.Tests.exe"
 if errorlevel 1 set RC=1
 echo.
 echo === окно ===
-"%SRC%\MagicKeys.WindowTests.exe"
+"%ROOT%\MagicKeys.WindowTests.exe"
 if errorlevel 1 set RC=1
 
-del "%SRC%\MagicKeys.Tests.exe" >nul 2>&1
-del "%SRC%\MagicKeys.WindowTests.exe" >nul 2>&1
+del "%ROOT%\MagicKeys.Tests.exe" >nul 2>&1
+del "%ROOT%\MagicKeys.WindowTests.exe" >nul 2>&1
 exit /b %RC%
